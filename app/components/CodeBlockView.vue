@@ -97,15 +97,15 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
   <NodeViewWrapper class="code-block-node not-prose">
     <!-- Header: contenteditable=false keeps the editor from treating it as content -->
     <div contenteditable="false" class="code-block-header">
-      <span class="text-xs text-white/30 font-mono select-none leading-none">{ }</span>
+      <span class="text-xs text-muted font-mono select-none leading-none">{ }</span>
 
       <button
         ref="triggerRef"
-        class="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors select-none"
+        class="flex items-center gap-1 text-xs px-2 py-0.5 rounded text-muted hover:text-default bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 transition-colors select-none"
         @mousedown="openDropdown"
       >
         {{ displayLabel }}
-        <svg class="size-3 opacity-60" viewBox="0 0 16 16" fill="currentColor">
+        <svg class="size-3 opacity-50" viewBox="0 0 16 16" fill="currentColor">
           <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z" />
         </svg>
       </button>

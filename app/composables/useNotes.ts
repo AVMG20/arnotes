@@ -16,6 +16,7 @@ const _activeTag = ref<string | null>(null)
 const _searchQuery = ref('')
 const _ready = ref(false)
 const _recentTags = ref<string[]>([])
+const _autoFocus = ref(false)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _search: any = null
@@ -101,19 +102,12 @@ export function useNotes() {
     const titleText = options?.title?.trim()
     const activeTagVal = _activeTag.value
 
-    // Build content: title on line 1, active tag on line 2
-    let content = ''
-    if (titleText) {
-      content = `<h1>${titleText}</h1>`
-      if (activeTagVal) content += `<p>#${activeTagVal}</p>`
-    }
-    else if (activeTagVal) {
-      // Empty first line for the title, tag pre-placed on line 2
-      content = `<p></p><p>#${activeTagVal}</p>`
-    }
+    // Always start with an H1 so the user lands on it immediately
+    let content = titleText ? `<h1>${titleText}</h1>` : '<h1></h1>'
+    if (activeTagVal) content += `<p>#${activeTagVal}</p>`
 
     const tags = activeTagVal ? [activeTagVal] : []
-    const title = titleText || (activeTagVal ? `#${activeTagVal}` : 'Untitled')
+    const title = titleText || 'Untitled'
 
     const note = await $fetch<Note>('/api/notes', {
       method: 'POST',
@@ -122,7 +116,7 @@ export function useNotes() {
     _notes.value = [note, ..._notes.value]
     _activeNoteId.value = note.id
     _searchQuery.value = ''
-    // Keep _activeTag so the user stays in the same tag view
+    _autoFocus.value = true
     _search?.add(toSearchDoc(note))
   }
 
@@ -173,6 +167,7 @@ export function useNotes() {
     allTags,
     filteredNotes,
     trackTagClick,
+    autoFocus: _autoFocus,
     createNote,
     updateNote,
     deleteNote,

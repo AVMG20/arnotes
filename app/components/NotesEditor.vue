@@ -16,7 +16,7 @@ import TurndownService from 'turndown'
 import { marked } from 'marked'
 import { DateMention } from '~/composables/useDateMention'
 
-const { activeNote, activeNoteId, updateNote } = useNotes()
+const { activeNote, activeNoteId, autoFocus, updateNote } = useNotes()
 const toast = useToast()
 
 // ─── Hashtag decoration extension ───────────────────────────
@@ -160,6 +160,10 @@ watch(activeNoteId, (newId, oldId) => {
   if (newId) {
     editor.value.commands.setContent(activeNote.value?.content ?? '', { emitUpdate: false })
     isDirty.value = false
+    if (autoFocus.value) {
+      autoFocus.value = false
+      editor.value.commands.focus('start')
+    }
   }
 })
 
@@ -259,7 +263,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
 
     <template v-else>
       <!-- Toolbar -->
-      <div class="flex items-center gap-1.5 px-3 py-2 border-b border-default shrink-0 overflow-x-auto">
+      <div class="flex items-center gap-1.5 px-3 py-3.5 border-b border-default shrink-0 overflow-x-auto">
         <template v-for="(group, gi) in toolbarGroups" :key="gi">
           <div v-if="gi > 0" class="w-px h-4 bg-muted/40 shrink-0" />
           <UButton

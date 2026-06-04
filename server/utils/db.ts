@@ -19,7 +19,9 @@ let _db: Low<DB> | null = null
 export async function getDb(): Promise<Low<DB>> {
   if (_db) return _db
 
-  const dataDir = join(process.cwd(), 'data')
+  const cwd = process.cwd()
+  const root = cwd.endsWith('/.output') ? cwd.slice(0, -8) : cwd
+  const dataDir = join(root, 'data')
   if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true })
 
   const adapter = new JSONFile<DB>(join(dataDir, 'notes.json'))
