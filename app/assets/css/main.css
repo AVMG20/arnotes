@@ -1,0 +1,345 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme static {
+  --font-sans: 'Public Sans', sans-serif;
+
+  --color-green-50: #EFFDF5;
+  --color-green-100: #D9FBE8;
+  --color-green-200: #B3F5D1;
+  --color-green-300: #75EDAE;
+  --color-green-400: #00DC82;
+  --color-green-500: #00C16A;
+  --color-green-600: #00A155;
+  --color-green-700: #007F45;
+  --color-green-800: #016538;
+  --color-green-900: #0A5331;
+  --color-green-950: #052E16;
+}
+
+/* ─── Tiptap editor prose ───────────────────────────────────── */
+
+.tiptap-editor {
+  padding: 2rem 2.5rem;
+  min-height: 100%;
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--ui-text);
+}
+
+.tiptap-editor > * + * { margin-top: 0.75em; }
+.tiptap-editor > *:first-child { margin-top: 0; }
+
+.tiptap-editor h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--ui-text);
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+.tiptap-editor h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ui-text);
+  margin-top: 1.5em;
+  margin-bottom: 0.4em;
+}
+.tiptap-editor h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ui-text);
+  margin-top: 1.25em;
+  margin-bottom: 0.4em;
+}
+
+.tiptap-editor p { margin: 0; }
+.tiptap-editor p + p { margin-top: 0.5em; }
+
+.tiptap-editor ul,
+.tiptap-editor ol {
+  padding-left: 1.5rem;
+}
+.tiptap-editor ul { list-style-type: disc; }
+.tiptap-editor ol { list-style-type: decimal; }
+.tiptap-editor li + li { margin-top: 0.25em; }
+
+.tiptap-editor blockquote {
+  border-left: 3px solid var(--ui-border);
+  padding-left: 1rem;
+  font-style: italic;
+  color: var(--ui-text-muted);
+  margin: 1em 0;
+}
+
+.tiptap-editor strong { font-weight: 700; }
+.tiptap-editor em { font-style: italic; }
+
+.tiptap-editor s { text-decoration: line-through; }
+
+/* Inline code */
+.tiptap-editor code:not(pre *) {
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  padding: 0.15em 0.4em;
+  border-radius: 0.3rem;
+  background-color: var(--ui-bg-elevated);
+  color: var(--ui-color-primary-600);
+}
+.dark .tiptap-editor code:not(pre *) {
+  color: var(--ui-color-primary-400);
+}
+
+/* Code block node view */
+.tiptap-editor .code-block-node {
+  margin: 1em 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid #e1e4e8;
+}
+.dark .tiptap-editor .code-block-node {
+  border-color: #30363d;
+}
+
+.tiptap-editor .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background-color: #24292e;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  user-select: none;
+}
+.dark .tiptap-editor .code-block-header {
+  background-color: #161b22;
+}
+
+.tiptap-editor .code-block-pre {
+  margin: 0;
+  border-radius: 0;
+  overflow-x: auto;
+}
+.tiptap-editor .code-block-pre code {
+  display: block;
+  padding: 1rem 1.25rem;
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  background-color: #f6f8fa;
+  color: #24292e;
+}
+.dark .tiptap-editor .code-block-pre code {
+  background-color: #0d1117;
+  color: #c9d1d9;
+}
+
+/* Hashtag decoration */
+.hashtag-highlight {
+  color: var(--ui-color-primary-600);
+  font-weight: 500;
+}
+.dark .hashtag-highlight {
+  color: var(--ui-color-primary-400);
+}
+
+/* ─── Syntax highlighting tokens — light (GitHub) ───────────── */
+
+.tiptap-editor .code-block-pre .hljs-keyword,
+.tiptap-editor .code-block-pre .hljs-selector-tag,
+.tiptap-editor .code-block-pre .hljs-deletion { color: #d73a49; }
+
+.tiptap-editor .code-block-pre .hljs-string,
+.tiptap-editor .code-block-pre .hljs-attr,
+.tiptap-editor .code-block-pre .hljs-regexp,
+.tiptap-editor .code-block-pre .hljs-attribute,
+.tiptap-editor .code-block-pre .hljs-addition { color: #032f62; }
+
+.tiptap-editor .code-block-pre .hljs-comment,
+.tiptap-editor .code-block-pre .hljs-quote { color: #6a737d; font-style: italic; }
+
+.tiptap-editor .code-block-pre .hljs-title,
+.tiptap-editor .code-block-pre .hljs-title.class_,
+.tiptap-editor .code-block-pre .hljs-title.function_,
+.tiptap-editor .code-block-pre .hljs-name,
+.tiptap-editor .code-block-pre .hljs-selector-id,
+.tiptap-editor .code-block-pre .hljs-selector-class { color: #6f42c1; }
+
+.tiptap-editor .code-block-pre .hljs-number,
+.tiptap-editor .code-block-pre .hljs-literal,
+.tiptap-editor .code-block-pre .hljs-built_in,
+.tiptap-editor .code-block-pre .hljs-type { color: #005cc5; }
+
+.tiptap-editor .code-block-pre .hljs-variable,
+.tiptap-editor .code-block-pre .hljs-template-variable,
+.tiptap-editor .code-block-pre .hljs-symbol,
+.tiptap-editor .code-block-pre .hljs-bullet { color: #e36209; }
+
+.tiptap-editor .code-block-pre .hljs-meta { color: #735c0f; }
+
+.tiptap-editor .code-block-pre .hljs-tag { color: #22863a; }
+.tiptap-editor .code-block-pre .hljs-section { color: #005cc5; font-weight: bold; }
+.tiptap-editor .code-block-pre .hljs-doctag { color: #d73a49; }
+
+/* ─── Syntax highlighting tokens — dark (GitHub Dark) ───────── */
+
+.dark .tiptap-editor .code-block-pre .hljs-keyword,
+.dark .tiptap-editor .code-block-pre .hljs-selector-tag,
+.dark .tiptap-editor .code-block-pre .hljs-deletion { color: #ff7b72; }
+
+.dark .tiptap-editor .code-block-pre .hljs-string,
+.dark .tiptap-editor .code-block-pre .hljs-attr,
+.dark .tiptap-editor .code-block-pre .hljs-regexp,
+.dark .tiptap-editor .code-block-pre .hljs-attribute,
+.dark .tiptap-editor .code-block-pre .hljs-addition { color: #a5d6ff; }
+
+.dark .tiptap-editor .code-block-pre .hljs-comment,
+.dark .tiptap-editor .code-block-pre .hljs-quote { color: #8b949e; font-style: italic; }
+
+.dark .tiptap-editor .code-block-pre .hljs-title,
+.dark .tiptap-editor .code-block-pre .hljs-title.class_,
+.dark .tiptap-editor .code-block-pre .hljs-title.function_,
+.dark .tiptap-editor .code-block-pre .hljs-name,
+.dark .tiptap-editor .code-block-pre .hljs-selector-id,
+.dark .tiptap-editor .code-block-pre .hljs-selector-class { color: #d2a8ff; }
+
+.dark .tiptap-editor .code-block-pre .hljs-number,
+.dark .tiptap-editor .code-block-pre .hljs-literal,
+.dark .tiptap-editor .code-block-pre .hljs-built_in,
+.dark .tiptap-editor .code-block-pre .hljs-type { color: #79c0ff; }
+
+.dark .tiptap-editor .code-block-pre .hljs-variable,
+.dark .tiptap-editor .code-block-pre .hljs-template-variable,
+.dark .tiptap-editor .code-block-pre .hljs-symbol,
+.dark .tiptap-editor .code-block-pre .hljs-bullet { color: #ffa657; }
+
+.dark .tiptap-editor .code-block-pre .hljs-meta { color: #e3b341; }
+
+.dark .tiptap-editor .code-block-pre .hljs-tag { color: #7ee787; }
+.dark .tiptap-editor .code-block-pre .hljs-section { color: #79c0ff; font-weight: bold; }
+.dark .tiptap-editor .code-block-pre .hljs-doctag { color: #ff7b72; }
+
+/* ─── Date mention chip ─────────────────────────────────────── */
+
+.date-mention {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.55em;
+  border-radius: 9999px;
+  background-color: var(--color-primary-100);
+  color: var(--color-primary-700);
+  font-size: 0.82em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  letter-spacing: 0.01em;
+}
+.dark .date-mention {
+  background-color: var(--ui-color-primary-950);
+  color: var(--color-primary-300);
+}
+
+/* Tooltip on hover */
+.date-mention {
+  position: relative;
+}
+.date-mention::after {
+  content: attr(data-full-date);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--ui-bg-inverted);
+  color: var(--ui-text-inverted);
+  padding: 0.3em 0.65em;
+  border-radius: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 100;
+}
+.date-mention::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--ui-bg-inverted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 100;
+}
+.date-mention:hover::after,
+.date-mention:hover::before {
+  opacity: 1;
+}
+
+/* ─── Text highlight ────────────────────────────────────────── */
+
+.tiptap-editor mark {
+  background-color: #fef08a;
+  color: inherit;
+  border-radius: 0.2em;
+  padding: 0.05em 0.15em;
+}
+.dark .tiptap-editor mark {
+  background-color: #713f12;
+  color: #fef9c3;
+}
+
+/* ─── Task list ─────────────────────────────────────────────── */
+
+.tiptap-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+
+.tiptap-editor ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0.25rem 0;
+}
+
+.tiptap-editor ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+  line-height: 1;
+}
+
+.tiptap-editor ul[data-type="taskList"] li > label input[type="checkbox"] {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 0.25rem;
+  border: 1.5px solid var(--ui-border);
+  background: var(--ui-bg);
+  cursor: pointer;
+  accent-color: var(--color-primary-500);
+  appearance: auto;
+}
+
+.tiptap-editor ul[data-type="taskList"] li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.tiptap-editor ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--ui-text-muted);
+  text-decoration: line-through;
+}
+
+/* Placeholder for empty editor */
+.tiptap-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--ui-text-muted);
+  pointer-events: none;
+  height: 0;
+}
