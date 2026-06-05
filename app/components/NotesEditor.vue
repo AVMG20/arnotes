@@ -14,8 +14,20 @@ import TurndownService from 'turndown'
 import { marked } from 'marked'
 import { DateMention } from '~/composables/useDateMention'
 
-const { activeNote, activeNoteId, autoFocus, updateNote } = useNotes()
+const { activeNote, activeNoteId, autoFocus, updateNote, togglePublic } = useNotes()
 const toast = useToast()
+
+async function handleTogglePublic() {
+  if (!activeNoteId.value) return
+  const updated = await togglePublic(activeNoteId.value)
+  if (updated.isPublic) {
+    const url = `${window.location.origin}/public/${updated.id}`
+    await navigator.clipboard.writeText(url)
+    toast.add({ title: 'Note is now public', description: 'Public link copied to clipboard', icon: 'i-lucide-globe', duration: 3000 })
+  } else {
+    toast.add({ title: 'Note is now private', icon: 'i-lucide-lock', duration: 2000 })
+  }
+}
 const editorRef = ref()
 
 // ─── Image upload ────────────────────────────────────────────
@@ -355,6 +367,15 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                 <UIcon name="i-lucide-tag" class="size-3" />
                 {{ tagCount }}
               </span>
+              <div class="w-px h-4 bg-muted/40" />
+              <UButton
+                :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-lock'"
+                :label="activeNote?.isPublic ? 'Public' : 'Private'"
+                size="xs"
+                :color="activeNote?.isPublic ? 'primary' : 'neutral'"
+                variant="ghost"
+                @click="handleTogglePublic"
+              />
               <div class="w-px h-4 bg-muted/40" />
               <UButton
                 icon="i-lucide-clipboard-copy"

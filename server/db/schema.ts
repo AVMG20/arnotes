@@ -57,6 +57,7 @@ export const notes = pgTable('notes', {
   content: text('content').notNull().default(''),
   tags: json('tags').$type<string[]>().notNull().default([]),
   attachments: json('attachments').$type<string[]>().notNull().default([]),
+  isPublic: boolean('is_public').notNull().default(false),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
 })

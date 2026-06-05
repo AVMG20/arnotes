@@ -6,6 +6,7 @@ export interface Note {
   content: string
   tags: string[]
   attachments: string[]
+  isPublic: boolean
   createdAt: number
   updatedAt: number
 }
@@ -147,6 +148,20 @@ export function useNotes() {
     return hits.map((h: any) => _notes.value.find(n => n.id === h.id)).filter(Boolean) as Note[]
   }
 
+  async function togglePublic(id: string): Promise<Note> {
+    const idx = _notes.value.findIndex(n => n.id === id)
+    if (idx < 0) throw new Error('Note not found')
+    const current = _notes.value[idx]
+    const updated = await $fetch<Note>(`/api/notes/${id}`, {
+      method: 'PUT',
+      body: { isPublic: !current.isPublic }
+    })
+    const next = [..._notes.value]
+    next[idx] = updated
+    _notes.value = next
+    return updated
+  }
+
   async function deleteNote(id: string) {
     await $fetch(`/api/notes/${id}`, { method: 'DELETE' })
     _notes.value = _notes.value.filter(n => n.id !== id)
@@ -171,6 +186,7 @@ export function useNotes() {
     autoFocus: _autoFocus,
     createNote,
     updateNote,
+    togglePublic,
     deleteNote,
     searchNotes
   }
