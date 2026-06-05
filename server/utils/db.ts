@@ -8,6 +8,7 @@ export interface Note {
   title: string
   content: string
   tags: string[]
+  attachments: string[]
   createdAt: number
   updatedAt: number
 }

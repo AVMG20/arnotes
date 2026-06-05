@@ -329,3 +329,18 @@
   pointer-events: none;
   height: 0;
 }
+
+/* ─── Images ────────────────────────────────────────────────── */
+
+.tiptap-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0.5em 0;
+  display: block;
+}
+
+.tiptap-editor img.ProseMirror-selectednode {
+  outline: 2px solid var(--ui-color-primary-500);
+  outline-offset: 2px;
+}

@@ -15,6 +15,7 @@ export default defineEventHandler(async (event) => {
     title: body.title ?? existing.title,
     content: body.content ?? existing.content,
     tags: body.tags ?? existing.tags,
+    attachments: body.attachments ?? existing.attachments ?? [],
     createdAt: existing.createdAt,
     updatedAt: Date.now()
   }

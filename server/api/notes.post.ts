@@ -10,6 +10,7 @@ export default defineEventHandler(async (event) => {
     title: body.title ?? 'Untitled',
     content: body.content ?? '',
     tags: body.tags ?? [],
+    attachments: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   }

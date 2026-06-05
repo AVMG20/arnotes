@@ -7,6 +7,7 @@ import CodeBlockView from '~/components/CodeBlockView.vue'
 import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
+import Image from '@tiptap/extension-image'
 import { createLowlight, common } from 'lowlight'
 import { Extension } from '@tiptap/core'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -18,6 +19,59 @@ import { DateMention } from '~/composables/useDateMention'
 
 const { activeNote, activeNoteId, autoFocus, updateNote } = useNotes()
 const toast = useToast()
+
+// ─── Image upload ────────────────────────────────────────────
+
+async function uploadImage(file: File): Promise<string | null> {
+  const noteId = activeNoteId.value
+  if (!noteId) return null
+  const form = new FormData()
+  form.append('file', file)
+  try {
+    const res = await $fetch<{ url: string }>(`/api/notes/${noteId}/attachments`, { method: 'POST', body: form })
+    return res.url
+  } catch {
+    toast.add({ title: 'Image upload failed', icon: 'i-lucide-image-off', color: 'error', duration: 3000 })
+    return null
+  }
+}
+
+const ImageDropPaste = Extension.create({
+  name: 'imageDropPaste',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('imageDropPaste'),
+        props: {
+          handlePaste(_view, event) {
+            const items = Array.from(event.clipboardData?.items ?? [])
+            const imageItem = items.find(i => i.kind === 'file' && i.type.startsWith('image/'))
+            if (!imageItem) return false
+            const file = imageItem.getAsFile()
+            if (!file) return false
+            event.preventDefault()
+            uploadImage(file).then(url => {
+              if (url) editor.value?.chain().focus().setImage({ src: url }).run()
+            })
+            return true
+          },
+          handleDrop(_view, event) {
+            const files = Array.from(event.dataTransfer?.files ?? [])
+            const images = files.filter(f => f.type.startsWith('image/'))
+            if (!images.length) return false
+            event.preventDefault()
+            Promise.all(images.map(uploadImage)).then(urls => {
+              urls.forEach(url => {
+                if (url) editor.value?.chain().focus().setImage({ src: url }).run()
+              })
+            })
+            return true
+          }
+        }
+      })
+    ]
+  }
+})
 
 // ─── Hashtag decoration extension ───────────────────────────
 
@@ -111,6 +165,8 @@ const editor = useEditor({
     TaskList,
     TaskItem.configure({ nested: true }),
     DateMention,
+    Image.configure({ inline: false }),
+    ImageDropPaste,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Placeholder.configure({ placeholder: 'Start writing… (@ for dates, # for tags)' }) as any,
     HashtagHighlight
