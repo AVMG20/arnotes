@@ -1,24 +1,22 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { useEditor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
-import StarterKit from '@tiptap/starter-kit'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import { Extension } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import CodeBlockView from '~/components/CodeBlockView.vue'
 import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import Image from '@tiptap/extension-image'
 import { createLowlight, common } from 'lowlight'
-import { Extension } from '@tiptap/core'
-import Placeholder from '@tiptap/extension-placeholder'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import TurndownService from 'turndown'
 import { marked } from 'marked'
 import { DateMention } from '~/composables/useDateMention'
 
 const { activeNote, activeNoteId, autoFocus, updateNote } = useNotes()
 const toast = useToast()
+const editorRef = ref()
 
 // ─── Image upload ────────────────────────────────────────────
 
@@ -36,12 +34,17 @@ async function uploadImage(file: File): Promise<string | null> {
   }
 }
 
-const ImageDropPaste = Extension.create({
-  name: 'imageDropPaste',
+// ─── Custom extensions ───────────────────────────────────────
+
+const lowlight = createLowlight(common)
+
+const ImagePaste = Extension.create({
+  name: 'imagePaste',
   addProseMirrorPlugins() {
+    const editor = this.editor
     return [
       new Plugin({
-        key: new PluginKey('imageDropPaste'),
+        key: new PluginKey('imagePaste'),
         props: {
           handlePaste(_view, event) {
             const items = Array.from(event.clipboardData?.items ?? [])
@@ -51,19 +54,8 @@ const ImageDropPaste = Extension.create({
             if (!file) return false
             event.preventDefault()
             uploadImage(file).then(url => {
-              if (url) editor.value?.chain().focus().setImage({ src: url }).run()
-            })
-            return true
-          },
-          handleDrop(_view, event) {
-            const files = Array.from(event.dataTransfer?.files ?? [])
-            const images = files.filter(f => f.type.startsWith('image/'))
-            if (!images.length) return false
-            event.preventDefault()
-            Promise.all(images.map(uploadImage)).then(urls => {
-              urls.forEach(url => {
-                if (url) editor.value?.chain().focus().setImage({ src: url }).run()
-              })
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              if (url) (editor.chain().focus() as any).setImage({ src: url }).run()
             })
             return true
           }
@@ -73,7 +65,17 @@ const ImageDropPaste = Extension.create({
   }
 })
 
-// ─── Hashtag decoration extension ───────────────────────────
+// File drops are handled on the wrapper div to avoid the drag handle intercepting them.
+async function onFileDrop(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'))
+  if (!files.length) return
+  editorRef.value?.editor?.commands.focus()
+  const urls = await Promise.all(files.map(uploadImage))
+  urls.forEach(url => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (url) (editorRef.value?.editor?.chain().focus() as any)?.setImage({ src: url }).run()
+  })
+}
 
 const HashtagHighlight = Extension.create({
   name: 'hashtagHighlight',
@@ -105,13 +107,9 @@ const HashtagHighlight = Extension.create({
   }
 })
 
-// ─── Markdown paste conversion ──────────────────────────────
-
 function markdownToHtml(text: string): string {
   const raw = marked.parse(text, { async: false }) as string
   if (!import.meta.client) return raw
-
-  // Post-process: convert marked's checkbox lists to Tiptap's taskList format
   const doc = new DOMParser().parseFromString(raw, 'text/html')
   doc.querySelectorAll('ul > li').forEach((li) => {
     const input = li.querySelector('input[type="checkbox"]')
@@ -127,12 +125,118 @@ function markdownToHtml(text: string): string {
   return doc.body.innerHTML
 }
 
-// ─── Editor setup ───────────────────────────────────────────
+const MarkdownPaste = Extension.create({
+  name: 'markdownPaste',
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: new PluginKey('markdownPaste'),
+        props: {
+          handlePaste(_view, event) {
+            if (event.clipboardData?.getData('text/html')) return false
+            const text = event.clipboardData?.getData('text/plain') ?? ''
+            if (!text.trim()) return false
+            editor.commands.insertContent(markdownToHtml(text))
+            return true
+          }
+        }
+      })
+    ]
+  }
+})
 
-const lowlight = createLowlight(common)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const extensions: any[] = [
+  CodeBlockLowlight.configure({ lowlight }).extend({
+    addNodeView: () => VueNodeViewRenderer(CodeBlockView)
+  }),
+  Highlight.configure({ multicolor: false }),
+  TaskList,
+  TaskItem.configure({ nested: true }),
+  DateMention,
+  ImagePaste,
+  HashtagHighlight,
+  MarkdownPaste
+]
 
+// ─── Handlers ────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const customHandlers: any = {
+  image: {
+    canExecute: () => true,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    execute: async (editor: any) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.onchange = async () => {
+        const file = input.files?.[0]
+        if (!file) return
+        const url = await uploadImage(file)
+        if (url) editor.chain().focus().setImage({ src: url }).run()
+      }
+      input.click()
+    },
+    isActive: () => false
+  }
+}
+
+// ─── Toolbar & menu items ─────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const fixedToolbarItems: any[][] = [[
+  { kind: 'heading', level: 1, icon: 'i-lucide-heading-1', tooltip: { text: 'Heading 1' } },
+  { kind: 'heading', level: 2, icon: 'i-lucide-heading-2', tooltip: { text: 'Heading 2' } },
+  { kind: 'heading', level: 3, icon: 'i-lucide-heading-3', tooltip: { text: 'Heading 3' } }
+], [
+  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
+  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
+  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
+  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
+  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } }
+], [
+  { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
+  { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Ordered list' } },
+  { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
+  { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
+  { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } }
+]]
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const bubbleToolbarItems: any[][] = [[
+  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
+  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
+  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
+  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
+  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } }
+]]
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const suggestionItems: any[][] = [[
+  { type: 'label', label: 'Style' },
+  { kind: 'paragraph', label: 'Paragraph', icon: 'i-lucide-type' },
+  { kind: 'heading', level: 1, label: 'Heading 1', icon: 'i-lucide-heading-1' },
+  { kind: 'heading', level: 2, label: 'Heading 2', icon: 'i-lucide-heading-2' },
+  { kind: 'heading', level: 3, label: 'Heading 3', icon: 'i-lucide-heading-3' },
+  { kind: 'bulletList', label: 'Bullet list', icon: 'i-lucide-list' },
+  { kind: 'orderedList', label: 'Numbered list', icon: 'i-lucide-list-ordered' },
+  { kind: 'taskList', label: 'Task list', icon: 'i-lucide-list-checks' },
+  { kind: 'blockquote', label: 'Blockquote', icon: 'i-lucide-text-quote' },
+  { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
+  { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
+], [
+  { type: 'label', label: 'Insert' },
+  { kind: 'image', label: 'Image', icon: 'i-lucide-image' }
+]]
+
+// ─── Content & auto-save ─────────────────────────────────────
+
+const editorContent = ref('')
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 const isDirty = ref(false)
+let suppressSave = false
 
 function scheduleAutoSave(html: string) {
   if (saveTimer) clearTimeout(saveTimer)
@@ -145,93 +249,40 @@ function scheduleAutoSave(html: string) {
   }, 600)
 }
 
-function flushSave() {
+function flushSave(id?: string) {
+  const targetId = id ?? activeNoteId.value
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-  const id = activeNoteId.value
-  if (id && editor.value && isDirty.value) {
-    updateNote(id, editor.value.getHTML())
+  if (targetId && isDirty.value) {
+    updateNote(targetId, editorContent.value)
     isDirty.value = false
   }
 }
 
-const editor = useEditor({
-  content: '',
-  extensions: [
-    StarterKit.configure({ codeBlock: false }),
-    CodeBlockLowlight.configure({ lowlight }).extend({
-      addNodeView: () => VueNodeViewRenderer(CodeBlockView)
-    }),
-    Highlight.configure({ multicolor: false }),
-    TaskList,
-    TaskItem.configure({ nested: true }),
-    DateMention,
-    Image.configure({ inline: false }),
-    ImageDropPaste,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Placeholder.configure({ placeholder: 'Start writing… (@ for dates, # for tags)' }) as any,
-    HashtagHighlight
-  ],
-  editorProps: {
-    attributes: { class: 'tiptap-editor focus:outline-none' },
-    handlePaste(_view, event) {
-      // If the clipboard already carries HTML (copy from browser/app), let Tiptap handle it
-      const clipHtml = event.clipboardData?.getData('text/html')
-      if (clipHtml) return false
-
-      const text = event.clipboardData?.getData('text/plain') ?? ''
-      if (!text.trim()) return false
-
-      const html = markdownToHtml(text)
-      editor.value?.commands.insertContent(html)
-      return true
-    }
-  },
-  onUpdate({ editor: e }) {
-    isDirty.value = true
-    scheduleAutoSave(e.getHTML())
-  }
+watch(editorContent, (html) => {
+  if (suppressSave) return
+  isDirty.value = true
+  scheduleAutoSave(html)
 })
 
-// Initial load: fires once when Tiptap creates the Editor instance
-watch(() => editor.value, (e) => {
-  if (!e) return
-  e.commands.setContent(activeNote.value?.content ?? '', { emitUpdate: false })
+watch(activeNoteId, async (newId, oldId) => {
+  if (oldId) flushSave(oldId)
+  suppressSave = true
+  editorContent.value = activeNote.value?.content ?? ''
+  await nextTick()
+  suppressSave = false
   isDirty.value = false
-})
-
-// Note switch: only save if the user actually edited, then load the new note
-watch(activeNoteId, (newId, oldId) => {
-  if (!editor.value) return
-  if (oldId) {
-    if (isDirty.value) {
-      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-      updateNote(oldId, editor.value.getHTML())
-    }
-    else if (saveTimer) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-    }
-    isDirty.value = false
+  if (newId && autoFocus.value) {
+    autoFocus.value = false
+    editorRef.value?.editor?.commands.focus('start')
   }
-  if (newId) {
-    editor.value.commands.setContent(activeNote.value?.content ?? '', { emitUpdate: false })
-    isDirty.value = false
-    if (autoFocus.value) {
-      autoFocus.value = false
-      editor.value.commands.focus('start')
-    }
-  }
-})
+}, { immediate: true })
 
-onBeforeUnmount(flushSave)
+onBeforeUnmount(() => flushSave())
 
 // ─── Copy to Markdown ────────────────────────────────────────
 
 function copyToMarkdown() {
-  const html = editor.value?.getHTML() ?? ''
   const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
-
-  // Task list items
   td.addRule('taskItem', {
     filter(node) {
       return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
@@ -239,13 +290,10 @@ function copyToMarkdown() {
     replacement(_content, node) {
       const el = node as HTMLElement
       const checked = el.getAttribute('data-checked') === 'true'
-      const div = el.querySelector('div, p')
-      const text = (div?.textContent ?? '').trim()
+      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
       return `- [${checked ? 'x' : ' '}] ${text}\n`
     }
   })
-
-  // Fenced code blocks with language tag
   td.addRule('fencedCode', {
     filter(node) {
       return node.nodeName === 'PRE' && !!node.firstChild && (node.firstChild as HTMLElement).nodeName === 'CODE'
@@ -256,45 +304,14 @@ function copyToMarkdown() {
       return `\n\`\`\`${lang}\n${code?.textContent ?? ''}\n\`\`\`\n\n`
     }
   })
-
-  // Strip highlight marks — keep text
   td.addRule('highlight', {
     filter: ['mark'],
     replacement: (content) => content
   })
-
-  const markdown = td.turndown(html)
-  navigator.clipboard.writeText(markdown).then(() => {
+  navigator.clipboard.writeText(td.turndown(editorContent.value)).then(() => {
     toast.add({ title: 'Copied as Markdown', icon: 'i-lucide-clipboard-check', duration: 2000 })
   })
 }
-
-// ─── Toolbar ────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const cmd = () => editor.value?.chain().focus() as any
-
-const toolbarGroups = [
-  [
-    { icon: 'i-lucide-heading-1', label: 'H1', action: () => cmd()?.toggleHeading({ level: 1 }).run(), active: () => editor.value?.isActive('heading', { level: 1 }) },
-    { icon: 'i-lucide-heading-2', label: 'H2', action: () => cmd()?.toggleHeading({ level: 2 }).run(), active: () => editor.value?.isActive('heading', { level: 2 }) },
-    { icon: 'i-lucide-heading-3', label: 'H3', action: () => cmd()?.toggleHeading({ level: 3 }).run(), active: () => editor.value?.isActive('heading', { level: 3 }) }
-  ],
-  [
-    { icon: 'i-lucide-bold', label: 'Bold', action: () => cmd()?.toggleBold().run(), active: () => editor.value?.isActive('bold') },
-    { icon: 'i-lucide-italic', label: 'Italic', action: () => cmd()?.toggleItalic().run(), active: () => editor.value?.isActive('italic') },
-    { icon: 'i-lucide-strikethrough', label: 'Strike', action: () => cmd()?.toggleStrike().run(), active: () => editor.value?.isActive('strike') },
-    { icon: 'i-lucide-highlighter', label: 'Highlight', action: () => cmd()?.toggleHighlight().run(), active: () => editor.value?.isActive('highlight') },
-    { icon: 'i-lucide-code', label: 'Code', action: () => cmd()?.toggleCode().run(), active: () => editor.value?.isActive('code') }
-  ],
-  [
-    { icon: 'i-lucide-list', label: 'Bullet list', action: () => cmd()?.toggleBulletList().run(), active: () => editor.value?.isActive('bulletList') },
-    { icon: 'i-lucide-list-ordered', label: 'Ordered list', action: () => cmd()?.toggleOrderedList().run(), active: () => editor.value?.isActive('orderedList') },
-    { icon: 'i-lucide-list-checks', label: 'Task list', action: () => cmd()?.toggleTaskList().run(), active: () => editor.value?.isActive('taskList') },
-    { icon: 'i-lucide-square-code', label: 'Code block', action: () => cmd()?.toggleCodeBlock().run(), active: () => editor.value?.isActive('codeBlock') },
-    { icon: 'i-lucide-quote', label: 'Blockquote', action: () => cmd()?.toggleBlockquote().run(), active: () => editor.value?.isActive('blockquote') }
-  ]
-]
 
 const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
 </script>
@@ -318,44 +335,63 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
     </template>
 
     <template v-else>
-      <!-- Toolbar -->
-      <div class="flex items-center gap-1.5 px-3 py-3.5 border-b border-default shrink-0 overflow-x-auto">
-        <template v-for="(group, gi) in toolbarGroups" :key="gi">
-          <div v-if="gi > 0" class="w-px h-4 bg-muted/40 shrink-0" />
-          <UButton
-            v-for="btn in group"
-            :key="btn.label"
-            :icon="btn.icon"
-            :aria-label="btn.label"
-            size="xs"
-            color="neutral"
-            :variant="btn.active?.() ? 'soft' : 'ghost'"
-            class="shrink-0"
-            @click="btn.action()"
-          />
-        </template>
+      <div class="flex-1 overflow-y-auto" @dragover.prevent @drop.prevent="onFileDrop">
+        <UEditor
+          ref="editorRef"
+          v-slot="{ editor, handlers }"
+          v-model="editorContent"
+          content-type="html"
+          placeholder="Start writing… (@ for dates, # for tags)"
+          :starter-kit="{ codeBlock: false }"
+          :extensions="extensions"
+          :handlers="customHandlers"
+          class="min-h-full"
+        >
+          <!-- Fixed toolbar -->
+          <div class="flex items-center gap-2 px-3 py-3 border-b border-default sticky top-0 bg-default z-10 overflow-x-auto">
+            <UEditorToolbar :editor="editor" :items="fixedToolbarItems" />
+            <div class="flex items-center gap-2 shrink-0 ml-auto">
+              <span v-if="tagCount > 0" class="flex items-center gap-1 text-xs text-muted">
+                <UIcon name="i-lucide-tag" class="size-3" />
+                {{ tagCount }}
+              </span>
+              <div class="w-px h-4 bg-muted/40" />
+              <UButton
+                icon="i-lucide-clipboard-copy"
+                label="Copy"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                @click="copyToMarkdown"
+              />
+            </div>
+          </div>
 
-        <!-- Right side -->
-        <div class="ml-auto flex items-center gap-2 shrink-0">
-          <span v-if="tagCount > 0" class="flex items-center gap-1 text-xs text-muted">
-            <UIcon name="i-lucide-tag" class="size-3" />
-            {{ tagCount }}
-          </span>
-          <div class="w-px h-4 bg-muted/40" />
-          <UButton
-            icon="i-lucide-clipboard-copy"
-            label="Copy"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="copyToMarkdown"
-          />
-        </div>
-      </div>
+          <!-- Slash commands (type /) -->
+          <UEditorSuggestionMenu :editor="editor" :items="suggestionItems" />
 
-      <!-- Editor -->
-      <div class="flex-1 overflow-y-auto">
-        <EditorContent :editor="editor" class="min-h-full" />
+          <!-- Bubble toolbar (appears on text selection) -->
+          <UEditorToolbar
+            :editor="editor"
+            :items="bubbleToolbarItems"
+            layout="bubble"
+            :should-show="({ editor: e, view, state }) => {
+              const { selection } = state
+              return view.hasFocus() && !selection.empty && !e.isActive('image')
+            }"
+          />
+
+          <!-- Drag handle (hover any block) -->
+          <UEditorDragHandle v-slot="{ ui }" :editor="editor">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-grip-vertical"
+              :class="ui.handle()"
+            />
+          </UEditorDragHandle>
+        </UEditor>
       </div>
     </template>
   </div>

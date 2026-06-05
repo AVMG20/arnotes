@@ -101,7 +101,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
 
       <button
         ref="triggerRef"
-        class="flex items-center gap-1 text-xs px-2 py-0.5 rounded text-muted hover:text-default bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 transition-colors select-none"
+        class="flex items-center gap-1 text-xs px-2 py-0.5 rounded text-muted hover:text-default bg-accented hover:bg-elevated transition-colors select-none"
         @mousedown="openDropdown"
       >
         {{ displayLabel }}
@@ -118,7 +118,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
     <Teleport to="body">
       <div
         v-if="open"
-        class="code-lang-dropdown fixed z-[9999] w-52 rounded-lg border border-default bg-default shadow-xl overflow-hidden"
+        class="code-lang-dropdown fixed z-[9999] w-52 bg-default shadow-xl overflow-hidden"
         :style="{ top: pos.top + 'px', right: pos.right + 'px' }"
         @mousedown.stop
       >
