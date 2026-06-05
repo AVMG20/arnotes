@@ -1,24 +1,25 @@
-import { getDb } from '../../utils/db'
-import type { Note } from '../../utils/db'
+import { db } from '../../db'
+import { notes } from '../../db/schema'
+import { eq, and } from 'drizzle-orm'
+import type { NewNote } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
-  const id = getRouterParam(event, 'id')
-  const body = await readBody<Partial<Note>>(event)
-  const db = await getDb()
+  const id = getRouterParam(event, 'id')!
+  const userId = event.context.session.user.id
+  const body = await readBody<Partial<NewNote>>(event)
 
-  const idx = db.data.notes.findIndex(n => n.id === id)
-  if (idx < 0) throw createError({ statusCode: 404, message: 'Note not found' })
+  const [updated] = await db
+    .update(notes)
+    .set({
+      ...(body.title !== undefined && { title: body.title }),
+      ...(body.content !== undefined && { content: body.content }),
+      ...(body.tags !== undefined && { tags: body.tags }),
+      ...(body.attachments !== undefined && { attachments: body.attachments }),
+      updatedAt: Date.now(),
+    })
+    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    .returning()
 
-  const existing = db.data.notes[idx]!
-  db.data.notes[idx] = {
-    id: existing.id,
-    title: body.title ?? existing.title,
-    content: body.content ?? existing.content,
-    tags: body.tags ?? existing.tags,
-    attachments: body.attachments ?? existing.attachments ?? [],
-    createdAt: existing.createdAt,
-    updatedAt: Date.now()
-  }
-  await db.write()
-  return db.data.notes[idx]
+  if (!updated) throw createError({ statusCode: 404, message: 'Note not found' })
+  return updated
 })

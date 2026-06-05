@@ -5,7 +5,12 @@ import type { Note } from '~/composables/useNotes'
 type SearchDoc = Note & { tagsText: string; contentText: string }
 
 export default defineNuxtPlugin(async () => {
-  const notes = await $fetch<Note[]>('/api/notes')
+  let notes: Note[]
+  try {
+    notes = await $fetch<Note[]>('/api/notes')
+  } catch {
+    return // Not authenticated — auth.global middleware will redirect to /login
+  }
 
   const search = new MiniSearch<SearchDoc>({
     idField: 'id',
