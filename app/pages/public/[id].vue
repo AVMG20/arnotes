@@ -12,8 +12,11 @@ import TaskItem from '@tiptap/extension-task-item'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
 
+import TurndownService from 'turndown'
+
 const route = useRoute()
 const router = useRouter()
+const toast = useToast()
 
 interface PublicNote {
   id: string
@@ -63,6 +66,38 @@ const editorContent = ref('')
 watch(note, (n) => {
   if (n) editorContent.value = n.content
 })
+
+function copyToMarkdown() {
+  const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
+  td.addRule('taskItem', {
+    filter(node) {
+      return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
+    },
+    replacement(_content, node) {
+      const el = node as HTMLElement
+      const checked = el.getAttribute('data-checked') === 'true'
+      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
+      return `- [${checked ? 'x' : ' '}] ${text}\n`
+    }
+  })
+  td.addRule('fencedCode', {
+    filter(node) {
+      return node.nodeName === 'PRE' && !!node.firstChild && (node.firstChild as HTMLElement).nodeName === 'CODE'
+    },
+    replacement(_content, node) {
+      const code = (node as HTMLElement).querySelector('code')
+      const lang = (code?.className ?? '').match(/language-(\w+)/)?.[1] ?? ''
+      return `\n\`\`\`${lang}\n${code?.textContent ?? ''}\n\`\`\`\n\n`
+    }
+  })
+  td.addRule('highlight', {
+    filter: ['mark'],
+    replacement: (content) => content
+  })
+  navigator.clipboard.writeText(td.turndown(editorContent.value)).then(() => {
+    toast.add({ title: 'Copied as Markdown', icon: 'i-lucide-clipboard-check', duration: 2000 })
+  })
+}
 </script>
 
 <template>
@@ -74,9 +109,16 @@ watch(note, (n) => {
           <button class="flex items-center gap-2 hover:opacity-75 transition-opacity" @click="goHome">
             <AppLogo class="text-xl" />
           </button>
-          <div class="flex items-center gap-1.5 text-xs text-muted ml-2">
-            <UIcon name="i-lucide-globe" class="size-3.5 text-primary" />
-            <span>Public note</span>
+          <div class="flex items-center gap-3">
+            <UButton
+              v-if="note"
+              icon="i-lucide-clipboard-copy"
+              label="Copy Markdown"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              @click="copyToMarkdown"
+            />
           </div>
         </div>
 

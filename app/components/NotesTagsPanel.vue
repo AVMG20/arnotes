@@ -2,6 +2,35 @@
 import { computed } from 'vue'
 
 const { notes, allTags, activeTag, searchQuery, trackTagClick } = useNotes()
+const { session, signOut } = useAuth()
+const colorMode = useColorMode()
+
+const userInitials = computed(() => {
+  const name = session.value?.user?.name
+  if (!name) return '?'
+  return name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+})
+
+const isDark = computed(() => colorMode.value === 'dark')
+
+function toggleColorMode() {
+  colorMode.preference = isDark.value ? 'light' : 'dark'
+}
+
+const dropdownItems = computed(() => [[
+  {
+    label: isDark.value ? 'Light mode' : 'Dark mode',
+    icon: isDark.value ? 'i-lucide-sun' : 'i-lucide-moon',
+    onSelect: toggleColorMode,
+  },
+], [
+  {
+    label: 'Sign out',
+    icon: 'i-lucide-log-out',
+    color: 'error' as const,
+    onSelect: signOut,
+  },
+]])
 
 const totalCount = computed(() => notes.value.length)
 
@@ -13,8 +42,8 @@ function selectTag(tag: string | null) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full border-r border-default bg-default overflow-y-auto">
-    <nav class="flex-1 p-2 space-y-0.5">
+  <div class="flex flex-col h-full border-r border-default bg-default">
+    <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
       <!-- All Notes -->
       <button
         class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
@@ -57,5 +86,19 @@ function selectTag(tag: string | null) {
         Use <span class="text-primary-500">#tag</span> in a note
       </div>
     </nav>
+
+    <div class="shrink-0 p-2 border-t border-default">
+      <UDropdownMenu :items="dropdownItems" :ui="{ content: 'w-48' }">
+        <button class="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-sm text-muted hover:bg-elevated hover:text-default transition-colors">
+          <UAvatar
+            :alt="userInitials"
+            size="xs"
+            class="shrink-0"
+          />
+          <span class="truncate flex-1 text-left text-xs">{{ session?.user?.name ?? session?.user?.email }}</span>
+          <UIcon name="i-lucide-chevrons-up-down" class="size-3.5 shrink-0 opacity-50" />
+        </button>
+      </UDropdownMenu>
+    </div>
   </div>
 </template>

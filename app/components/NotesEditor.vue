@@ -360,9 +360,9 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
           class="min-h-full"
         >
           <!-- Fixed toolbar -->
-          <div class="flex items-center gap-2 px-3 py-3 border-b border-default sticky top-0 bg-default z-10 overflow-x-auto">
+          <div class="flex items-center gap-2 px-3 py-2.5 pb-3 border-b border-default sticky top-0 bg-default z-10 overflow-x-auto">
             <UEditorToolbar :editor="editor" :items="fixedToolbarItems" />
-            <div class="flex items-center gap-2 shrink-0 ml-auto">
+            <div class="flex items-center gap-1 shrink-0 ml-auto">
               <span v-if="tagCount > 0" class="flex items-center gap-1 text-xs text-muted">
                 <UIcon name="i-lucide-tag" class="size-3" />
                 {{ tagCount }}
