@@ -8,7 +8,7 @@ const { signIn, isPending } = useAuth()
   <div class="flex items-center justify-center min-h-screen bg-zinc-950">
     <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 w-full max-w-sm space-y-6 shadow-xl">
       <div class="text-center space-y-2">
-        <img src="/logo.png" alt="Notes" class="h-10 w-auto mx-auto" />
+        <AppLogo class="text-2xl mx-auto block" />
         <h1 class="text-xl font-semibold text-white">Sign in to Notes</h1>
         <p class="text-sm text-zinc-400">Continue with your Discord account</p>
       </div>

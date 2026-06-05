@@ -42,7 +42,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   <div class="flex h-screen overflow-hidden">
     <div class="flex flex-col shrink-0 border-r border-default" style="width: 460px">
       <div class="flex items-center gap-2 px-3 py-2.5 border-b border-default shrink-0 bg-default">
-        <img src="/logo.png" alt="Easy Notes" class="h-8 w-auto ml-2 mr-5 shrink-0" />
+        <AppLogo class="text-xl ml-2 mr-5 shrink-0" />
 
         <button
           class="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-default bg-elevated/50 hover:bg-elevated text-sm text-muted transition-colors"

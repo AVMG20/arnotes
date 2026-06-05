@@ -72,7 +72,7 @@ watch(note, (n) => {
       <UContainer class="flex gap-3 py-3">
         <div class="px-10 flex items-center justify-between w-full">
           <button class="flex items-center gap-2 hover:opacity-75 transition-opacity" @click="goHome">
-            <img src="/logo.png" alt="Easy Notes" class="h-8 w-auto" />
+            <AppLogo class="text-xl" />
           </button>
           <div class="flex items-center gap-1.5 text-xs text-muted ml-2">
             <UIcon name="i-lucide-globe" class="size-3.5 text-primary" />
