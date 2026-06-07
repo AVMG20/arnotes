@@ -56,7 +56,7 @@ async function confirmDelete() {
               size="xs"
               color="neutral"
               variant="ghost"
-              class="opacity-0 group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
+              class="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
               aria-label="Delete"
               @click.stop="requestDelete(note.id, note.title || 'Untitled')"
             />

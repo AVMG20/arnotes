@@ -370,21 +370,19 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
               <div class="w-px h-4 bg-muted/40" />
               <UButton
                 :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-lock'"
-                :label="activeNote?.isPublic ? 'Public' : 'Private'"
                 size="xs"
                 :color="activeNote?.isPublic ? 'primary' : 'neutral'"
                 variant="ghost"
                 @click="handleTogglePublic"
-              />
+              ><span class="hidden sm:inline">{{ activeNote?.isPublic ? 'Public' : 'Private' }}</span></UButton>
               <div class="w-px h-4 bg-muted/40" />
               <UButton
                 icon="i-lucide-clipboard-copy"
-                label="Copy"
                 size="xs"
                 color="neutral"
                 variant="ghost"
                 @click="copyToMarkdown"
-              />
+              ><span class="hidden sm:inline">Copy</span></UButton>
             </div>
           </div>
 

@@ -4,7 +4,8 @@ import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 const route = useRoute()
 const router = useRouter()
 const { activeNoteId, activeNote, createNote, deleteNote } = useNotes()
-const searchModal = ref<{ open: boolean } | null>(null)
+const searchOpen = useSearchModal()
+const sidebarOpen = ref(false)
 const deleteModalOpen = ref(false)
 
 // Back/forward: route param → active note
@@ -29,7 +30,7 @@ async function confirmDelete() {
 
 function onKeydown(e: KeyboardEvent) {
   if (!e.metaKey && !e.ctrlKey) return
-  if (e.key === 'k') { e.preventDefault(); if (searchModal.value) searchModal.value.open = true }
+  if (e.key === 'k') { e.preventDefault(); searchOpen.value = true }
   else if (e.key === 'n') { e.preventDefault(); createNote(undefined) }
   else if (e.key === 'w') { e.preventDefault(); if (activeNote.value) deleteModalOpen.value = true }
 }
@@ -39,40 +40,58 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="flex h-screen overflow-hidden">
-    <div class="flex flex-col shrink-0 border-r border-default" style="width: 460px">
-      <div class="flex items-center gap-2 px-3 py-2.5 border-b border-default shrink-0 bg-default">
-        <AppLogo class="text-xl ml-2 mr-5 shrink-0" />
-
-        <button
-          class="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-default bg-elevated/50 hover:bg-elevated text-sm text-muted transition-colors"
-          @click="searchModal && (searchModal.open = true)"
-        >
-          <UIcon name="i-lucide-search" class="size-3.5 shrink-0" />
-          <span class="flex-1 text-left text-xs truncate">Search notes…</span>
-          <span class="text-xs text-muted/60 font-mono shrink-0 hidden sm:block">⌘K</span>
-        </button>
-
-        <UButton
-          icon="i-lucide-plus"
-          size="sm"
-          color="primary"
-          variant="soft"
-          aria-label="New note"
-          class="shrink-0"
-          @click="() => createNote(undefined)"
-        />
-      </div>
-
-      <div class="flex flex-1 min-h-0">
-        <NotesTagsPanel class="w-52 shrink-0" />
-        <NotesListPanel class="flex-1 min-w-0" />
-      </div>
+  <div class="flex h-dvh overflow-hidden">
+    <!-- Desktop sidebar -->
+    <div class="hidden lg:flex flex-col shrink-0 border-r border-default" style="width: 460px">
+      <AppSidebar />
     </div>
 
-    <NotesEditor class="flex-1 min-w-0" />
+    <!-- Mobile sidebar drawer -->
+    <USlideover
+      v-model:open="sidebarOpen"
+      side="left"
+      :ui="{ content: 'w-[min(85vw,360px)]' }"
+    >
+      <template #content>
+        <AppSidebar @close="sidebarOpen = false" />
+      </template>
+    </USlideover>
 
-    <NotesSearchModal ref="searchModal" />
+    <!-- Editor (with bottom padding on mobile for the nav bar) -->
+    <NotesEditor class="flex-1 min-w-0 pb-14 lg:pb-0" />
+
+    <!-- Mobile bottom nav bar -->
+    <div
+      class="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex items-center justify-around px-8 border-t border-default bg-default/95 backdrop-blur-sm"
+      style="padding-top: 0.5rem; padding-bottom: max(0.5rem, env(safe-area-inset-bottom))"
+    >
+      <UButton
+        icon="i-lucide-panel-left"
+        color="neutral"
+        variant="ghost"
+        size="md"
+        aria-label="Open sidebar"
+        @click="sidebarOpen = true"
+      />
+      <UButton
+        icon="i-lucide-search"
+        color="neutral"
+        variant="ghost"
+        size="md"
+        aria-label="Search notes"
+        @click="searchOpen = true"
+      />
+      <UButton
+        icon="i-lucide-square-pen"
+        color="primary"
+        variant="soft"
+        size="md"
+        aria-label="New note"
+        @click="createNote(undefined)"
+      />
+    </div>
+
+    <NotesSearchModal />
 
     <UModal
       v-model:open="deleteModalOpen"

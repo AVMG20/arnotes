@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const { activeNoteId, activeTag, searchQuery, recentTags, searchNotes, createNote } = useNotes()
 
-const open = ref(false)
+const open = useSearchModal()
 const query = ref('')
 const highlighted = ref(0)
 
@@ -67,7 +67,6 @@ function snippet(html: string) {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
-defineExpose({ open })
 </script>
 
 <template>
