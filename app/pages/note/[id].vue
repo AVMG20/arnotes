@@ -6,7 +6,6 @@ const router = useRouter()
 const { activeNoteId, activeNote, createNote, deleteNote } = useNotes()
 const searchOpen = useSearchModal()
 const sidebarOpen = ref(false)
-const deleteModalOpen = ref(false)
 
 // Back/forward: route param → active note
 watch(() => route.params.id, id => {
@@ -21,18 +20,11 @@ watch(activeNoteId, id => {
   else if (!id) router.replace('/note')
 })
 
-async function confirmDelete() {
-  if (!activeNote.value) return
-  const id = activeNote.value.id
-  deleteModalOpen.value = false
-  await deleteNote(id)
-}
-
 function onKeydown(e: KeyboardEvent) {
   if (!e.metaKey && !e.ctrlKey) return
   if (e.key === 'k') { e.preventDefault(); searchOpen.value = true }
   else if (e.key === 'n') { e.preventDefault(); createNote(undefined) }
-  else if (e.key === 'w') { e.preventDefault(); if (activeNote.value) deleteModalOpen.value = true }
+  else if (e.key === 'w') { e.preventDefault(); if (activeNote.value) deleteNote(activeNote.value.id) }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
@@ -92,17 +84,5 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
 
     <NotesSearchModal />
-
-    <UModal
-      v-model:open="deleteModalOpen"
-      :title="`Delete '${activeNote?.title || 'Untitled'}'?`"
-      description="This note will be permanently deleted and cannot be recovered."
-      :ui="{ footer: 'justify-end' }"
-    >
-      <template #footer>
-        <UButton label="Cancel" color="neutral" variant="ghost" @click="deleteModalOpen = false" />
-        <UButton label="Delete" color="error" @click="confirmDelete" />
-      </template>
-    </UModal>
   </div>
 </template>

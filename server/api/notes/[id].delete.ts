@@ -8,15 +8,27 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const userId = event.context.session.user.id
 
-  const [deleted] = await db
-    .delete(notes)
+  const [existing] = await db
+    .select()
+    .from(notes)
+    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+
+  if (!existing) throw createError({ statusCode: 404, message: 'Note not found' })
+
+  if (existing.deletedAt) {
+    // Already in trash — permanently delete
+    await db.delete(notes).where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    const attachDir = join(process.cwd(), 'data', 'attachments', id)
+    if (existsSync(attachDir)) rmSync(attachDir, { recursive: true })
+    return { ok: true, permanent: true }
+  }
+
+  // Soft delete
+  const [softDeleted] = await db
+    .update(notes)
+    .set({ deletedAt: Date.now() })
     .where(and(eq(notes.id, id), eq(notes.userId, userId)))
     .returning()
 
-  if (!deleted) throw createError({ statusCode: 404, message: 'Note not found' })
-
-  const attachDir = join(process.cwd(), 'data', 'attachments', id)
-  if (existsSync(attachDir)) rmSync(attachDir, { recursive: true })
-
-  return { ok: true }
+  return { ok: true, permanent: false, note: softDeleted }
 })

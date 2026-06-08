@@ -4,7 +4,7 @@ import { format } from 'date-fns'
 const router = useRouter()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
-const { notes, allTags, activeNoteId } = useNotes()
+const { notes, activeNotes, allTags, activeNoteId } = useNotes()
 const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor } = useUserSettings()
 const sidebarOpen = ref(false)
 
@@ -33,7 +33,7 @@ const memberSince = computed(() => {
   return format(new Date(date), 'MMMM yyyy')
 })
 
-const totalNotes = computed(() => notes.value.length)
+const totalNotes = computed(() => activeNotes.value.length)
 const totalTags = computed(() => allTags.value.length)
 
 const totalContentBytes = computed(() => {
@@ -92,24 +92,16 @@ function swatchStyle(color: string, selected: boolean) {
     <div class="flex-1 min-w-0 flex flex-col overflow-hidden pb-14 lg:pb-0">
       <!-- Header -->
       <div class="sticky top-0 z-10 border-b border-default bg-default/95 backdrop-blur-sm shrink-0">
-        <div class="px-4 py-3 flex items-center gap-3">
-          <UButton
-            icon="i-lucide-arrow-left"
-            variant="ghost"
-            color="neutral"
-            size="sm"
-            aria-label="Back"
-            @click="navigateTo('/note')"
-          />
+        <div class="px-4 pt-4 pb-3.5 flex items-center gap-3">
           <h1 class="font-semibold text-sm">Settings</h1>
         </div>
       </div>
 
       <div class="flex-1 overflow-y-auto">
         <UContainer class="py-6">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <div class="flex flex-col gap-4">
           <!-- Stats — full width -->
-          <div class="md:col-span-2 rounded-xl border border-default bg-default overflow-hidden">
+          <div class="rounded-xl border border-default bg-default overflow-hidden">
             <div class="px-5 py-3 border-b border-default bg-elevated/40">
               <span class="text-xs font-semibold text-muted uppercase tracking-wider">Your stats</span>
             </div>
@@ -144,7 +136,7 @@ function swatchStyle(color: string, selected: boolean) {
             </div>
           </div>
 
-          <!-- Account — left column -->
+          <!-- Account -->
           <div class="rounded-xl border border-default bg-default overflow-hidden">
             <div class="px-5 py-3 border-b border-default bg-elevated/40">
               <span class="text-xs font-semibold text-muted uppercase tracking-wider">Account</span>
@@ -172,7 +164,7 @@ function swatchStyle(color: string, selected: boolean) {
             </div>
           </div>
 
-          <!-- Appearance — right column -->
+          <!-- Appearance -->
           <div class="rounded-xl border border-default bg-default overflow-hidden">
             <div class="px-5 py-3 border-b border-default bg-elevated/40">
               <span class="text-xs font-semibold text-muted uppercase tracking-wider">Appearance</span>

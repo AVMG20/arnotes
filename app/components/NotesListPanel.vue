@@ -1,36 +1,36 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { ready, filteredNotes, activeNoteId, activeTag, deleteNote } = useNotes()
+const { ready, filteredNotes, activeNoteId, activeTag, showTrash, deleteNote, restoreNote } = useNotes()
 
-// ─── Delete confirmation ─────────────────────────────────────
+// ─── Permanent delete confirmation ──────────────────────────
 
-const deleteTarget = ref<{ id: string; title: string } | null>(null)
-const deleteModalOpen = computed({
-  get: () => deleteTarget.value !== null,
-  set: (v) => { if (!v) deleteTarget.value = null }
-})
+const permDeleteTarget = ref<string | null>(null)
+const permDeleteModalOpen = ref(false)
 
-function requestDelete(id: string, title: string) {
-  deleteTarget.value = { id, title }
+function requestPermanentDelete(id: string) {
+  permDeleteTarget.value = id
+  permDeleteModalOpen.value = true
 }
 
-async function confirmDelete() {
-  if (deleteTarget.value) {
-    await deleteNote(deleteTarget.value.id)
-    deleteTarget.value = null
+async function confirmPermanentDelete() {
+  if (permDeleteTarget.value) {
+    await deleteNote(permDeleteTarget.value)
+    permDeleteTarget.value = null
   }
+  permDeleteModalOpen.value = false
 }
 </script>
 
 <template>
   <div class="flex flex-col h-full bg-default">
-    <!-- Active tag label -->
-    <div v-if="activeTag" class="px-3 pt-2 pb-0 shrink-0">
+    <!-- Active tag / trash label -->
+    <div v-if="activeTag || showTrash" class="px-3 pt-2 pb-0 shrink-0">
       <div class="flex items-center gap-1.5 text-xs text-muted">
-        <UIcon name="i-lucide-filter" class="size-3 shrink-0" />
-        <span class="text-primary-600 dark:text-primary-400 font-medium">#{{ activeTag }}</span>
+        <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-filter'" class="size-3 shrink-0" />
+        <span v-if="showTrash" class="font-medium">Deleted notes</span>
+        <span v-else class="text-primary-600 dark:text-primary-400 font-medium">#{{ activeTag }}</span>
       </div>
     </div>
 
@@ -40,10 +40,8 @@ async function confirmDelete() {
         <div
           v-for="note in filteredNotes"
           :key="note.id"
-          class="group relative flex flex-col gap-0.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors mb-0.5"
-          :class="activeNoteId === note.id
-            ? 'bg-elevated'
-            : 'hover:bg-elevated/50'"
+          class="group relative flex flex-col gap-0.5 px-2.5 py-2 rounded-lg transition-colors mb-0.5"
+          :class="activeNoteId === note.id ? 'bg-elevated' : 'hover:bg-elevated/50'"
           @click="activeNoteId = note.id"
         >
           <!-- Title row -->
@@ -51,15 +49,41 @@ async function confirmDelete() {
             <p class="font-medium text-sm text-default leading-snug line-clamp-2 flex-1 min-w-0">
               {{ note.title || 'Untitled' }}
             </p>
+
+            <!-- Normal note: soft-delete button -->
             <UButton
+              v-if="!note.deletedAt"
               icon="i-lucide-trash-2"
               size="xs"
               color="neutral"
               variant="ghost"
               class="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
               aria-label="Delete"
-              @click.stop="requestDelete(note.id, note.title || 'Untitled')"
+              @click.stop="deleteNote(note.id)"
             />
+
+            <!-- Deleted note: restore + permanent delete -->
+            <div
+              v-else
+              class="flex items-center gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
+            >
+              <UButton
+                icon="i-lucide-undo-2"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                aria-label="Restore"
+                @click.stop="restoreNote(note.id)"
+              />
+              <UButton
+                icon="i-lucide-trash-2"
+                size="xs"
+                color="error"
+                variant="ghost"
+                aria-label="Delete permanently"
+                @click.stop="requestPermanentDelete(note.id)"
+              />
+            </div>
           </div>
 
           <!-- Date -->
@@ -67,8 +91,8 @@ async function confirmDelete() {
         </div>
 
         <div v-if="filteredNotes.length === 0" class="flex flex-col items-center justify-center py-10 gap-2 text-center">
-          <UIcon name="i-lucide-file-x" class="size-7 text-muted" />
-          <p class="text-xs text-muted">No notes</p>
+          <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-file-x'" class="size-7 text-muted" />
+          <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : 'No notes' }}</p>
         </div>
       </template>
 
@@ -77,16 +101,16 @@ async function confirmDelete() {
       </div>
     </div>
 
-    <!-- Delete confirmation modal -->
+    <!-- Permanent delete confirmation modal -->
     <UModal
-      v-model:open="deleteModalOpen"
-      :title="`Delete '${deleteTarget?.title}'?`"
+      v-model:open="permDeleteModalOpen"
+      title="Delete permanently?"
       description="This note will be permanently deleted and cannot be recovered."
       :ui="{ footer: 'justify-end' }"
     >
       <template #footer>
-        <UButton label="Cancel" color="neutral" variant="ghost" @click="deleteModalOpen = false" />
-        <UButton label="Delete" color="error" @click="confirmDelete" />
+        <UButton label="Cancel" color="neutral" variant="ghost" @click="permDeleteModalOpen = false" />
+        <UButton label="Delete forever" color="error" @click="confirmPermanentDelete" />
       </template>
     </UModal>
   </div>

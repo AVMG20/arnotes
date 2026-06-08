@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const { notes, allTags, activeTag, searchQuery, trackTagClick } = useNotes()
+const { activeNotes, trashedNotes, allTags, activeTag, showTrash, searchQuery, trackTagClick } = useNotes()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
 
@@ -37,12 +37,19 @@ const dropdownItems = computed(() => [[
   },
 ]])
 
-const totalCount = computed(() => notes.value.length)
+const totalCount = computed(() => activeNotes.value.length)
 
 function selectTag(tag: string | null) {
+  showTrash.value = false
   activeTag.value = tag
   searchQuery.value = ''
   if (tag) trackTagClick(tag)
+}
+
+function selectTrash() {
+  showTrash.value = true
+  activeTag.value = null
+  searchQuery.value = ''
 }
 </script>
 
@@ -52,7 +59,7 @@ function selectTag(tag: string | null) {
       <!-- All Notes -->
       <button
         class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
-        :class="!activeTag
+        :class="!activeTag && !showTrash
           ? 'bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 font-medium'
           : 'text-muted hover:bg-elevated hover:text-default'"
         @click="selectTag(null)"
@@ -62,6 +69,21 @@ function selectTag(tag: string | null) {
           <span class="truncate">All Notes</span>
         </span>
         <span class="text-xs tabular-nums opacity-50 ml-1 shrink-0">{{ totalCount }}</span>
+      </button>
+
+      <!-- Deleted / Trash -->
+      <button
+        class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
+        :class="showTrash
+          ? 'bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 font-medium'
+          : 'text-muted hover:bg-elevated hover:text-default'"
+        @click="selectTrash"
+      >
+        <span class="flex items-center gap-2 min-w-0">
+          <UIcon name="i-lucide-trash-2" class="size-3.5 shrink-0" />
+          <span class="truncate">Deleted</span>
+        </span>
+        <span v-if="trashedNotes.length > 0" class="text-xs tabular-nums opacity-50 ml-1 shrink-0">{{ trashedNotes.length }}</span>
       </button>
 
       <!-- Tags -->
@@ -74,7 +96,7 @@ function selectTag(tag: string | null) {
           v-for="{ tag, count } in allTags"
           :key="tag"
           class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
-          :class="activeTag === tag
+          :class="activeTag === tag && !showTrash
             ? 'bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 font-medium'
             : 'text-muted hover:bg-elevated hover:text-default'"
           @click="selectTag(tag)"

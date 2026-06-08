@@ -9,12 +9,14 @@ export interface Note {
   isPublic: boolean
   createdAt: number
   updatedAt: number
+  deletedAt: number | null
 }
 
 // Module-level singleton state
 const _notes = ref<Note[]>([])
 const _activeNoteId = ref<string | null>(null)
 const _activeTag = ref<string | null>(null)
+const _showTrash = ref(false)
 const _searchQuery = ref('')
 const _ready = ref(false)
 const _recentTags = ref<string[]>([])
@@ -51,11 +53,6 @@ function toSearchDoc(note: Note) {
   }
 }
 
-function persist() {
-  // no-op — db is server-side; this is only needed to satisfy the helper signature
-}
-void persist
-
 // ─── init (called from plugin) ──────────────────────────────
 
 export function initNotesStore(notes: Note[], search: unknown) {
@@ -63,16 +60,19 @@ export function initNotesStore(notes: Note[], search: unknown) {
   _notes.value = notes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(_search as any).addAll(notes.map(toSearchDoc))
-  _activeNoteId.value = notes[0]?.id ?? null
+  _activeNoteId.value = notes.find(n => !n.deletedAt)?.id ?? null
   _ready.value = true
 }
 
 // ─── composable ─────────────────────────────────────────────
 
 export function useNotes() {
+  const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt))
+  const trashedNotes = computed(() => _notes.value.filter(n => n.deletedAt !== null))
+
   const allTags = computed(() => {
     const counts = new Map<string, number>()
-    for (const n of _notes.value)
+    for (const n of activeNotes.value)
       for (const t of n.tags)
         counts.set(t, (counts.get(t) ?? 0) + 1)
     return [...counts.entries()]
@@ -82,14 +82,17 @@ export function useNotes() {
 
   const filteredNotes = computed(() => {
     if (_searchQuery.value.trim() && _search) {
+      // Search spans all notes including deleted
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const hits = (_search as any).search(_searchQuery.value) as any[]
       return hits.map((h: any) => _notes.value.find(n => n.id === h.id)).filter(Boolean) as Note[]
     }
-    const pool = _activeTag.value
-      ? _notes.value.filter(n => n.tags.includes(_activeTag.value!))
-      : [..._notes.value]
-    return pool.sort((a, b) => b.updatedAt - a.updatedAt)
+    const pool = _showTrash.value
+      ? trashedNotes.value
+      : _activeTag.value
+        ? activeNotes.value.filter(n => n.tags.includes(_activeTag.value!))
+        : activeNotes.value
+    return [...pool].sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
   const activeNote = computed(() =>
@@ -104,7 +107,6 @@ export function useNotes() {
     const titleText = options?.title?.trim()
     const activeTagVal = _activeTag.value
 
-    // Always start with an H1 so the user lands on it immediately
     let content = titleText ? `<h1>${titleText}</h1>` : '<h1></h1>'
     if (activeTagVal) content += `<p>#${activeTagVal}</p>`
 
@@ -135,14 +137,13 @@ export function useNotes() {
     next[idx] = updated
     _notes.value = next
     if (_search) {
-      try { _search.discard(id) }
-      catch {}
+      try { _search.discard(id) } catch {}
       _search.add(toSearchDoc(updated))
     }
   }
 
   function searchNotes(query: string): Note[] {
-    if (!query.trim() || !_search) return [..._notes.value]
+    if (!query.trim() || !_search) return activeNotes.value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hits = (_search as any).search(query) as any[]
     return hits.map((h: any) => _notes.value.find(n => n.id === h.id)).filter(Boolean) as Note[]
@@ -163,21 +164,54 @@ export function useNotes() {
   }
 
   async function deleteNote(id: string) {
-    await $fetch(`/api/notes/${id}`, { method: 'DELETE' })
-    _notes.value = _notes.value.filter(n => n.id !== id)
-    try { _search?.discard(id) }
-    catch {}
-    if (_activeNoteId.value === id) {
-      _activeNoteId.value = _notes.value[0]?.id ?? null
+    const res = await $fetch<{ ok: boolean; permanent: boolean; note?: Note }>(
+      `/api/notes/${id}`,
+      { method: 'DELETE' }
+    )
+
+    if (!res.permanent && res.note) {
+      const idx = _notes.value.findIndex(n => n.id === id)
+      if (idx >= 0) {
+        const next = [..._notes.value]
+        next[idx] = res.note
+        _notes.value = next
+        if (_search) {
+          try { _search.discard(id) } catch {}
+          _search.add(toSearchDoc(res.note))
+        }
+      }
+    } else {
+      _notes.value = _notes.value.filter(n => n.id !== id)
+      try { _search?.discard(id) } catch {}
+      if (_activeNoteId.value === id) {
+        _activeNoteId.value = activeNotes.value[0]?.id ?? null
+      }
+    }
+  }
+
+  async function restoreNote(id: string) {
+    const restored = await $fetch<Note>(`/api/notes/${id}/restore`, { method: 'POST' })
+    const idx = _notes.value.findIndex(n => n.id === id)
+    if (idx >= 0) {
+      const next = [..._notes.value]
+      next[idx] = restored
+      _notes.value = next
+      if (_search) {
+        try { _search.discard(id) } catch {}
+        _search.add(toSearchDoc(restored))
+      }
     }
   }
 
   return {
     ready: _ready,
     notes: _notes,
+    activeNotes,
+    trashedNotes,
     activeNote,
     activeNoteId: _activeNoteId,
     activeTag: _activeTag,
+    showTrash: _showTrash,
     searchQuery: _searchQuery,
     recentTags: _recentTags,
     allTags,
@@ -188,6 +222,7 @@ export function useNotes() {
     updateNote,
     togglePublic,
     deleteNote,
+    restoreNote,
     searchNotes
   }
 }

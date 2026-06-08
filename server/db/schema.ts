@@ -60,6 +60,7 @@ export const notes = pgTable('notes', {
   isPublic: boolean('is_public').notNull().default(false),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  deletedAt: bigint('deleted_at', { mode: 'number' }),
 })
 
 export type Note = typeof notes.$inferSelect
