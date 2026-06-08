@@ -43,7 +43,7 @@ onMounted(async () => {
 })
 
 function goHome() {
-  router.push(isLoggedIn.value ? '/' : '/login')
+  router.push(isLoggedIn.value ? '/note' : '/login')
 }
 
 // ─── Editor extensions (same as NotesEditor, without HashtagHighlight) ───

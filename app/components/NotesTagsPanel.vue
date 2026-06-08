@@ -19,6 +19,11 @@ function toggleColorMode() {
 
 const dropdownItems = computed(() => [[
   {
+    label: 'Settings',
+    icon: 'i-lucide-settings',
+    onSelect: () => navigateTo('/settings'),
+  },
+  {
     label: isDark.value ? 'Light mode' : 'Dark mode',
     icon: isDark.value ? 'i-lucide-sun' : 'i-lucide-moon',
     onSelect: toggleColorMode,

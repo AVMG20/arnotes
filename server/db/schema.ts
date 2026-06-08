@@ -64,3 +64,14 @@ export const notes = pgTable('notes', {
 
 export type Note = typeof notes.$inferSelect
 export type NewNote = typeof notes.$inferInsert
+
+// ─── User settings ────────────────────────────────────────────────────────────
+
+export const userSettings = pgTable('user_settings', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  primaryColor: text('primary_color').notNull().default('emerald'),
+  neutralColor: text('neutral_color').notNull().default('zinc'),
+  updatedAt: timestamp('updated_at').notNull(),
+})
+
+export type UserSettings = typeof userSettings.$inferSelect

@@ -17,8 +17,8 @@ watch(() => route.params.id, id => {
 
 // Any state change (click, create, delete) → push URL
 watch(activeNoteId, id => {
-  if (id && route.params.id !== id) router.push('/' + id)
-  else if (!id) router.replace('/')
+  if (id && route.params.id !== id) router.push('/note/' + id)
+  else if (!id) router.replace('/note')
 })
 
 async function confirmDelete() {
