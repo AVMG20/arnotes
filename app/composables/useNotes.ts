@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import {computed, ref} from 'vue'
 
 export interface Note {
   id: string
@@ -26,6 +26,11 @@ const _autoFocus = ref(false)
 let _search: any = null
 
 // ─── helpers ────────────────────────────────────────────────
+
+// Build once, outside the function or memoized
+const notesById = computed(() =>
+    new Map(_notes.value.map(n => [n.id, n]))
+)
 
 export function extractTags(html: string): string[] {
   const cleaned = html
@@ -81,12 +86,10 @@ export function useNotes() {
   })
 
   const filteredNotes = computed(() => {
-    if (_searchQuery.value.trim() && _search) {
-      // Search spans all notes including deleted
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const hits = (_search as any).search(_searchQuery.value) as any[]
-      return hits.map((h: any) => _notes.value.find(n => n.id === h.id)).filter(Boolean) as Note[]
-    }
+      if (_searchQuery.value.trim() && _search) {
+          const hits = (_search as any).search(_searchQuery.value) as any[]
+          return hits.map((h: any) => notesById.value.get(h.id)).filter(Boolean) as Note[]
+      }
     const pool = _showTrash.value
       ? trashedNotes.value
       : _activeTag.value
@@ -142,19 +145,20 @@ export function useNotes() {
     }
   }
 
-  function searchNotes(query: string): Note[] {
-    if (!query.trim() || !_search) return activeNotes.value
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hits = (_search as any).search(query) as any[]
-    return hits.map((h: any) => _notes.value.find(n => n.id === h.id)).filter(Boolean) as Note[]
-  }
+    function searchNotes(query: string): Note[] {
+        if (!query.trim() || !_search) return activeNotes.value
+        const hits = (_search as any).search(query) as any[]
+        return hits.map((h: any) => notesById.value.get(h.id))
+            .filter(Boolean) as Note[]
+    }
 
   async function togglePublic(id: string): Promise<Note> {
     const idx = _notes.value.findIndex(n => n.id === id)
     if (idx < 0) throw new Error('Note not found')
     const current = _notes.value[idx]
-    const updated = await $fetch<Note>(`/api/notes/${id}`, {
+      const updated = await $fetch<Note>(`/api/notes/${id}`, {
       method: 'PUT',
+      // @ts-ignore
       body: { isPublic: !current.isPublic }
     })
     const next = [..._notes.value]

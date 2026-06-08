@@ -1,11 +1,38 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const { ready, filteredNotes, activeNoteId, activeTag, showTrash, deleteNote, restoreNote } = useNotes()
 
-// ─── Permanent delete confirmation ──────────────────────────
+const PAGE = 100
+const visibleCount = ref(PAGE)
 
+// Reset when the list changes (tag switch, search, trash toggle)
+watch(filteredNotes, () => { visibleCount.value = PAGE })
+
+const sentinel = ref<HTMLElement | null>(null)
+const scrollContainer = ref<HTMLElement | null>(null)
+
+let observer: IntersectionObserver | null = null
+
+watch(sentinel, (el) => {
+  observer?.disconnect()
+  if (!el) return
+  observer = new IntersectionObserver(([entry]) => {
+    if (entry && entry.isIntersecting) visibleCount.value += PAGE
+  }, { threshold: 0.1 })
+  observer.observe(el)
+}, { immediate: true })
+
+onUnmounted(() => observer?.disconnect())
+
+
+watch(filteredNotes, () => {
+  visibleCount.value = PAGE
+  if (scrollContainer.value) scrollContainer.value.scrollTop = 0
+})
+
+// ─── Permanent delete confirmation ──────────────────────────
 const permDeleteTarget = ref<string | null>(null)
 const permDeleteModalOpen = ref(false)
 
@@ -35,10 +62,10 @@ async function confirmPermanentDelete() {
     </div>
 
     <!-- Notes list -->
-    <div class="flex-1 overflow-y-auto py-2 px-2">
+    <div class="flex-1 overflow-y-auto py-2 px-2" ref="scrollContainer" >
       <template v-if="ready">
         <div
-          v-for="note in filteredNotes"
+            v-for="note in filteredNotes.slice(0, visibleCount)"
           :key="note.id"
           class="group relative flex flex-col gap-0.5 px-2.5 py-2 rounded-lg transition-colors mb-0.5"
           :class="activeNoteId === note.id ? 'bg-elevated' : 'hover:bg-elevated/50'"
@@ -94,6 +121,13 @@ async function confirmPermanentDelete() {
           <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-file-x'" class="size-7 text-muted" />
           <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : 'No notes' }}</p>
         </div>
+
+        <!-- sentinel: triggers next page load when scrolled into view -->
+        <div
+            v-if="visibleCount < filteredNotes.length"
+            ref="sentinel"
+            class="h-4"
+        />
       </template>
 
       <div v-else class="flex items-center justify-center py-10">
