@@ -1,15 +1,19 @@
 import MiniSearch from 'minisearch'
 import { initNotesStore } from '~/composables/useNotes'
 import type { Note } from '~/composables/useNotes'
+import { authClient } from '~/composables/useAuth'
 
 type SearchDoc = Note & { tagsText: string; contentText: string }
 
 export default defineNuxtPlugin(async () => {
+  const { data: session } = await authClient.getSession()
+  if (!session) return
+
   let notes: Note[]
   try {
     notes = await $fetch<Note[]>('/api/notes')
   } catch {
-    return // Not authenticated — auth.global middleware will redirect to /login
+    return
   }
 
   const search = new MiniSearch<SearchDoc>({
