@@ -11,7 +11,7 @@ export function useAuth() {
   const isPending = computed(() => sessionRef.value.isPending)
 
   async function signIn() {
-    await authClient.signIn.social({ provider: 'discord', callbackURL: '/' })
+    await authClient.signIn.social({ provider: 'discord', callbackURL: '/note' })
   }
 
   async function signOut() {
