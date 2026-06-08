@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ layout: 'app' })
+
 const { ready, notes, createNote } = useNotes()
 
 watch(ready, async (isReady) => {

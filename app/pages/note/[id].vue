@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { watch, onMounted, onBeforeUnmount } from 'vue'
+
+definePageMeta({ layout: 'app' })
 
 const route = useRoute()
 const router = useRouter()
 const { activeNoteId, activeNote, createNote, deleteNote } = useNotes()
+const { sidebarOpen } = useSidebar()
 const searchOpen = useSearchModal()
-const sidebarOpen = ref(false)
 
 // Back/forward: route param → active note
 watch(() => route.params.id, id => {
@@ -32,57 +34,36 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="flex h-dvh overflow-hidden">
-    <!-- Desktop sidebar -->
-    <div class="hidden lg:flex flex-col shrink-0 border-r border-default" style="width: 460px">
-      <AppSidebar />
-    </div>
+  <NotesEditor class="flex-1 min-w-0 pb-14 lg:pb-0" />
 
-    <!-- Mobile sidebar drawer -->
-    <USlideover
-        v-model:open="sidebarOpen"
-        side="left"
-        :ui="{ content: 'max-w-[calc(100%-10vw)]' }"
-    >
-      <template #content>
-        <AppSidebar @close="sidebarOpen = false" />
-      </template>
-    </USlideover>
-
-    <!-- Editor (with bottom padding on mobile for the nav bar) -->
-    <NotesEditor class="flex-1 min-w-0 pb-14 lg:pb-0" />
-
-    <!-- Mobile bottom nav bar -->
-    <div
-      class="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex items-center justify-around px-8 border-t border-default bg-default/95 backdrop-blur-sm"
-      style="padding-top: 0.5rem; padding-bottom: max(0.5rem, env(safe-area-inset-bottom))"
-    >
-      <UButton
-        icon="i-lucide-panel-left"
-        color="neutral"
-        variant="ghost"
-        size="md"
-        aria-label="Open sidebar"
-        @click="sidebarOpen = true"
-      />
-      <UButton
-        icon="i-lucide-search"
-        color="neutral"
-        variant="ghost"
-        size="md"
-        aria-label="Search notes"
-        @click="searchOpen = true"
-      />
-      <UButton
-        icon="i-lucide-square-pen"
-        color="primary"
-        variant="soft"
-        size="md"
-        aria-label="New note"
-        @click="createNote(undefined)"
-      />
-    </div>
-
-    <NotesSearchModal />
+  <!-- Mobile bottom nav bar -->
+  <div
+    class="fixed bottom-0 left-0 right-0 z-20 lg:hidden flex items-center justify-around px-8 border-t border-default bg-default/95 backdrop-blur-sm"
+    style="padding-top: 0.5rem; padding-bottom: max(0.5rem, env(safe-area-inset-bottom))"
+  >
+    <UButton
+      icon="i-lucide-panel-left"
+      color="neutral"
+      variant="ghost"
+      size="md"
+      aria-label="Open sidebar"
+      @click="sidebarOpen = true"
+    />
+    <UButton
+      icon="i-lucide-search"
+      color="neutral"
+      variant="ghost"
+      size="md"
+      aria-label="Search notes"
+      @click="searchOpen = true"
+    />
+    <UButton
+      icon="i-lucide-square-pen"
+      color="primary"
+      variant="soft"
+      size="md"
+      aria-label="New note"
+      @click="createNote(undefined)"
+    />
   </div>
 </template>
