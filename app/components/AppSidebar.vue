@@ -32,7 +32,7 @@ watch(activeNoteId, () => emit('close'))
     </div>
 
     <div class="flex flex-1 min-h-0">
-      <NotesTagsPanel class="w-44 shrink-0" />
+      <NotesTagsPanel class="w-36 md:w-52 shrink-0" />
       <NotesListPanel class="flex-1 min-w-0" />
     </div>
   </div>

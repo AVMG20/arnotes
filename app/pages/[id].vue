@@ -48,9 +48,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
     <!-- Mobile sidebar drawer -->
     <USlideover
-      v-model:open="sidebarOpen"
-      side="left"
-      :ui="{ content: 'w-[min(85vw,360px)]' }"
+        v-model:open="sidebarOpen"
+        side="left"
+        :ui="{ content: 'max-w-[calc(100%-10vw)]' }"
     >
       <template #content>
         <AppSidebar @close="sidebarOpen = false" />
