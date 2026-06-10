@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { activeNoteId, activeTag, searchQuery, recentTags, allTags, searchNotes, createNote } = useNotes()
+const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
 
 const open = useSearchModal()
 const query = ref('')
@@ -13,10 +13,10 @@ const hasQuery = computed(() => query.value.trim().length > 0)
 const isFiltered = computed(() => hasQuery.value || selectedTags.value.length > 0)
 const results = computed(() => searchNotes(query.value, selectedTags.value).slice(0, 8))
 
-// Tags to show in the filter row: selected first, then top tags by frequency
+// Selected tags first, then the rest in last-modified order (allTags is already sorted)
 const filterTagOptions = computed(() => {
   const sel = selectedTags.value
-  const rest = allTags.value.map(t => t.tag).filter(t => !sel.includes(t)).slice(0, 12)
+  const rest = allTags.value.map(t => t.tag).filter(t => !sel.includes(t))
   return [...sel, ...rest]
 })
 
@@ -44,12 +44,6 @@ function toggleTag(tag: string) {
 function selectNote(id: string) {
   activeNoteId.value = id
   activeTag.value = null
-  searchQuery.value = ''
-  open.value = false
-}
-
-function filterByTag(tag: string) {
-  activeTag.value = tag
   searchQuery.value = ''
   open.value = false
 }
@@ -146,7 +140,7 @@ function smartSnippet(html: string): string {
         </div>
 
         <!-- Tag filter chips -->
-        <div v-if="filterTagOptions.length > 0" class="flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto scrollbar-hide">
+        <div v-if="filterTagOptions.length > 0" class="scrollbar-hidden flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto">
           <UIcon name="i-lucide-tag" class="size-3 text-muted shrink-0 mr-0.5" />
           <button
             v-for="tag in filterTagOptions"
@@ -164,24 +158,7 @@ function smartSnippet(html: string): string {
 
         <!-- Empty state: recent tags + recent notes -->
         <template v-if="!isFiltered">
-          <div class="overflow-y-auto max-h-[26rem]">
-            <!-- Recent tags -->
-            <div v-if="recentTags.length > 0" class="px-4 pt-3 pb-2">
-              <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Recent Tags</p>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="tag in recentTags"
-                  :key="tag"
-                  class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900 transition-colors"
-                  @click="filterByTag(tag)"
-                >
-                  <span class="opacity-70">#</span>{{ tag }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="recentTags.length > 0" class="border-t border-default/50 mx-4" />
-
+          <div class="overflow-y-auto max-h-104">
             <!-- Recent notes (top 5) -->
             <div class="px-4 pt-2.5 pb-1">
               <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Recent Notes</p>

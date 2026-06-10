@@ -7,7 +7,8 @@ const { ready, filteredNotes, activeNoteId, activeTag, showTrash, deleteNote, re
 const scrollArea = useTemplateRef('scrollArea')
 
 // Reset scroll position when list changes (tag switch, search, trash toggle)
-watch(filteredNotes, () => {
+watch(filteredNotes, async () => {
+  await nextTick()
   scrollArea.value?.virtualizer?.scrollToIndex(0, { align: 'start' })
 })
 
@@ -48,13 +49,13 @@ async function confirmPermanentDelete() {
           v-slot="{ item: note }"
           :items="filteredNotes"
           :virtualize="{
-          estimateSize: 64,
-          skipMeasurement: true,
-          paddingStart: 8,
-          paddingEnd: 8,
-          gap: 2,
-        }"
-          class="flex-1"
+            estimateSize: 56,
+            overscan: 20,
+            paddingStart: 8,
+            paddingEnd: 8,
+            gap: 2,
+          }"
+          class="flex-1 m-2"
           :ui="{ viewport: 'px-2' }"
       >
         <div

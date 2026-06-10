@@ -3,6 +3,11 @@ export default defineAppConfig({
     colors: {
       primary: 'emerald',
       neutral: 'zinc'
+    },
+    scrollArea: {
+      slots: {
+        root: 'scrollbar-hidden'
+      }
     }
   }
 })

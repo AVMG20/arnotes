@@ -77,12 +77,16 @@ export function useNotes() {
 
   const allTags = computed(() => {
     const counts = new Map<string, number>()
-    for (const n of activeNotes.value)
-      for (const t of n.tags)
+    const latest = new Map<string, number>()
+    for (const n of activeNotes.value) {
+      for (const t of n.tags) {
         counts.set(t, (counts.get(t) ?? 0) + 1)
-    return [...counts.entries()]
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count)
+        if (n.updatedAt > (latest.get(t) ?? 0)) latest.set(t, n.updatedAt)
+      }
+    }
+    return [...counts.keys()]
+      .map(tag => ({ tag, count: counts.get(tag)!, latestUpdatedAt: latest.get(tag)! }))
+      .sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt)
   })
 
   const filteredNotes = computed(() => {

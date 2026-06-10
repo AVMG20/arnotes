@@ -17,6 +17,16 @@
   --color-green-950: #052E16;
 }
 
+/* ─── Scrollbar ─────────────────────────────────────────────── */
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── Editor content padding ────────────────────────────────── */
 
 .tiptap,
