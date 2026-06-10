@@ -1,19 +1,43 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { activeNoteId, activeTag, searchQuery, recentTags, searchNotes, createNote } = useNotes()
+const { activeNoteId, activeTag, searchQuery, recentTags, allTags, searchNotes, createNote } = useNotes()
 
 const open = useSearchModal()
 const query = ref('')
 const highlighted = ref(0)
+const selectedTags = ref<string[]>([])
 
-const results = computed(() => searchNotes(query.value).slice(0, 8))
 const hasQuery = computed(() => query.value.trim().length > 0)
+const isFiltered = computed(() => hasQuery.value || selectedTags.value.length > 0)
+const results = computed(() => searchNotes(query.value, selectedTags.value).slice(0, 8))
 
-// Reset selection when results change
+// Tags to show in the filter row: selected first, then top tags by frequency
+const filterTagOptions = computed(() => {
+  const sel = selectedTags.value
+  const rest = allTags.value.map(t => t.tag).filter(t => !sel.includes(t)).slice(0, 12)
+  return [...sel, ...rest]
+})
+
 watch(query, () => { highlighted.value = 0 })
-watch(open, (v) => { if (v) { query.value = ''; highlighted.value = 0 } })
+watch(selectedTags, () => { highlighted.value = 0 })
+watch(open, (v) => {
+  if (v) {
+    query.value = ''
+    highlighted.value = 0
+    selectedTags.value = []
+  }
+})
+
+// ─── Tag filter ──────────────────────────────────────────────
+
+function toggleTag(tag: string) {
+  const idx = selectedTags.value.indexOf(tag)
+  selectedTags.value = idx >= 0
+    ? selectedTags.value.filter(t => t !== tag)
+    : [...selectedTags.value, tag]
+}
 
 // ─── Actions ─────────────────────────────────────────────────
 
@@ -37,7 +61,6 @@ async function handleCreateNote() {
 
 // ─── Keyboard navigation ─────────────────────────────────────
 
-// total navigable items: results + 1 create-note action
 const itemCount = computed(() => results.value.length + (hasQuery.value ? 1 : 0))
 
 function handleListKey(e: KeyboardEvent) {
@@ -60,13 +83,46 @@ function handleListKey(e: KeyboardEvent) {
   }
 }
 
-function snippet(html: string) {
+// ─── Snippet & highlighting ───────────────────────────────────
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function highlight(text: string): string {
+  const q = query.value.trim()
+  const safe = escapeHtml(text)
+  if (!q) return safe
+  const terms = q.split(/\s+/).filter(t => t.length >= 2).map(escapeRegex)
+  if (!terms.length) return safe
+  const re = new RegExp(`(${terms.join('|')})`, 'gi')
+  return safe.replace(re, '<mark>$1</mark>')
+}
+
+function smartSnippet(html: string): string {
   if (!html || !import.meta.client) return ''
   const el = document.createElement('div')
   el.innerHTML = html
-  return (el.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
-}
+  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  const q = query.value.trim()
+  if (!q) return text.slice(0, 120)
 
+  const terms = q.split(/\s+/).filter(t => t.length >= 2)
+  let matchIdx = -1
+  for (const term of terms) {
+    const i = text.toLowerCase().indexOf(term.toLowerCase())
+    if (i >= 0 && (matchIdx < 0 || i < matchIdx)) matchIdx = i
+  }
+
+  if (matchIdx < 0) return text.slice(0, 160)
+  const start = Math.max(0, matchIdx - 60)
+  const end = Math.min(text.length, start + 200)
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
+}
 </script>
 
 <template>
@@ -89,8 +145,25 @@ function snippet(html: string) {
           <UKbd size="sm">Esc</UKbd>
         </div>
 
+        <!-- Tag filter chips -->
+        <div v-if="filterTagOptions.length > 0" class="flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto scrollbar-hide">
+          <UIcon name="i-lucide-tag" class="size-3 text-muted shrink-0 mr-0.5" />
+          <button
+            v-for="tag in filterTagOptions"
+            :key="tag"
+            class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium shrink-0 transition-colors cursor-pointer"
+            :class="selectedTags.includes(tag)
+              ? 'bg-primary-500 text-white dark:bg-primary-500'
+              : 'bg-elevated text-muted hover:text-default hover:bg-elevated/80'"
+            @click="toggleTag(tag)"
+          >
+            <span class="opacity-70">#</span>{{ tag }}
+            <UIcon v-if="selectedTags.includes(tag)" name="i-lucide-x" class="size-2.5 ml-0.5" />
+          </button>
+        </div>
+
         <!-- Empty state: recent tags + recent notes -->
-        <template v-if="!hasQuery">
+        <template v-if="!isFiltered">
           <div class="overflow-y-auto max-h-[26rem]">
             <!-- Recent tags -->
             <div v-if="recentTags.length > 0" class="px-4 pt-3 pb-2">
@@ -145,7 +218,8 @@ function snippet(html: string) {
         <!-- Search results -->
         <template v-else>
           <div class="overflow-y-auto max-h-[26rem]">
-            <div v-if="results.length === 0 && !hasQuery" class="flex flex-col items-center justify-center py-10 gap-2">
+            <!-- No results -->
+            <div v-if="results.length === 0" class="flex flex-col items-center justify-center py-10 gap-2">
               <UIcon name="i-lucide-file-search" class="size-7 text-muted" />
               <p class="text-sm text-muted">No notes found</p>
             </div>
@@ -159,19 +233,29 @@ function snippet(html: string) {
               @mouseenter="highlighted = i"
             >
               <div class="flex items-start justify-between gap-4">
-                <span class="font-medium text-sm text-default leading-snug">{{ note.title || 'Untitled' }}</span>
+                <span class="font-medium text-sm text-default leading-snug" v-html="highlight(note.title || 'Untitled')" />
                 <span class="text-xs text-muted shrink-0 mt-px">{{ relativeTime(note.updatedAt) }}</span>
               </div>
-              <p v-if="snippet(note.content)" class="text-xs text-muted line-clamp-1 leading-relaxed">
-                {{ snippet(note.content) }}
-              </p>
+              <p
+                v-if="smartSnippet(note.content)"
+                class="text-xs text-muted line-clamp-2 leading-relaxed"
+                v-html="highlight(smartSnippet(note.content))"
+              />
               <div v-if="note.tags.length" class="flex flex-wrap gap-1.5 mt-0.5">
-                <span v-for="tag in note.tags.slice(0, 5)" :key="tag" class="text-xs text-primary-600 dark:text-primary-400">#{{ tag }}</span>
+                <span
+                  v-for="tag in note.tags.slice(0, 5)"
+                  :key="tag"
+                  class="text-xs transition-colors"
+                  :class="selectedTags.includes(tag)
+                    ? 'text-primary-600 dark:text-primary-400 font-semibold'
+                    : 'text-primary-500/70 dark:text-primary-500/70'"
+                >#{{ tag }}</span>
               </div>
             </button>
 
             <!-- Create note from query -->
             <button
+              v-if="hasQuery"
               class="flex items-center gap-3 w-full px-4 py-3 text-sm border-t border-default/40 transition-colors"
               :class="highlighted === results.length ? 'bg-elevated text-default' : 'text-muted hover:bg-elevated/60'"
               @click="handleCreateNote"
@@ -195,3 +279,17 @@ function snippet(html: string) {
     </template>
   </UModal>
 </template>
+
+<style>
+mark {
+  background-color: #fef08a;
+  color: #422006;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.dark mark {
+  background-color: #713f12;
+  color: #fef9c3;
+}
+</style>

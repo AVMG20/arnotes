@@ -145,11 +145,23 @@ export function useNotes() {
     }
   }
 
-    function searchNotes(query: string): Note[] {
-        if (!query.trim() || !_search) return activeNotes.value
-        const hits = (_search as any).search(query) as any[]
-        return hits.map((h: any) => notesById.value.get(h.id))
-            .filter(Boolean) as Note[]
+    function searchNotes(query: string, filterTags: string[] = []): Note[] {
+        let pool: Note[]
+        if (query.trim() && _search) {
+            const options: Record<string, unknown> = {}
+            if (filterTags.length > 0) {
+                options.filter = (result: any) =>
+                    filterTags.every(t => (result.tags as string[])?.includes(t))
+            }
+            const hits = (_search as any).search(query, options) as any[]
+            pool = hits.map((h: any) => notesById.value.get(h.id)).filter(Boolean) as Note[]
+        } else {
+            pool = activeNotes.value
+            if (filterTags.length > 0) {
+                pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
+            }
+        }
+        return pool
     }
 
   async function togglePublic(id: string): Promise<Note> {

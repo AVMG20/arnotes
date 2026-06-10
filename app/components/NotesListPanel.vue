@@ -4,32 +4,11 @@ import { relativeTime } from '~/composables/useRelativeTime'
 
 const { ready, filteredNotes, activeNoteId, activeTag, showTrash, deleteNote, restoreNote } = useNotes()
 
-const PAGE = 100
-const visibleCount = ref(PAGE)
+const scrollArea = useTemplateRef('scrollArea')
 
-// Reset when the list changes (tag switch, search, trash toggle)
-watch(filteredNotes, () => { visibleCount.value = PAGE })
-
-const sentinel = ref<HTMLElement | null>(null)
-const scrollContainer = ref<HTMLElement | null>(null)
-
-let observer: IntersectionObserver | null = null
-
-watch(sentinel, (el) => {
-  observer?.disconnect()
-  if (!el) return
-  observer = new IntersectionObserver(([entry]) => {
-    if (entry && entry.isIntersecting) visibleCount.value += PAGE
-  }, { threshold: 0.1 })
-  observer.observe(el)
-}, { immediate: true })
-
-onUnmounted(() => observer?.disconnect())
-
-
+// Reset scroll position when list changes (tag switch, search, trash toggle)
 watch(filteredNotes, () => {
-  visibleCount.value = PAGE
-  if (scrollContainer.value) scrollContainer.value.scrollTop = 0
+  scrollArea.value?.virtualizer?.scrollToIndex(0, { align: 'start' })
 })
 
 // ─── Permanent delete confirmation ──────────────────────────
@@ -62,14 +41,26 @@ async function confirmPermanentDelete() {
     </div>
 
     <!-- Notes list -->
-    <div class="flex-1 overflow-y-auto py-2 px-2" ref="scrollContainer" >
-      <template v-if="ready">
+    <template v-if="ready">
+      <UScrollArea
+          v-if="filteredNotes.length > 0"
+          ref="scrollArea"
+          v-slot="{ item: note }"
+          :items="filteredNotes"
+          :virtualize="{
+          estimateSize: 64,
+          skipMeasurement: true,
+          paddingStart: 8,
+          paddingEnd: 8,
+          gap: 2,
+        }"
+          class="flex-1"
+          :ui="{ viewport: 'px-2' }"
+      >
         <div
-            v-for="note in filteredNotes.slice(0, visibleCount)"
-          :key="note.id"
-          class="group relative flex flex-col gap-0.5 px-2.5 py-2 rounded-lg transition-colors mb-0.5"
-          :class="activeNoteId === note.id ? 'bg-elevated' : 'hover:bg-elevated/50'"
-          @click="activeNoteId = note.id"
+            class="group relative flex flex-col gap-0.5 px-2.5 py-2 rounded-lg transition-colors"
+            :class="activeNoteId === note.id ? 'bg-elevated' : 'hover:bg-elevated/50'"
+            @click="activeNoteId = note.id"
         >
           <!-- Title row -->
           <div class="flex items-start gap-1">
@@ -79,36 +70,36 @@ async function confirmPermanentDelete() {
 
             <!-- Normal note: soft-delete button -->
             <UButton
-              v-if="!note.deletedAt"
-              icon="i-lucide-trash-2"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              class="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
-              aria-label="Delete"
-              @click.stop="deleteNote(note.id)"
+                v-if="!note.deletedAt"
+                icon="i-lucide-trash-2"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                class="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
+                aria-label="Delete"
+                @click.stop="deleteNote(note.id)"
             />
 
             <!-- Deleted note: restore + permanent delete -->
             <div
-              v-else
-              class="flex items-center gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
+                v-else
+                class="flex items-center gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 shrink-0 -mt-0.5 -mr-1.5"
             >
               <UButton
-                icon="i-lucide-undo-2"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                aria-label="Restore"
-                @click.stop="restoreNote(note.id)"
+                  icon="i-lucide-undo-2"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  aria-label="Restore"
+                  @click.stop="restoreNote(note.id)"
               />
               <UButton
-                icon="i-lucide-trash-2"
-                size="xs"
-                color="error"
-                variant="ghost"
-                aria-label="Delete permanently"
-                @click.stop="requestPermanentDelete(note.id)"
+                  icon="i-lucide-trash-2"
+                  size="xs"
+                  color="error"
+                  variant="ghost"
+                  aria-label="Delete permanently"
+                  @click.stop="requestPermanentDelete(note.id)"
               />
             </div>
           </div>
@@ -116,31 +107,26 @@ async function confirmPermanentDelete() {
           <!-- Date -->
           <span class="text-xs text-muted">{{ relativeTime(note.updatedAt) }}</span>
         </div>
+      </UScrollArea>
 
-        <div v-if="filteredNotes.length === 0" class="flex flex-col items-center justify-center py-10 gap-2 text-center">
-          <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-file-x'" class="size-7 text-muted" />
-          <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : 'No notes' }}</p>
-        </div>
-
-        <!-- sentinel: triggers next page load when scrolled into view -->
-        <div
-            v-if="visibleCount < filteredNotes.length"
-            ref="sentinel"
-            class="h-4"
-        />
-      </template>
-
-      <div v-else class="flex items-center justify-center py-10">
-        <UIcon name="i-lucide-loader-circle" class="size-5 text-muted animate-spin" />
+      <!-- Empty state -->
+      <div v-else class="flex flex-col items-center justify-center py-10 gap-2 text-center flex-1">
+        <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-file-x'" class="size-7 text-muted" />
+        <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : 'No notes' }}</p>
       </div>
+    </template>
+
+    <!-- Loading -->
+    <div v-else class="flex items-center justify-center py-10 flex-1">
+      <UIcon name="i-lucide-loader-circle" class="size-5 text-muted animate-spin" />
     </div>
 
     <!-- Permanent delete confirmation modal -->
     <UModal
-      v-model:open="permDeleteModalOpen"
-      title="Delete permanently?"
-      description="This note will be permanently deleted and cannot be recovered."
-      :ui="{ footer: 'justify-end' }"
+        v-model:open="permDeleteModalOpen"
+        title="Delete permanently?"
+        description="This note will be permanently deleted and cannot be recovered."
+        :ui="{ footer: 'justify-end' }"
     >
       <template #footer>
         <UButton label="Cancel" color="neutral" variant="ghost" @click="permDeleteModalOpen = false" />
