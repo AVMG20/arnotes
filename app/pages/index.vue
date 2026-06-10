@@ -1,5 +1,13 @@
 <script setup lang="ts">
 definePageMeta({ middleware: [] })
+
+useSeoMeta({
+  title: 'Notes that organize themselves',
+  description: 'Write and tag. No folders, no hierarchy — find any note in seconds with #tags. Arnotes is a fast, tag-based note-taking app.',
+  ogTitle: 'Arnotes — Notes that organize themselves',
+  ogDescription: 'Write and tag. No folders, no hierarchy — find any note in seconds with #tags.',
+  ogImage: '/screenshot.png',
+})
 </script>
 
 <template>
@@ -49,7 +57,7 @@ definePageMeta({ middleware: [] })
         </div>
         <img
           src="/screenshot.png"
-          alt="TaggyNotes app screenshot"
+          alt="Arnotes app screenshot"
           class="w-full block"
         />
       </div>

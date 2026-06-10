@@ -6,6 +6,10 @@ definePageMeta({ layout: 'app' })
 const route = useRoute()
 const router = useRouter()
 const { activeNoteId, activeNote, createNote, deleteNote } = useNotes()
+
+useSeoMeta({
+  title: computed(() => activeNote.value?.title || 'Untitled'),
+})
 const { sidebarOpen } = useSidebar()
 const searchOpen = useSearchModal()
 

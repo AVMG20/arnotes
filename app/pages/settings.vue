@@ -3,6 +3,8 @@ import { format } from 'date-fns'
 
 definePageMeta({ layout: 'app' })
 
+useSeoMeta({ title: 'Settings' })
+
 const router = useRouter()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()

@@ -30,6 +30,11 @@ const note = ref<PublicNote | null>(null)
 const error = ref(false)
 const isLoggedIn = ref(false)
 
+useSeoMeta({
+  title: computed(() => note.value?.title || 'Shared note'),
+  description: computed(() => note.value ? `Read "${note.value.title}" on Arnotes` : undefined),
+})
+
 onMounted(async () => {
   const { authClient } = await import('~/composables/useAuth')
   const { data: session } = await authClient.getSession()

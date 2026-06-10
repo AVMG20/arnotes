@@ -1,6 +1,8 @@
 <script setup lang="ts">
 definePageMeta({ middleware: [] }) // skip auth middleware on this page
 
+useSeoMeta({ title: 'Sign in' })
+
 const { signIn, isPending } = useAuth()
 </script>
 
