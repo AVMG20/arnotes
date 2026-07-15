@@ -14,6 +14,7 @@ export type AiAction
     | 'continue-writing'
     | 'brainstorm'
     | 'make-task-list-from-note'
+    | 'custom'
 
 const FORMAT_INSTRUCTION = 'Use standard markdown formatting only (headings with #, bold with **, italic with *, bullet lists with -, numbered lists, task lists with - [ ], code blocks with ```). Do NOT use LaTeX notation (no $...$ or \\commands). Use plain unicode for arrows (→) and other symbols.'
 
@@ -30,12 +31,13 @@ const PROMPTS: Record<AiAction, string> = {
   'generate-outline': `Generate a clear outline for a note based on the following content. Use markdown headings (# / ## / ###). Keep the same language. Only respond with the outline, nothing else. ${FORMAT_INSTRUCTION}\n\nContent:\n{context}`,
   'continue-writing': `Continue writing from where the following text ends. Keep the same style, tone, language, and markdown formatting (headings, lists, bold, italic, code blocks, etc.). ${FORMAT_INSTRUCTION}\n\nText:\n{context}`,
   'brainstorm': `Brainstorm ideas related to the following note. Return a markdown bullet list of concrete, actionable ideas. Keep the same language. Only respond with the list, nothing else. ${FORMAT_INSTRUCTION}\n\nNote:\n{context}`,
-  'make-task-list-from-note': `Convert the following note into a task list of actionable items. Use markdown checklist syntax (- [ ] item). Keep the same language. Only respond with the task list, nothing else. ${FORMAT_INSTRUCTION}\n\nNote:\n{context}`
+  'make-task-list-from-note': `Convert the following note into a task list of actionable items. Use markdown checklist syntax (- [ ] item). Keep the same language. Only respond with the task list, nothing else. ${FORMAT_INSTRUCTION}\n\nNote:\n{context}`,
+  'custom': `Follow the user's instruction and produce content that can be inserted directly into their note. Return only the requested content, without commentary about the request. ${FORMAT_INSTRUCTION}\n\nUser instruction:\n{instruction}\n\nCurrent note for context (may be empty):\n{context}`
 }
 
-export function buildPrompt(action: AiAction, text: string, context: string): string {
+export function buildPrompt(action: AiAction, text: string, context: string, instruction = ''): string {
   const template = PROMPTS[action] ?? PROMPTS['improve-grammar']
-  return template.replace('{text}', text).replace('{context}', context)
+  return template.replace('{text}', text).replace('{context}', context).replace('{instruction}', instruction)
 }
 
 export const DEFAULT_OPENROUTER_MODEL = AI_SETTINGS_DEFAULTS.openrouterModel

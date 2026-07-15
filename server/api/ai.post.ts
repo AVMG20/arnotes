@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 
 export default defineEventHandler(async (event) => {
   const userId = event.context.session.user.id
-  const body = await readBody<{ action: string, text?: string, context?: string }>(event)
+  const body = await readBody<{ action: string, text?: string, context?: string, instruction?: string }>(event)
 
   const action = body.action as AiAction
   if (!action) throw createError({ statusCode: 400, message: 'Missing action' })
@@ -16,10 +16,13 @@ export default defineEventHandler(async (event) => {
   const model = settings?.openrouterModel || DEFAULT_OPENROUTER_MODEL
   const text = (body.text ?? '').trim()
   const context = (body.context ?? '').trim()
+  const instruction = (body.instruction ?? '').trim()
 
-  if (!text && !context) throw createError({ statusCode: 400, message: 'Nothing selected to process.' })
+  if (action === 'custom' && !instruction) throw createError({ statusCode: 400, message: 'Enter an instruction for the AI.' })
+  if (instruction.length > 4000) throw createError({ statusCode: 400, message: 'AI instruction is too long.' })
+  if (!text && !context && !instruction) throw createError({ statusCode: 400, message: 'Nothing selected to process.' })
 
-  const prompt = buildPrompt(action, text, context)
+  const prompt = buildPrompt(action, text, context, instruction)
 
   const result = await callOpenRouter(apiKey, model, prompt)
   return { result, model }

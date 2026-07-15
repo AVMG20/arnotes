@@ -19,6 +19,10 @@ const { openrouterApiKey } = useUserSettings()
 
 // ─── AI helpers ───────────────────────────────────────────────
 const aiLoading = ref(false)
+const aiPromptOpen = ref(false)
+const aiPrompt = ref('')
+const aiPromptPosition = ref<number | null>(null)
+const aiPromptIncludeContext = ref(true)
 
 type AiPending = {
   kind: 'generate' | 'transform'
@@ -194,6 +198,55 @@ async function runTransform(action: string) {
   }
 }
 
+function openAiPrompt(editor: Editor) {
+  aiPromptPosition.value = editor.state.selection.from
+  aiPromptOpen.value = true
+}
+
+async function runCustomPrompt() {
+  const editor = editorRef.value?.editor as Editor | undefined
+  const instruction = aiPrompt.value.trim()
+  if (!editor || !instruction || aiLoading.value) return
+  if (!openrouterApiKey.value) {
+    toast.add({
+      title: 'No OpenRouter API key',
+      description: 'Add your key in Settings → AI to use AI features.',
+      icon: 'i-lucide-key-round',
+      color: 'error',
+      duration: 4000
+    })
+    return
+  }
+
+  const position = aiPromptPosition.value ?? editor.state.selection.from
+  const context = aiPromptIncludeContext.value ? htmlToMarkdown(editor.getHTML()).trim() : ''
+  aiPromptOpen.value = false
+  aiLoading.value = true
+  setAiPending(editor, { kind: 'generate', from: position, to: position })
+  try {
+    const { result } = await runCustomAi(instruction, context)
+    const html = markdownToHtml(normalizeAiOutput(result))
+    const pending = aiPendingKey.getState(editor.state)
+    if (pending?.kind === 'generate') {
+      editor.chain().focus().insertContentAt(pending.from, html).run()
+      aiPrompt.value = ''
+      aiPromptPosition.value = null
+    }
+  } catch (e) {
+    const err = e as { data?: { message?: string }, message?: string }
+    toast.add({
+      title: 'AI request failed',
+      description: err?.data?.message ?? err?.message ?? 'Unknown error',
+      icon: 'i-lucide-alert-triangle',
+      color: 'error',
+      duration: 5000
+    })
+  } finally {
+    setAiPending(editor, null)
+    aiLoading.value = false
+  }
+}
+
 async function handleTogglePublic() {
   if (!activeNoteId.value) return
   const updated = await togglePublic(activeNoteId.value)
@@ -336,6 +389,14 @@ const extensions: any[] = [
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const customHandlers: any = {
+  aiPrompt: {
+    canExecute: () => !aiLoading.value,
+    execute: (editor: Editor) => {
+      openAiPrompt(editor)
+      return editor.chain()
+    },
+    isActive: () => false
+  },
   image: {
     canExecute: () => true,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -401,6 +462,8 @@ const bubbleToolbarItems: any[][] = [[
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const suggestionItems: any[][] = [[
+  { kind: 'aiPrompt', label: 'Ask AI', description: 'Generate anything from a custom prompt', icon: 'i-lucide-sparkles' }
+], [
   { type: 'label', label: 'Style' },
   { kind: 'paragraph', label: 'Paragraph', icon: 'i-lucide-type' },
   { kind: 'heading', level: 1, label: 'Heading 1', icon: 'i-lucide-heading-1' },
@@ -437,7 +500,10 @@ function scheduleAutoSave(html: string) {
 
 function flushSave(id?: string) {
   const targetId = id ?? activeNoteId.value
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
   if (targetId && isDirty.value) {
     updateNote(targetId, editorContent.value)
     isDirty.value = false
@@ -507,7 +573,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
       >
         <UEditor
           ref="editorRef"
-          v-slot="{ editor, handlers }"
+          v-slot="{ editor }"
           v-model="editorContent"
           content-type="html"
           placeholder="Start writing… (@ for dates, # for tags)"
@@ -605,5 +671,60 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
         </UEditor>
       </div>
     </template>
+
+    <UModal
+      v-model:open="aiPromptOpen"
+      title="Ask AI"
+      description="Describe what you want to add at the current cursor position. You can optionally include the current note as context."
+      :ui="{ footer: 'justify-between' }"
+    >
+      <template #body>
+        <form
+          id="ai-prompt-form"
+          class="space-y-3"
+          @submit.prevent="runCustomPrompt"
+        >
+          <UTextarea
+            v-model="aiPrompt"
+            autofocus
+            autoresize
+            :rows="4"
+            :maxrows="10"
+            placeholder="For example: Create a Drizzle schema for roles and permissions with a short usage example"
+            class="w-full"
+            @keydown.meta.enter.prevent="runCustomPrompt"
+            @keydown.ctrl.enter.prevent="runCustomPrompt"
+          />
+          <div class="flex items-center justify-between gap-4">
+            <UCheckbox
+              v-model="aiPromptIncludeContext"
+              label="Include current note as context"
+            />
+            <p class="text-xs text-muted text-right">
+              Markdown, tables, task lists, and code blocks are supported.
+            </p>
+          </div>
+        </form>
+      </template>
+
+      <template #footer="{ close }">
+        <span class="text-xs text-muted">Cmd/Ctrl + Enter to generate</span>
+        <div class="flex items-center gap-2">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="ghost"
+            @click="close"
+          />
+          <UButton
+            type="submit"
+            form="ai-prompt-form"
+            label="Generate"
+            icon="i-lucide-sparkles"
+            :disabled="!aiPrompt.trim()"
+          />
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

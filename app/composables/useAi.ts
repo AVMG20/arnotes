@@ -39,3 +39,10 @@ export interface AiResult {
 export async function runAi(action: string, text: string, context: string): Promise<AiResult> {
   return await $fetch<AiResult>('/api/ai', { method: 'POST', body: { action, text, context } })
 }
+
+export async function runCustomAi(instruction: string, context: string): Promise<AiResult> {
+  return await $fetch<AiResult>('/api/ai', {
+    method: 'POST',
+    body: { action: 'custom', instruction, context }
+  })
+}
