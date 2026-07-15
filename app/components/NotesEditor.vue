@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
-import { VueNodeViewRenderer } from '@tiptap/vue-3'
+import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { DOMSerializer } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import CodeBlockView from '~/components/CodeBlockView.vue'
@@ -10,12 +11,188 @@ import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { createLowlight, common } from 'lowlight'
-import TurndownService from 'turndown'
-import { marked } from 'marked'
 import { DateMention } from '~/composables/useDateMention'
 
 const { activeNote, activeNoteId, autoFocus, updateNote, togglePublic } = useNotes()
 const toast = useToast()
+const { openrouterApiKey } = useUserSettings()
+
+// ─── AI helpers ───────────────────────────────────────────────
+const aiLoading = ref(false)
+
+type AiPending = {
+  kind: 'generate' | 'transform'
+  from: number
+  to: number
+}
+
+const aiPendingKey = new PluginKey<AiPending | null>('aiPending')
+
+const AiPendingDecoration = Extension.create({
+  name: 'aiPendingDecoration',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<AiPending | null>({
+        key: aiPendingKey,
+        state: {
+          init: () => null,
+          apply(transaction, pending) {
+            const meta = transaction.getMeta(aiPendingKey) as { pending?: AiPending, clear?: boolean } | undefined
+            if (meta?.clear) return null
+            if (meta?.pending) return meta.pending
+            if (!pending || !transaction.docChanged) return pending
+
+            return {
+              ...pending,
+              from: transaction.mapping.map(pending.from, 1),
+              to: transaction.mapping.map(pending.to, pending.kind === 'transform' ? -1 : 1)
+            }
+          }
+        },
+        props: {
+          decorations(state) {
+            const pending = aiPendingKey.getState(state)
+            if (!pending) return null
+
+            if (pending.kind === 'transform' && pending.from < pending.to) {
+              return DecorationSet.create(state.doc, [
+                Decoration.inline(pending.from, pending.to, { class: 'ai-processing-selection' })
+              ])
+            }
+
+            const widget = Decoration.widget(pending.from, () => {
+              const indicator = document.createElement('span')
+              indicator.className = 'ai-writing-indicator'
+              indicator.contentEditable = 'false'
+              indicator.setAttribute('aria-label', 'AI is writing')
+
+              const label = document.createElement('span')
+              label.textContent = 'AI is writing'
+              indicator.append(label)
+              for (let index = 0; index < 3; index++) {
+                const dot = document.createElement('i')
+                dot.style.setProperty('--ai-dot-index', String(index))
+                indicator.append(dot)
+              }
+              return indicator
+            }, { key: 'ai-writing-indicator', side: 1 })
+            return DecorationSet.create(state.doc, [widget])
+          }
+        }
+      })
+    ]
+  }
+})
+
+function setAiPending(editor: Editor, pending: AiPending | null) {
+  editor.view.dispatch(editor.state.tr.setMeta(aiPendingKey, pending ? { pending } : { clear: true }))
+}
+
+function getSelectionHtml(editor: Editor): string {
+  const { from, to } = editor.state.selection
+  if (from === to) return ''
+  const slice = editor.state.doc.slice(from, to)
+  const serializer = DOMSerializer.fromSchema(editor.state.schema)
+  const fragment = serializer.serializeFragment(slice.content)
+  const div = document.createElement('div')
+  div.appendChild(fragment)
+  return div.innerHTML
+}
+
+const aiGenerateItems = computed(() => [
+  generateActions.map(action => ({
+    label: action.label,
+    icon: action.icon,
+    onSelect: () => runGenerate(action.id)
+  }))
+])
+
+async function runGenerate(action: string) {
+  const editor = editorRef.value?.editor
+  if (!editor || aiLoading.value) return
+  if (!openrouterApiKey.value) {
+    toast.add({
+      title: 'No OpenRouter API key',
+      description: 'Add your key in Settings → AI to use AI features.',
+      icon: 'i-lucide-key-round',
+      color: 'error',
+      duration: 4000
+    })
+    return
+  }
+  const contextHtml = editor.getHTML()
+  const context = htmlToMarkdown(contextHtml).trim()
+  if (!context) {
+    toast.add({ title: 'Note is empty', icon: 'i-lucide-info', color: 'neutral', duration: 2000 })
+    return
+  }
+  aiLoading.value = true
+  const { from } = editor.state.selection
+  setAiPending(editor, { kind: 'generate', from, to: from })
+  try {
+    const { result } = await runAi(action, '', context)
+    const html = markdownToHtml(normalizeAiOutput(result))
+    const pending = aiPendingKey.getState(editor.state)
+    if (pending?.kind === 'generate') {
+      editor.chain().focus().insertContentAt(pending.from, html).run()
+    }
+  } catch (e) {
+    const err = e as { data?: { message?: string }, message?: string }
+    toast.add({
+      title: 'AI request failed',
+      description: err?.data?.message ?? err?.message ?? 'Unknown error',
+      icon: 'i-lucide-alert-triangle',
+      color: 'error',
+      duration: 5000
+    })
+  } finally {
+    setAiPending(editor, null)
+    aiLoading.value = false
+  }
+}
+
+async function runTransform(action: string) {
+  const editor = editorRef.value?.editor
+  if (!editor || aiLoading.value) return
+  if (!openrouterApiKey.value) {
+    toast.add({
+      title: 'No OpenRouter API key',
+      description: 'Add your key in Settings → AI to use AI features.',
+      icon: 'i-lucide-key-round',
+      color: 'error',
+      duration: 4000
+    })
+    return
+  }
+  const { from, to } = editor.state.selection
+  if (from === to) return
+  const selectionHtml = getSelectionHtml(editor)
+  if (!selectionHtml.trim()) return
+  const text = htmlToMarkdown(selectionHtml)
+
+  aiLoading.value = true
+  setAiPending(editor, { kind: 'transform', from, to })
+  try {
+    const { result } = await runAi(action, text, '')
+    const html = markdownToHtml(normalizeAiOutput(result))
+    const pending = aiPendingKey.getState(editor.state)
+    if (pending?.kind === 'transform') {
+      editor.chain().focus().insertContentAt({ from: pending.from, to: pending.to }, html).run()
+    }
+  } catch (e) {
+    const err = e as { data?: { message?: string }, message?: string }
+    toast.add({
+      title: 'AI request failed',
+      description: err?.data?.message ?? err?.message ?? 'Unknown error',
+      icon: 'i-lucide-alert-triangle',
+      color: 'error',
+      duration: 5000
+    })
+  } finally {
+    setAiPending(editor, null)
+    aiLoading.value = false
+  }
+}
 
 async function handleTogglePublic() {
   if (!activeNoteId.value) return
@@ -65,7 +242,7 @@ const ImagePaste = Extension.create({
             const file = imageItem.getAsFile()
             if (!file) return false
             event.preventDefault()
-            uploadImage(file).then(url => {
+            uploadImage(file).then((url) => {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               if (url) (editor.chain().focus() as any).setImage({ src: url }).run()
             })
@@ -83,7 +260,7 @@ async function onFileDrop(event: DragEvent) {
   if (!files.length) return
   editorRef.value?.editor?.commands.focus()
   const urls = await Promise.all(files.map(uploadImage))
-  urls.forEach(url => {
+  urls.forEach((url) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (url) (editorRef.value?.editor?.chain().focus() as any)?.setImage({ src: url }).run()
   })
@@ -119,24 +296,6 @@ const HashtagHighlight = Extension.create({
   }
 })
 
-function markdownToHtml(text: string): string {
-  const raw = marked.parse(text, { async: false }) as string
-  if (!import.meta.client) return raw
-  const doc = new DOMParser().parseFromString(raw, 'text/html')
-  doc.querySelectorAll('ul > li').forEach((li) => {
-    const input = li.querySelector('input[type="checkbox"]')
-    if (!input) return
-    const checked = (input as HTMLInputElement).checked
-    li.closest('ul')!.setAttribute('data-type', 'taskList')
-    li.setAttribute('data-type', 'taskItem')
-    li.setAttribute('data-checked', String(checked))
-    input.remove()
-    const content = li.innerHTML.trim()
-    li.innerHTML = `<label><input type="checkbox"${checked ? ' checked' : ''}></label><div><p>${content}</p></div>`
-  })
-  return doc.body.innerHTML
-}
-
 const MarkdownPaste = Extension.create({
   name: 'markdownPaste',
   addProseMirrorPlugins() {
@@ -168,6 +327,7 @@ const extensions: any[] = [
   TaskItem.configure({ nested: true }),
   DateMention,
   ImagePaste,
+  AiPendingDecoration,
   HashtagHighlight,
   MarkdownPaste
 ]
@@ -217,12 +377,26 @@ const fixedToolbarItems: any[][] = [[
 ]]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+const aiBubbleItems: any[] = transformActions.map(action => ({
+  label: action.label,
+  icon: action.icon,
+  onSelect: () => runTransform(action.id)
+}))
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const bubbleToolbarItems: any[][] = [[
   { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
   { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
   { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
   { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
-  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } }
+  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } },
+  {
+    icon: 'i-lucide-sparkles',
+    tooltip: { text: 'AI' },
+    color: 'primary',
+    content: { modal: false },
+    items: aiBubbleItems
+  }
 ]]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -294,33 +468,7 @@ onBeforeUnmount(() => flushSave())
 // ─── Copy to Markdown ────────────────────────────────────────
 
 function copyToMarkdown() {
-  const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
-  td.addRule('taskItem', {
-    filter(node) {
-      return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
-    },
-    replacement(_content, node) {
-      const el = node as HTMLElement
-      const checked = el.getAttribute('data-checked') === 'true'
-      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
-      return `- [${checked ? 'x' : ' '}] ${text}\n`
-    }
-  })
-  td.addRule('fencedCode', {
-    filter(node) {
-      return node.nodeName === 'PRE' && !!node.firstChild && (node.firstChild as HTMLElement).nodeName === 'CODE'
-    },
-    replacement(_content, node) {
-      const code = (node as HTMLElement).querySelector('code')
-      const lang = (code?.className ?? '').match(/language-(\w+)/)?.[1] ?? ''
-      return `\n\`\`\`${lang}\n${code?.textContent ?? ''}\n\`\`\`\n\n`
-    }
-  })
-  td.addRule('highlight', {
-    filter: ['mark'],
-    replacement: (content) => content
-  })
-  navigator.clipboard.writeText(td.turndown(editorContent.value)).then(() => {
+  navigator.clipboard.writeText(htmlToMarkdown(editorContent.value)).then(() => {
     toast.add({ title: 'Copied as Markdown', icon: 'i-lucide-clipboard-check', duration: 2000 })
   })
 }
@@ -333,8 +481,13 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
     <!-- Empty state -->
     <template v-if="!activeNote">
       <div class="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
-        <UIcon name="i-lucide-notebook-pen" class="size-12 text-muted" />
-        <p class="text-muted text-sm">Select a note or create a new one</p>
+        <UIcon
+          name="i-lucide-notebook-pen"
+          class="size-12 text-muted"
+        />
+        <p class="text-muted text-sm">
+          Select a note or create a new one
+        </p>
         <UButton
           icon="i-lucide-plus"
           label="New note"
@@ -347,7 +500,11 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
     </template>
 
     <template v-else>
-      <div class="flex-1 overflow-y-auto" @dragover.prevent @drop.prevent="onFileDrop">
+      <div
+        class="flex-1 overflow-y-auto"
+        @dragover.prevent
+        @drop.prevent="onFileDrop"
+      >
         <UEditor
           ref="editorRef"
           v-slot="{ editor, handlers }"
@@ -361,20 +518,47 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
         >
           <!-- Fixed toolbar -->
           <div class="flex items-center gap-2 px-3 py-2.5 pb-3 border-b border-default sticky top-0 bg-default z-10 overflow-x-auto">
-            <UEditorToolbar :editor="editor" :items="fixedToolbarItems" />
+            <UEditorToolbar
+              :editor="editor"
+              :items="fixedToolbarItems"
+            />
             <div class="flex items-center gap-1 shrink-0 ml-auto">
-              <span v-if="tagCount > 0" class="flex items-center gap-1 text-xs text-muted">
-                <UIcon name="i-lucide-tag" class="size-3" />
+              <span
+                v-if="tagCount > 0"
+                class="flex items-center gap-1 text-xs text-muted"
+              >
+                <UIcon
+                  name="i-lucide-tag"
+                  class="size-3"
+                />
                 {{ tagCount }}
               </span>
               <div class="w-px h-4 bg-muted/40" />
+              <UDropdownMenu
+                :items="aiGenerateItems"
+                :content="{ align: 'end', sideOffset: 4 }"
+                :popper="{ placement: 'bottom-end' }"
+              >
+                <UButton
+                  icon="i-lucide-sparkles"
+                  size="xs"
+                  color="primary"
+                  variant="soft"
+                  :loading="aiLoading"
+                  aria-label="AI writing tools"
+                >
+                  <span class="hidden sm:inline">AI</span>
+                </UButton>
+              </UDropdownMenu>
               <UButton
                 :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-lock'"
                 size="xs"
                 :color="activeNote?.isPublic ? 'primary' : 'neutral'"
                 variant="ghost"
                 @click="handleTogglePublic"
-              ><span class="hidden sm:inline">{{ activeNote?.isPublic ? 'Public' : 'Private' }}</span></UButton>
+              >
+                <span class="hidden sm:inline">{{ activeNote?.isPublic ? 'Public' : 'Private' }}</span>
+              </UButton>
               <div class="w-px h-4 bg-muted/40" />
               <UButton
                 icon="i-lucide-clipboard-copy"
@@ -382,12 +566,17 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                 color="neutral"
                 variant="ghost"
                 @click="copyToMarkdown"
-              ><span class="hidden sm:inline">Copy</span></UButton>
+              >
+                <span class="hidden sm:inline">Copy</span>
+              </UButton>
             </div>
           </div>
 
           <!-- Slash commands (type /) -->
-          <UEditorSuggestionMenu :editor="editor" :items="suggestionItems" />
+          <UEditorSuggestionMenu
+            :editor="editor"
+            :items="suggestionItems"
+          />
 
           <!-- Bubble toolbar (appears on text selection) -->
           <UEditorToolbar
@@ -401,7 +590,10 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
           />
 
           <!-- Drag handle (hover any block) -->
-          <UEditorDragHandle v-slot="{ ui }" :editor="editor">
+          <UEditorDragHandle
+            v-slot="{ ui }"
+            :editor="editor"
+          >
             <UButton
               color="neutral"
               variant="ghost"
