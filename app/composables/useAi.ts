@@ -31,18 +31,46 @@ export function getAiAction(id: string): AiActionDef | undefined {
 export const transformActions = AI_ACTIONS.filter(a => a.kind === 'transform')
 export const generateActions = AI_ACTIONS.filter(a => a.kind === 'generate')
 
-export interface AiResult {
-  result: string
-  model: string
+interface AiRequest {
+  action: string
+  text?: string
+  context?: string
+  instruction?: string
 }
 
-export async function runAi(action: string, text: string, context: string): Promise<AiResult> {
-  return await $fetch<AiResult>('/api/ai', { method: 'POST', body: { action, text, context } })
-}
-
-export async function runCustomAi(instruction: string, context: string): Promise<AiResult> {
-  return await $fetch<AiResult>('/api/ai', {
+async function streamAi(body: AiRequest, onChunk: (result: string) => void): Promise<string> {
+  const response = await fetch('/api/ai', {
     method: 'POST',
-    body: { action: 'custom', instruction, context }
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
   })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null) as { message?: string } | null
+    throw new Error(error?.message ?? `AI request failed (${response.status})`)
+  }
+  if (!response.body) throw new Error('AI response could not be streamed')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let result = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    result += decoder.decode(value, { stream: true })
+    onChunk(result)
+  }
+
+  result += decoder.decode()
+  if (!result) throw new Error('Empty response from model')
+  return result
+}
+
+export async function runAi(action: string, text: string, context: string, onChunk: (result: string) => void): Promise<string> {
+  return await streamAi({ action, text, context }, onChunk)
+}
+
+export async function runCustomAi(instruction: string, context: string, onChunk: (result: string) => void): Promise<string> {
+  return await streamAi({ action: 'custom', instruction, context }, onChunk)
 }

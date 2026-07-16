@@ -5,6 +5,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { closeHistory } from '@tiptap/pm/history'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import CodeBlockView from '~/components/CodeBlockView.vue'
 import Highlight from '@tiptap/extension-highlight'
@@ -103,6 +104,62 @@ function getSelectionHtml(editor: Editor): string {
   return div.innerHTML
 }
 
+async function streamAiIntoEditor(
+  editor: Editor,
+  pending: AiPending,
+  request: (onChunk: (result: string) => void) => Promise<string>,
+  rollbackHtml = ''
+) {
+  const range = { from: pending.from, to: pending.to }
+  let rendered = ''
+
+  editor.view.dispatch(closeHistory(editor.state.tr))
+
+  const replaceRange = (output: string, addToHistory: boolean) => {
+    if (!output || output === rendered) return
+
+    const previousSize = editor.state.doc.content.size
+    editor.chain()
+      .setMeta('addToHistory', addToHistory)
+      .insertContentAt(range, markdownToHtml(output))
+      .run()
+    range.to += editor.state.doc.content.size - previousSize
+    rendered = output
+    setAiPending(editor, pending.kind === 'generate'
+      ? { kind: 'generate', from: range.to, to: range.to }
+      : { kind: 'transform', ...range })
+  }
+
+  const renderChunk = (markdown: string) => {
+    try {
+      replaceRange(markdown, false)
+    } catch {
+      // Partial markdown such as "- " can briefly produce an invalid empty node.
+    }
+  }
+
+  const restoreOriginal = () => {
+    const previousSize = editor.state.doc.content.size
+    const chain = editor.chain().setMeta('addToHistory', false)
+    if (rollbackHtml) chain.insertContentAt(range, rollbackHtml)
+    else if (range.from < range.to) chain.deleteRange(range)
+    chain.run()
+    range.to += editor.state.doc.content.size - previousSize
+    rendered = ''
+  }
+
+  try {
+    const result = await request(renderChunk)
+    restoreOriginal()
+    editor.view.dispatch(closeHistory(editor.state.tr))
+    replaceRange(normalizeAiOutput(result), true)
+    editor.commands.focus(range.to)
+  } catch (error) {
+    restoreOriginal()
+    throw error
+  }
+}
+
 const aiGenerateItems = computed(() => [
   generateActions.map(action => ({
     label: action.label,
@@ -132,14 +189,10 @@ async function runGenerate(action: string) {
   }
   aiLoading.value = true
   const { from } = editor.state.selection
-  setAiPending(editor, { kind: 'generate', from, to: from })
+  const pending: AiPending = { kind: 'generate', from, to: from }
+  setAiPending(editor, pending)
   try {
-    const { result } = await runAi(action, '', context)
-    const html = markdownToHtml(normalizeAiOutput(result))
-    const pending = aiPendingKey.getState(editor.state)
-    if (pending?.kind === 'generate') {
-      editor.chain().focus().insertContentAt(pending.from, html).run()
-    }
+    await streamAiIntoEditor(editor, pending, onChunk => runAi(action, '', context, onChunk))
   } catch (e) {
     const err = e as { data?: { message?: string }, message?: string }
     toast.add({
@@ -175,14 +228,10 @@ async function runTransform(action: string) {
   const text = htmlToMarkdown(selectionHtml)
 
   aiLoading.value = true
-  setAiPending(editor, { kind: 'transform', from, to })
+  const pending: AiPending = { kind: 'transform', from, to }
+  setAiPending(editor, pending)
   try {
-    const { result } = await runAi(action, text, '')
-    const html = markdownToHtml(normalizeAiOutput(result))
-    const pending = aiPendingKey.getState(editor.state)
-    if (pending?.kind === 'transform') {
-      editor.chain().focus().insertContentAt({ from: pending.from, to: pending.to }, html).run()
-    }
+    await streamAiIntoEditor(editor, pending, onChunk => runAi(action, text, '', onChunk), selectionHtml)
   } catch (e) {
     const err = e as { data?: { message?: string }, message?: string }
     toast.add({
@@ -222,16 +271,12 @@ async function runCustomPrompt() {
   const context = aiPromptIncludeContext.value ? htmlToMarkdown(editor.getHTML()).trim() : ''
   aiPromptOpen.value = false
   aiLoading.value = true
-  setAiPending(editor, { kind: 'generate', from: position, to: position })
+  const pending: AiPending = { kind: 'generate', from: position, to: position }
+  setAiPending(editor, pending)
   try {
-    const { result } = await runCustomAi(instruction, context)
-    const html = markdownToHtml(normalizeAiOutput(result))
-    const pending = aiPendingKey.getState(editor.state)
-    if (pending?.kind === 'generate') {
-      editor.chain().focus().insertContentAt(pending.from, html).run()
-      aiPrompt.value = ''
-      aiPromptPosition.value = null
-    }
+    await streamAiIntoEditor(editor, pending, onChunk => runCustomAi(instruction, context, onChunk))
+    aiPrompt.value = ''
+    aiPromptPosition.value = null
   } catch (e) {
     const err = e as { data?: { message?: string }, message?: string }
     toast.add({

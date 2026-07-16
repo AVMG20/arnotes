@@ -24,6 +24,12 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildPrompt(action, text, context, instruction)
 
-  const result = await callOpenRouter(apiKey, model, prompt)
-  return { result, model }
+  const stream = await streamOpenRouter(apiKey, model, prompt)
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no'
+    }
+  })
 })

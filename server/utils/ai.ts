@@ -42,13 +42,13 @@ export function buildPrompt(action: AiAction, text: string, context: string, ins
 
 export const DEFAULT_OPENROUTER_MODEL = AI_SETTINGS_DEFAULTS.openrouterModel
 
-export interface OpenRouterResponse {
-  choices?: Array<{ message?: { content?: string } }>
+interface OpenRouterStreamChunk {
+  choices?: Array<{ delta?: { content?: string } }>
   error?: { message?: string }
 }
 
-export async function callOpenRouter(apiKey: string, model: string, prompt: string): Promise<string> {
-  const res = await $fetch<OpenRouterResponse>('https://openrouter.ai/api/v1/chat/completions', {
+export async function streamOpenRouter(apiKey: string, model: string, prompt: string): Promise<ReadableStream<Uint8Array>> {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -56,14 +56,38 @@ export async function callOpenRouter(apiKey: string, model: string, prompt: stri
       'X-Title': 'Arnotes',
       'Content-Type': 'application/json'
     },
-    body: {
+    body: JSON.stringify({
       model,
-      messages: [{ role: 'user', content: prompt }]
-    }
+      messages: [{ role: 'user', content: prompt }],
+      stream: true
+    })
   })
 
-  if (res.error) throw createError({ statusCode: 502, message: res.error.message ?? 'OpenRouter error' })
-  const content = res.choices?.[0]?.message?.content
-  if (!content) throw createError({ statusCode: 502, message: 'Empty response from model' })
-  return content
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: { message?: string } } | null
+    throw createError({ statusCode: 502, message: body?.error?.message ?? `OpenRouter request failed (${res.status})` })
+  }
+  if (!res.body) throw createError({ statusCode: 502, message: 'OpenRouter returned an empty response' })
+
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ''
+
+  return res.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        const data = line.trim().replace(/^data:\s*/, '')
+        if (!data || data === '[DONE]' || !line.trim().startsWith('data:')) continue
+
+        const event = JSON.parse(data) as OpenRouterStreamChunk
+        if (event.error) throw new Error(event.error.message ?? 'OpenRouter error')
+        const content = event.choices?.[0]?.delta?.content
+        if (content) controller.enqueue(encoder.encode(content))
+      }
+    }
+  }))
 }
