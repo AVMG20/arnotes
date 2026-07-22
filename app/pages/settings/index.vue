@@ -26,13 +26,38 @@ const apiKeyDirty = computed(() => apiKeyInput.value.trim() !== '')
 
 const modelInput = ref('')
 const { data: modelCatalog, status: modelCatalogStatus, refresh: refreshModelCatalog } = useFetch<{
-  models: Array<{ id: string, name: string, contextLength: number | null, modality: string | null }>
+  models: Array<{ id: string, name: string, contextLength: number | null, modality: string | null, inputPrice: number | null, outputPrice: number | null }>
 }>('/api/settings/models', { server: false, lazy: true })
+const modelsRefreshing = ref(false)
+
+const { data: aiHistory } = useFetch<{ totals: { prompts: number, cost: number } }>('/api/settings/ai-history', { server: false, lazy: true })
 
 function formatContextLength(tokens: number | null): string | null {
   if (!tokens) return null
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M context`
   return `${Math.round(tokens / 1000)}k context`
+}
+
+function formatPricePerMillion(price: number | null): string | null {
+  if (typeof price !== 'number' || !Number.isFinite(price)) return null
+  const perMillion = price * 1_000_000
+  return `$${perMillion.toLocaleString(undefined, { maximumFractionDigits: 4 })}/M`
+}
+
+async function forceRefreshModelCatalog() {
+  modelsRefreshing.value = true
+  try {
+    modelCatalog.value = await $fetch('/api/settings/models?refresh=true')
+    toast.add({ title: 'Models and pricing refreshed', icon: 'i-lucide-refresh-cw', duration: 2000 })
+  } catch (e) {
+    toast.add({ title: 'Could not refresh models', description: errMsg(e), icon: 'i-lucide-alert-triangle', color: 'error' })
+  } finally {
+    modelsRefreshing.value = false
+  }
+}
+
+function formatMoney(amount: number): string {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(amount)
 }
 
 const modelOptions = computed(() => {
@@ -41,7 +66,12 @@ const modelOptions = computed(() => {
     ? catalog.map(model => ({
         label: model.name,
         value: model.id,
-        description: [model.id, formatContextLength(model.contextLength), model.modality].filter(Boolean).join(' · ')
+        description: [
+          model.id,
+          formatContextLength(model.contextLength),
+          model.inputPrice !== null ? `Input ${formatPricePerMillion(model.inputPrice)}` : null,
+          model.outputPrice !== null ? `Output ${formatPricePerMillion(model.outputPrice)}` : null
+        ].filter(Boolean).join(' · ')
       }))
     : POPULAR_OPENROUTER_MODELS.map(model => ({ label: model, value: model, description: 'Popular model' }))
 
@@ -118,6 +148,8 @@ const memberSince = computed(() => {
 
 const totalNotes = computed(() => activeNotes.value.length)
 const totalTags = computed(() => allTags.value.length)
+const totalPrompts = computed(() => aiHistory.value?.totals.prompts ?? 0)
+const totalAiCost = computed(() => aiHistory.value?.totals.cost ?? 0)
 
 const totalContentBytes = computed(() => {
   const enc = new TextEncoder()
@@ -160,10 +192,19 @@ function swatchStyle(color: string, selected: boolean) {
   <div class="flex-1 min-w-0 flex flex-col overflow-hidden pb-14 lg:pb-0">
     <!-- Header -->
     <div class="sticky top-0 z-10 border-b border-default bg-default/95 backdrop-blur-sm shrink-0">
-      <div class="px-4 pt-4 pb-3.5 flex items-center gap-3">
+      <div class="px-4 pt-3.5 pb-3 flex items-center gap-3">
         <h1 class="font-semibold text-sm">
           Settings
         </h1>
+        <UButton
+          to="/settings/ai-history"
+          label="AI history"
+          icon="i-lucide-history"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="ml-auto"
+        />
       </div>
     </div>
 
@@ -175,7 +216,7 @@ function swatchStyle(color: string, selected: boolean) {
             <div class="px-5 py-3 border-b border-default bg-elevated/40">
               <span class="text-xs font-semibold text-muted uppercase tracking-wider">Your stats</span>
             </div>
-            <div class="grid grid-cols-3 divide-x divide-default">
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 divide-x divide-default">
               <div class="p-5 flex items-center gap-3">
                 <div class="size-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                   <UIcon
@@ -189,6 +230,38 @@ function swatchStyle(color: string, selected: boolean) {
                   </p>
                   <p class="text-xs text-muted mt-1">
                     {{ totalNotes === 1 ? 'Note' : 'Notes' }}
+                  </p>
+                </div>
+              </div>
+              <div class="p-5 flex items-center gap-3">
+                <div class="size-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <UIcon
+                    name="i-lucide-sparkles"
+                    class="size-4 text-primary"
+                  />
+                </div>
+                <div>
+                  <p class="text-xl font-bold tabular-nums leading-none">
+                    {{ totalPrompts }}
+                  </p>
+                  <p class="text-xs text-muted mt-1">
+                    {{ totalPrompts === 1 ? 'AI prompt' : 'AI prompts' }}
+                  </p>
+                </div>
+              </div>
+              <div class="p-5 flex items-center gap-3">
+                <div class="size-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <UIcon
+                    name="i-lucide-wallet-cards"
+                    class="size-4 text-primary"
+                  />
+                </div>
+                <div>
+                  <p class="text-xl font-bold tabular-nums leading-none">
+                    {{ formatMoney(totalAiCost) }}
+                  </p>
+                  <p class="text-xs text-muted mt-1">
+                    AI spent
                   </p>
                 </div>
               </div>
@@ -402,6 +475,15 @@ function swatchStyle(color: string, selected: boolean) {
                       >openrouter.ai/keys</a>
                     </p>
                   </div>
+                  <UButton
+                    icon="i-lucide-refresh-cw"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :loading="modelsRefreshing"
+                    aria-label="Refresh OpenRouter models and pricing"
+                    @click="forceRefreshModelCatalog"
+                  />
                 </div>
 
                 <div class="pl-12 space-y-2">
@@ -472,7 +554,7 @@ function swatchStyle(color: string, selected: boolean) {
                       Model
                     </p>
                     <p class="text-xs text-muted mt-0.5">
-                      Which OpenRouter model powers the AI features
+                      Compare input and output prices per million tokens before choosing a model
                     </p>
                   </div>
                 </div>
@@ -503,7 +585,7 @@ function swatchStyle(color: string, selected: boolean) {
                         >Try again</button>, or type any OpenRouter slug and press Enter.
                       </template>
                       <template v-else>
-                        Search the complete OpenRouter catalog, or type any model slug and press Enter.
+                        Prices come from OpenRouter and are shown per million input and output tokens. Search the complete catalog, or type any model slug and press Enter.
                       </template>
                     </span>
                   </p>

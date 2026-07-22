@@ -5,10 +5,20 @@ interface OpenRouterModel {
   architecture?: {
     modality?: string
   }
+  pricing?: {
+    prompt?: string
+    completion?: string
+  }
 }
 
 interface OpenRouterModelsResponse {
   data: OpenRouterModel[]
+}
+
+function parsePrice(price: string | undefined): number | null {
+  if (price === undefined) return null
+  const parsed = Number(price)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 export default defineCachedEventHandler(async () => {
@@ -19,7 +29,9 @@ export default defineCachedEventHandler(async () => {
       id: model.id,
       name: model.name || model.id,
       contextLength: model.context_length ?? null,
-      modality: model.architecture?.modality ?? null
+      modality: model.architecture?.modality ?? null,
+      inputPrice: parsePrice(model.pricing?.prompt),
+      outputPrice: parsePrice(model.pricing?.completion)
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 
@@ -28,5 +40,5 @@ export default defineCachedEventHandler(async () => {
   maxAge: 60 * 60,
   swr: true,
   name: 'openrouter-models',
-  getKey: () => 'catalog'
+  getKey: event => getQuery(event).refresh === 'true' ? `catalog-${Date.now()}` : 'catalog'
 })

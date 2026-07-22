@@ -35,6 +35,7 @@ export default defineEventHandler(async (event) => {
       ...(body.tags !== undefined && { tags: body.tags }),
       ...(updatedAttachments !== undefined && { attachments: updatedAttachments }),
       ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
+      ...(body.publicUntil !== undefined && { publicUntil: body.publicUntil }),
       updatedAt: Date.now(),
     })
     .where(and(eq(notes.id, id), eq(notes.userId, userId)))

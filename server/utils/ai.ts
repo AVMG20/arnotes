@@ -44,10 +44,23 @@ export const DEFAULT_OPENROUTER_MODEL = AI_SETTINGS_DEFAULTS.openrouterModel
 
 interface OpenRouterStreamChunk {
   choices?: Array<{ delta?: { content?: string } }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    cost?: number
+  }
   error?: { message?: string }
 }
 
-export async function streamOpenRouter(apiKey: string, model: string, prompt: string): Promise<ReadableStream<Uint8Array>> {
+export interface AiUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cost: number
+}
+
+export async function streamOpenRouter(apiKey: string, model: string, prompt: string, onComplete?: (usage: AiUsage) => Promise<void>): Promise<ReadableStream<Uint8Array>> {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -59,7 +72,8 @@ export async function streamOpenRouter(apiKey: string, model: string, prompt: st
     body: JSON.stringify({
       model,
       messages: [{ role: 'user', content: prompt }],
-      stream: true
+      stream: true,
+      stream_options: { include_usage: true }
     })
   })
 
@@ -72,6 +86,8 @@ export async function streamOpenRouter(apiKey: string, model: string, prompt: st
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
   let buffer = ''
+  let completed = false
+  let usage: AiUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
 
   return res.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -81,13 +97,28 @@ export async function streamOpenRouter(apiKey: string, model: string, prompt: st
 
       for (const line of lines) {
         const data = line.trim().replace(/^data:\s*/, '')
-        if (!data || data === '[DONE]' || !line.trim().startsWith('data:')) continue
+        if (!data || !line.trim().startsWith('data:')) continue
+        if (data === '[DONE]') {
+          completed = true
+          continue
+        }
 
         const event = JSON.parse(data) as OpenRouterStreamChunk
         if (event.error) throw new Error(event.error.message ?? 'OpenRouter error')
+        if (event.usage) {
+          usage = {
+            inputTokens: event.usage.prompt_tokens ?? 0,
+            outputTokens: event.usage.completion_tokens ?? 0,
+            totalTokens: event.usage.total_tokens ?? 0,
+            cost: event.usage.cost ?? 0
+          }
+        }
         const content = event.choices?.[0]?.delta?.content
         if (content) controller.enqueue(encoder.encode(content))
       }
+    },
+    async flush() {
+      if (completed) await onComplete?.(usage)
     }
   }))
 }

@@ -7,6 +7,7 @@ export interface Note {
   tags: string[]
   attachments: string[]
   isPublic: boolean
+  publicUntil: number | null
   createdAt: number
   updatedAt: number
   deletedAt: number | null
@@ -168,14 +169,12 @@ export function useNotes() {
         return pool
     }
 
-  async function togglePublic(id: string): Promise<Note> {
+  async function updateSharing(id: string, isPublic: boolean, publicUntil: number | null): Promise<Note> {
     const idx = _notes.value.findIndex(n => n.id === id)
     if (idx < 0) throw new Error('Note not found')
-    const current = _notes.value[idx]
-      const updated = await $fetch<Note>(`/api/notes/${id}`, {
+    const updated = await $fetch<Note>(`/api/notes/${id}`, {
       method: 'PUT',
-      // @ts-ignore
-      body: { isPublic: !current.isPublic }
+      body: { isPublic, publicUntil }
     })
     const next = [..._notes.value]
     next[idx] = updated
@@ -240,7 +239,7 @@ export function useNotes() {
     autoFocus: _autoFocus,
     createNote,
     updateNote,
-    togglePublic,
+    updateSharing,
     deleteNote,
     restoreNote,
     searchNotes

@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, bigint, json } from 'drizzle-orm/pg-core'
+import { pgTable, text, boolean, timestamp, bigint, integer, numeric, index, json } from 'drizzle-orm/pg-core'
 
 // ─── Better Auth tables ───────────────────────────────────────────────────────
 
@@ -58,6 +58,7 @@ export const notes = pgTable('notes', {
   tags: json('tags').$type<string[]>().notNull().default([]),
   attachments: json('attachments').$type<string[]>().notNull().default([]),
   isPublic: boolean('is_public').notNull().default(false),
+  publicUntil: bigint('public_until', { mode: 'number' }),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
   deletedAt: bigint('deleted_at', { mode: 'number' })
@@ -78,6 +79,25 @@ export const userSettings = pgTable('user_settings', {
 })
 
 export type UserSettings = typeof userSettings.$inferSelect
+
+// Stores usage metadata only. Prompt and response text are intentionally never persisted.
+export const aiUsageRecords = pgTable(
+  'ai_usage_records',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    action: text('action').notNull(),
+    model: text('model').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    totalTokens: integer('total_tokens').notNull().default(0),
+    cost: numeric('cost', { precision: 14, scale: 8 }).notNull().default('0'),
+    createdAt: timestamp('created_at').notNull().defaultNow()
+  },
+  table => [index('ai_usage_records_user_created_at_idx').on(table.userId, table.createdAt)]
+)
+
+export type AiUsageRecord = typeof aiUsageRecords.$inferSelect
 
 export const AI_SETTINGS_DEFAULTS = {
   openrouterModel: 'openai/gpt-4o-mini'

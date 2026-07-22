@@ -26,13 +26,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const [note] = await db
-    .select({ userId: notes.userId, isPublic: notes.isPublic })
+    .select({ userId: notes.userId, isPublic: notes.isPublic, publicUntil: notes.publicUntil })
     .from(notes)
     .where(eq(notes.id, noteId))
 
   if (!note) throw createError({ statusCode: 404, message: 'Not found' })
 
-  if (!note.isPublic) {
+  const isPublic = note.isPublic && (!note.publicUntil || note.publicUntil > Date.now())
+  if (!isPublic) {
     const session = await auth.api.getSession({ headers: event.headers })
     if (!session || session.user.id !== note.userId) {
       throw createError({ statusCode: 403, message: 'Forbidden' })
@@ -44,7 +45,10 @@ export default defineEventHandler(async (event) => {
 
   const mime = MIME[extname(filename).toLowerCase()] ?? 'application/octet-stream'
   setHeader(event, 'Content-Type', mime)
-  setHeader(event, 'Cache-Control', 'public, max-age=31536000, immutable')
+  const maxAge = note.publicUntil
+    ? Math.max(0, Math.floor((note.publicUntil - Date.now()) / 1000))
+    : 31_536_000
+  setHeader(event, 'Cache-Control', isPublic ? `public, max-age=${maxAge}` : 'private, no-store')
 
   return readFileSync(filePath)
 })

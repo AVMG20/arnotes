@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { differenceInCalendarDays } from 'date-fns'
 import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -14,7 +15,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
 
-const { activeNote, activeNoteId, autoFocus, updateNote, togglePublic } = useNotes()
+const { activeNote, activeNoteId, autoFocus, updateNote, updateSharing } = useNotes()
 const toast = useToast()
 const { openrouterApiKey } = useUserSettings()
 
@@ -292,15 +293,66 @@ async function runCustomPrompt() {
   }
 }
 
-async function handleTogglePublic() {
+const shareOpen = ref(false)
+const shareEndDate = ref('')
+const sharing = ref(false)
+
+watch(shareOpen, (open) => {
+  if (open) shareEndDate.value = formatShareEndDate(activeNote.value?.publicUntil ?? null)
+})
+
+function formatShareEndDate(timestamp: number | null) {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
+}
+
+function getShareExpiry() {
+  if (!shareEndDate.value) return null
+  const expiresAt = new Date(`${shareEndDate.value}T23:59:59.999`).getTime()
+  return Number.isNaN(expiresAt) ? null : expiresAt
+}
+
+function publicLink() {
+  return activeNote.value ? `${window.location.origin}/public/${activeNote.value.id}` : ''
+}
+
+function shareExpiryLabel(timestamp: number | null) {
+  if (!timestamp) return 'Shared indefinitely'
+  const days = Math.max(0, differenceInCalendarDays(new Date(timestamp), new Date()))
+  const weeks = Math.floor(days / 7)
+  return `Expires in ${weeks} ${weeks === 1 ? 'week' : 'weeks'} and ${days % 7} ${days % 7 === 1 ? 'day' : 'days'}`
+}
+
+async function copyPublicLink() {
+  const url = publicLink()
+  if (!url) return
+  await navigator.clipboard.writeText(url)
+  toast.add({ title: 'Link copied', icon: 'i-lucide-clipboard-check', duration: 2000 })
+}
+
+async function saveSharing(isPublic: boolean) {
   if (!activeNoteId.value) return
-  const updated = await togglePublic(activeNoteId.value)
-  if (updated.isPublic) {
-    const url = `${window.location.origin}/public/${updated.id}`
-    await navigator.clipboard.writeText(url)
-    toast.add({ title: 'Note is now public', description: 'Public link copied to clipboard', icon: 'i-lucide-globe', duration: 3000 })
-  } else {
-    toast.add({ title: 'Note is now private', icon: 'i-lucide-lock', duration: 2000 })
+  const publicUntil = isPublic ? getShareExpiry() : null
+  if (publicUntil && publicUntil <= Date.now()) {
+    toast.add({ title: 'Choose a future end date', icon: 'i-lucide-calendar-x', color: 'error', duration: 3000 })
+    return
+  }
+  sharing.value = true
+  try {
+    const updated = await updateSharing(activeNoteId.value, isPublic, publicUntil)
+    shareEndDate.value = formatShareEndDate(updated.publicUntil)
+    toast.add({
+      title: updated.isPublic ? 'Note is shared' : 'Sharing stopped',
+      description: updated.isPublic && updated.publicUntil ? `Available through ${formatShareEndDate(updated.publicUntil)}` : undefined,
+      icon: updated.isPublic ? 'i-lucide-globe' : 'i-lucide-lock',
+      duration: 2500
+    })
+  } catch {
+    toast.add({ title: 'Could not update sharing', icon: 'i-lucide-alert-triangle', color: 'error', duration: 3000 })
+  } finally {
+    sharing.value = false
   }
 }
 const editorRef = ref()
@@ -500,7 +552,6 @@ const bubbleToolbarItems: any[][] = [[
     icon: 'i-lucide-sparkles',
     tooltip: { text: 'AI' },
     color: 'primary',
-    content: { modal: false },
     items: aiBubbleItems
   }
 ]]
@@ -568,6 +619,7 @@ watch(activeNoteId, async (newId, oldId) => {
   await nextTick()
   suppressSave = false
   isDirty.value = false
+  shareEndDate.value = formatShareEndDate(activeNote.value?.publicUntil ?? null)
   if (newId && autoFocus.value) {
     autoFocus.value = false
     editorRef.value?.editor?.commands.focus('start')
@@ -661,15 +713,95 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                   <span class="hidden sm:inline">AI</span>
                 </UButton>
               </UDropdownMenu>
-              <UButton
-                :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-lock'"
-                size="xs"
-                :color="activeNote?.isPublic ? 'primary' : 'neutral'"
-                variant="ghost"
-                @click="handleTogglePublic"
+              <UPopover
+                v-model:open="shareOpen"
+                :content="{ align: 'end', sideOffset: 8 }"
+                @open-auto-focus.prevent
               >
-                <span class="hidden sm:inline">{{ activeNote?.isPublic ? 'Public' : 'Private' }}</span>
-              </UButton>
+                <UButton
+                  :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-share-2'"
+                  size="xs"
+                  :color="activeNote?.isPublic ? 'primary' : 'neutral'"
+                  variant="ghost"
+                  aria-label="Share note"
+                >
+                  <span class="hidden sm:inline">Share</span>
+                </UButton>
+
+                <template #content>
+                  <div class="w-80 p-3 space-y-3">
+                    <div class="flex items-start gap-2">
+                      <div class="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary">
+                        <UIcon name="i-lucide-globe-2" class="size-4" />
+                      </div>
+                      <div>
+                        <p class="text-sm font-medium text-default">
+                          Share this note
+                        </p>
+                        <p class="text-xs text-muted">
+                          {{ activeNote?.isPublic ? 'Anyone with the link can view it.' : 'Create a view-only public link.' }}
+                        </p>
+                      </div>
+                    </div>
+
+                    <UFormField label="End date" hint="Optional">
+                      <UInput
+                        v-model="shareEndDate"
+                        type="date"
+                        :min="new Date().toISOString().slice(0, 10)"
+                        class="w-full"
+                      />
+                      <template #hint>
+                        <span class="text-xs text-muted">Leave empty to share indefinitely</span>
+                      </template>
+                    </UFormField>
+
+                    <div v-if="activeNote?.isPublic" class="rounded-md bg-elevated px-2.5 py-2">
+                      <p class="text-xs font-medium text-default">
+                        Link is active
+                      </p>
+                      <p class="mt-0.5 text-xs text-muted truncate">
+                        {{ publicLink() }}
+                      </p>
+                      <p class="mt-1 text-xs text-muted">
+                        {{ shareExpiryLabel(activeNote?.publicUntil ?? null) }}
+                      </p>
+                    </div>
+
+                    <div class="flex gap-2">
+                      <UButton
+                        :label="activeNote?.isPublic ? 'Save changes' : 'Share note'"
+                        icon="i-lucide-send"
+                        size="sm"
+                        class="flex-1 justify-center"
+                        :loading="sharing"
+                        @click="saveSharing(true)"
+                      />
+                      <UButton
+                        v-if="activeNote?.isPublic"
+                        label="Copy link"
+                        icon="i-lucide-copy"
+                        size="sm"
+                        color="neutral"
+                        variant="soft"
+                        @click="copyPublicLink"
+                      />
+                    </div>
+
+                    <UButton
+                      v-if="activeNote?.isPublic"
+                      label="Stop sharing"
+                      icon="i-lucide-lock"
+                      size="sm"
+                      color="error"
+                      variant="ghost"
+                      block
+                      :loading="sharing"
+                      @click="saveSharing(false)"
+                    />
+                  </div>
+                </template>
+              </UPopover>
               <div class="w-px h-4 bg-muted/40" />
               <UButton
                 icon="i-lucide-clipboard-copy"

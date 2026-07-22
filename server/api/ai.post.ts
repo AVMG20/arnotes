@@ -1,5 +1,5 @@
 import { db } from '../db'
-import { userSettings } from '../db/schema'
+import { aiUsageRecords, userSettings } from '../db/schema'
 import { eq } from 'drizzle-orm'
 
 export default defineEventHandler(async (event) => {
@@ -24,7 +24,18 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildPrompt(action, text, context, instruction)
 
-  const stream = await streamOpenRouter(apiKey, model, prompt)
+  const stream = await streamOpenRouter(apiKey, model, prompt, async (usage) => {
+    await db.insert(aiUsageRecords).values({
+      id: crypto.randomUUID(),
+      userId,
+      action,
+      model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+      cost: usage.cost.toFixed(8)
+    })
+  })
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
