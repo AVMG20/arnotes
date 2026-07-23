@@ -18,6 +18,7 @@ const _notes = ref<Note[]>([])
 const _activeNoteId = ref<string | null>(null)
 const _activeTag = ref<string | null>(null)
 const _showTrash = ref(false)
+const _showShared = ref(false)
 const _searchQuery = ref('')
 const _ready = ref(false)
 const _recentTags = ref<string[]>([])
@@ -75,6 +76,9 @@ export function initNotesStore(notes: Note[], search: unknown) {
 export function useNotes() {
   const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt))
   const trashedNotes = computed(() => _notes.value.filter(n => n.deletedAt !== null))
+  const sharedNotes = computed(() => activeNotes.value.filter(note =>
+    note.isPublic && (note.publicUntil === null || note.publicUntil > Date.now())
+  ))
 
   const allTags = computed(() => {
     const counts = new Map<string, number>()
@@ -97,6 +101,8 @@ export function useNotes() {
       }
     const pool = _showTrash.value
       ? trashedNotes.value
+      : _showShared.value
+        ? sharedNotes.value
       : _activeTag.value
         ? activeNotes.value.filter(n => n.tags.includes(_activeTag.value!))
         : activeNotes.value
@@ -227,10 +233,12 @@ export function useNotes() {
     notes: _notes,
     activeNotes,
     trashedNotes,
+    sharedNotes,
     activeNote,
     activeNoteId: _activeNoteId,
     activeTag: _activeTag,
     showTrash: _showTrash,
+    showShared: _showShared,
     searchQuery: _searchQuery,
     recentTags: _recentTags,
     allTags,

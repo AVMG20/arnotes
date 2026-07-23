@@ -9,10 +9,9 @@ import CodeBlockView from '~/components/CodeBlockView.vue'
 import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
-
-import TurndownService from 'turndown'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,6 +62,10 @@ const extensions: any[] = [
   Highlight.configure({ multicolor: false }),
   TaskList,
   TaskItem.configure({ nested: true }),
+  Table.configure({ resizable: false }),
+  TableRow,
+  TableHeader,
+  TableCell,
   DateMention,
 ]
 
@@ -73,33 +76,7 @@ watch(note, (n) => {
 })
 
 function copyToMarkdown() {
-  const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
-  td.addRule('taskItem', {
-    filter(node) {
-      return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
-    },
-    replacement(_content, node) {
-      const el = node as HTMLElement
-      const checked = el.getAttribute('data-checked') === 'true'
-      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
-      return `- [${checked ? 'x' : ' '}] ${text}\n`
-    }
-  })
-  td.addRule('fencedCode', {
-    filter(node) {
-      return node.nodeName === 'PRE' && !!node.firstChild && (node.firstChild as HTMLElement).nodeName === 'CODE'
-    },
-    replacement(_content, node) {
-      const code = (node as HTMLElement).querySelector('code')
-      const lang = (code?.className ?? '').match(/language-(\w+)/)?.[1] ?? ''
-      return `\n\`\`\`${lang}\n${code?.textContent ?? ''}\n\`\`\`\n\n`
-    }
-  })
-  td.addRule('highlight', {
-    filter: ['mark'],
-    replacement: (content) => content
-  })
-  navigator.clipboard.writeText(td.turndown(editorContent.value)).then(() => {
+  navigator.clipboard.writeText(htmlToMarkdown(editorContent.value)).then(() => {
     toast.add({ title: 'Copied as Markdown', icon: 'i-lucide-clipboard-check', duration: 2000 })
   })
 }

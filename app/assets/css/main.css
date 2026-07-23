@@ -34,6 +34,42 @@
   padding: 1rem 2.5rem;
 }
 
+/* ─── Tables ────────────────────────────────────────────────── */
+
+.tiptap .tableWrapper,
+.ProseMirror .tableWrapper {
+  margin: 1.25rem 0;
+  overflow-x: auto;
+}
+
+.tiptap table,
+.ProseMirror table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.tiptap th,
+.tiptap td,
+.ProseMirror th,
+.ProseMirror td {
+  min-width: 6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--ui-border);
+  vertical-align: top;
+}
+
+.tiptap th,
+.ProseMirror th {
+  font-weight: 600;
+  background: var(--ui-bg-elevated);
+}
+
+.tiptap .selectedCell::after,
+.ProseMirror .selectedCell::after {
+  background: color-mix(in srgb, var(--ui-color-primary-500) 14%, transparent);
+}
+
 /* ─── Task list ─────────────────────────────────────────────── */
 
 .tiptap ul[data-type="taskList"],

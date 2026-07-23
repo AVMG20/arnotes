@@ -69,6 +69,30 @@ function normalizeMarkdown(text: string): string {
 
 export function createTurndownService(): TurndownService {
   const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
+  td.addRule('table', {
+    filter: 'table',
+    replacement(_content, node) {
+      const rows = Array.from((node as HTMLTableElement).rows)
+      const [headerRow, ...bodyRows] = rows
+      if (!headerRow) return ''
+
+      const toCellText = (cell: HTMLTableCellElement) => cell.textContent?.trim().replace(/\|/g, '\\|') ?? ''
+      const toRow = (row: HTMLTableRowElement) => `| ${Array.from(row.cells).map(toCellText).join(' | ')} |`
+      const toSeparator = (cell: HTMLTableCellElement) => {
+        switch (cell.style.textAlign) {
+          case 'left': return ':---'
+          case 'center': return ':---:'
+          case 'right': return '---:'
+          default: return '---'
+        }
+      }
+      const header = toRow(headerRow)
+      const separator = `| ${Array.from(headerRow.cells).map(toSeparator).join(' | ')} |`
+      const body = bodyRows.map(toRow)
+
+      return `\n\n${[header, separator, ...body].join('\n')}\n\n`
+    }
+  })
   td.addRule('taskItem', {
     filter(node) {
       return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
@@ -98,7 +122,7 @@ export function createTurndownService(): TurndownService {
 }
 
 export function markdownToHtml(text: string): string {
-  const raw = marked.parse(text, { async: false }) as string
+  const raw = marked.parse(text, { async: false, gfm: true }) as string
   if (!import.meta.client) return raw
   const doc = new DOMParser().parseFromString(raw, 'text/html')
   doc.querySelectorAll('ul > li').forEach((li) => {

@@ -12,6 +12,7 @@ import CodeBlockView from '~/components/CodeBlockView.vue'
 import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
 
@@ -455,10 +456,20 @@ const MarkdownPaste = Extension.create({
         key: new PluginKey('markdownPaste'),
         props: {
           handlePaste(_view, event) {
-            if (event.clipboardData?.getData('text/html')) return false
             const text = event.clipboardData?.getData('text/plain') ?? ''
             if (!text.trim()) return false
-            editor.commands.insertContent(markdownToHtml(text))
+
+            const html = markdownToHtml(text)
+            // Clipboard sources often provide Markdown tables as an HTML code block.
+            // Prefer the plain-text table when Marked recognizes one.
+            if (/<table(?:\s|>)/.test(html)) {
+              event.preventDefault()
+              editor.commands.insertContent(html)
+              return true
+            }
+
+            if (event.clipboardData?.getData('text/html')) return false
+            editor.commands.insertContent(html)
             return true
           }
         }
@@ -475,6 +486,10 @@ const extensions: any[] = [
   Highlight.configure({ multicolor: false }),
   TaskList,
   TaskItem.configure({ nested: true }),
+  Table.configure({ resizable: true }),
+  TableRow,
+  TableHeader,
+  TableCell,
   DateMention,
   ImagePaste,
   AiPendingDecoration,
@@ -510,6 +525,46 @@ const customHandlers: any = {
       input.click()
     },
     isActive: () => false
+  },
+  table: {
+    canExecute: () => true,
+    execute: (editor: Editor) => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
+    isActive: () => false
+  },
+  addColumnBefore: {
+    canExecute: (editor: Editor) => editor.can().addColumnBefore(),
+    execute: (editor: Editor) => editor.chain().focus().addColumnBefore(),
+    isActive: () => false
+  },
+  addColumnAfter: {
+    canExecute: (editor: Editor) => editor.can().addColumnAfter(),
+    execute: (editor: Editor) => editor.chain().focus().addColumnAfter(),
+    isActive: () => false
+  },
+  deleteColumn: {
+    canExecute: (editor: Editor) => editor.can().deleteColumn(),
+    execute: (editor: Editor) => editor.chain().focus().deleteColumn(),
+    isActive: () => false
+  },
+  addRowBefore: {
+    canExecute: (editor: Editor) => editor.can().addRowBefore(),
+    execute: (editor: Editor) => editor.chain().focus().addRowBefore(),
+    isActive: () => false
+  },
+  addRowAfter: {
+    canExecute: (editor: Editor) => editor.can().addRowAfter(),
+    execute: (editor: Editor) => editor.chain().focus().addRowAfter(),
+    isActive: () => false
+  },
+  deleteRow: {
+    canExecute: (editor: Editor) => editor.can().deleteRow(),
+    execute: (editor: Editor) => editor.chain().focus().deleteRow(),
+    isActive: () => false
+  },
+  deleteTable: {
+    canExecute: (editor: Editor) => editor.can().deleteTable(),
+    execute: (editor: Editor) => editor.chain().focus().deleteTable(),
+    isActive: () => false
   }
 }
 
@@ -530,6 +585,7 @@ const fixedToolbarItems: any[][] = [[
   { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
   { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Ordered list' } },
   { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
+  { kind: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
   { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
   { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } }
 ]]
@@ -557,6 +613,29 @@ const bubbleToolbarItems: any[][] = [[
 ]]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+const tableToolbarItems: any[][] = [[
+  {
+    label: 'Columns',
+    icon: 'i-lucide-columns-3',
+    items: [
+      { kind: 'addColumnBefore', label: 'Add column left', icon: 'i-lucide-circle-plus' },
+      { kind: 'addColumnAfter', label: 'Add column right', icon: 'i-lucide-circle-plus' },
+      { kind: 'deleteColumn', label: 'Delete column', icon: 'i-lucide-columns-2', color: 'error' }
+    ]
+  },
+  {
+    label: 'Rows',
+    icon: 'i-lucide-rows-3',
+    items: [
+      { kind: 'addRowBefore', label: 'Add row above', icon: 'i-lucide-circle-plus' },
+      { kind: 'addRowAfter', label: 'Add row below', icon: 'i-lucide-circle-plus' },
+      { kind: 'deleteRow', label: 'Delete row', icon: 'i-lucide-rows-2', color: 'error' }
+    ]
+  },
+  { kind: 'deleteTable', icon: 'i-lucide-trash-2', color: 'error', tooltip: { text: 'Delete table' } }
+]]
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const suggestionItems: any[][] = [[
   { kind: 'aiPrompt', label: 'Ask AI', description: 'Generate anything from a custom prompt', icon: 'i-lucide-sparkles' }
 ], [
@@ -570,6 +649,7 @@ const suggestionItems: any[][] = [[
   { kind: 'taskList', label: 'Task list', icon: 'i-lucide-list-checks' },
   { kind: 'blockquote', label: 'Blockquote', icon: 'i-lucide-text-quote' },
   { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
+  { kind: 'table', label: 'Table', description: 'Insert a 3 x 3 table', icon: 'i-lucide-table' },
   { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
 ], [
   { type: 'label', label: 'Insert' },
@@ -830,6 +910,15 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
               const { selection } = state
               return view.hasFocus() && !selection.empty && !e.isActive('image')
             }"
+          />
+
+          <!-- Table controls (appears when the cursor is in a table) -->
+          <UEditorToolbar
+            :editor="editor"
+            :items="tableToolbarItems"
+            layout="bubble"
+            plugin-key="table-toolbar"
+            :should-show="({ editor: e, view }) => view.hasFocus() && e.isActive('table')"
           />
 
           <!-- Drag handle (hover any block) -->

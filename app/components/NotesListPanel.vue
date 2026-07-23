@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { ready, filteredNotes, activeNoteId, activeTag, showTrash, deleteNote, restoreNote } = useNotes()
+const { ready, filteredNotes, activeNoteId, activeTag, showTrash, showShared, deleteNote, restoreNote } = useNotes()
 
 const scrollArea = useTemplateRef('scrollArea')
 
@@ -32,11 +32,12 @@ async function confirmPermanentDelete() {
 
 <template>
   <div class="flex flex-col h-full bg-default">
-    <!-- Active tag / trash label -->
-    <div v-if="activeTag || showTrash" class="px-3 pt-2 pb-0 shrink-0">
+    <!-- Active tag, shared, or trash label -->
+    <div v-if="activeTag || showTrash || showShared" class="px-3 pt-2 pb-0 shrink-0">
       <div class="flex items-center gap-1.5 text-xs text-muted">
-        <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-filter'" class="size-3 shrink-0" />
+        <UIcon :name="showTrash ? 'i-lucide-trash-2' : showShared ? 'i-lucide-globe' : 'i-lucide-filter'" class="size-3 shrink-0" />
         <span v-if="showTrash" class="font-medium">Deleted notes</span>
+        <span v-else-if="showShared" class="font-medium">Shared notes</span>
         <span v-else class="text-primary-600 dark:text-primary-400 font-medium">#{{ activeTag }}</span>
       </div>
     </div>
@@ -112,8 +113,8 @@ async function confirmPermanentDelete() {
 
       <!-- Empty state -->
       <div v-else class="flex flex-col items-center justify-center py-10 gap-2 text-center flex-1">
-        <UIcon :name="showTrash ? 'i-lucide-trash-2' : 'i-lucide-file-x'" class="size-7 text-muted" />
-        <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : 'No notes' }}</p>
+        <UIcon :name="showTrash ? 'i-lucide-trash-2' : showShared ? 'i-lucide-globe' : 'i-lucide-file-x'" class="size-7 text-muted" />
+        <p class="text-xs text-muted">{{ showTrash ? 'Trash is empty' : showShared ? 'No shared notes' : 'No notes' }}</p>
       </div>
     </template>
 

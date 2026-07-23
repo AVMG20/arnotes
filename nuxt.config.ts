@@ -49,19 +49,31 @@ export default defineNuxtConfig({
       installPrompt: true
     },
     devOptions: {
-      enabled: true,
+      enabled: false,
       type: 'module'
     }
   },
 
   vite: {
+    resolve: {
+      dedupe: [
+        '@tiptap/core',
+        '@tiptap/pm',
+        'prosemirror-model',
+        'prosemirror-state',
+        'prosemirror-tables',
+        'prosemirror-view'
+      ]
+    },
     optimizeDeps: {
       include: [
         '@nuxt/ui > prosemirror-state',
         '@nuxt/ui > prosemirror-transform',
         '@nuxt/ui > prosemirror-model',
         '@nuxt/ui > prosemirror-view',
-        '@nuxt/ui > prosemirror-gapcursor'
+        '@nuxt/ui > prosemirror-gapcursor',
+        '@tiptap/extension-table',
+        '@tiptap/pm/tables'
       ]
     }
   },

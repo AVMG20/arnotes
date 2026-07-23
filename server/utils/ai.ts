@@ -16,7 +16,7 @@ export type AiAction
     | 'make-task-list-from-note'
     | 'custom'
 
-const FORMAT_INSTRUCTION = 'Use standard markdown formatting only (headings with #, bold with **, italic with *, bullet lists with -, numbered lists, task lists with - [ ], code blocks with ```). Do NOT use LaTeX notation (no $...$ or \\commands). Use plain unicode for arrows (→) and other symbols.'
+const FORMAT_INSTRUCTION = 'Use standard markdown formatting only (headings with #, bold with **, italic with *, bullet lists with -, numbered lists, task lists with - [ ], code blocks with ```, and tables with a header row followed by a | --- | separator row). Escape literal pipes in table cells as \\|. Do NOT use LaTeX notation (no $...$ or \\commands). Use plain unicode for arrows (→) and other symbols.'
 
 const PROMPTS: Record<AiAction, string> = {
   'improve-grammar': `Improve the grammar of the given text in the same language the text was given. Only respond with the improved text. Try and keep it close to the original text but feel free to make it better readable. Preserve all markdown formatting (headings, lists, bold, italic, code blocks, etc.). ${FORMAT_INSTRUCTION}\n\nText:\n{text}`,

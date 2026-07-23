@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-const { activeNotes, trashedNotes, allTags, activeTag, showTrash, searchQuery, trackTagClick } = useNotes()
+const { activeNotes, trashedNotes, sharedNotes, allTags, activeTag, showTrash, showShared, searchQuery, trackTagClick } = useNotes()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
 
@@ -41,6 +41,7 @@ const totalCount = computed(() => activeNotes.value.length)
 
 function selectTag(tag: string | null) {
   showTrash.value = false
+  showShared.value = false
   activeTag.value = tag
   searchQuery.value = ''
   if (tag) trackTagClick(tag)
@@ -48,6 +49,14 @@ function selectTag(tag: string | null) {
 
 function selectTrash() {
   showTrash.value = true
+  showShared.value = false
+  activeTag.value = null
+  searchQuery.value = ''
+}
+
+function selectShared() {
+  showTrash.value = false
+  showShared.value = true
   activeTag.value = null
   searchQuery.value = ''
 }
@@ -59,7 +68,7 @@ function selectTrash() {
       <!-- All Notes -->
       <button
         class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
-        :class="!activeTag && !showTrash
+        :class="!activeTag && !showTrash && !showShared
           ? 'bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 font-medium'
           : 'text-muted hover:bg-elevated hover:text-default'"
         @click="selectTag(null)"
@@ -69,6 +78,21 @@ function selectTrash() {
           <span class="truncate">All Notes</span>
         </span>
         <span class="text-xs tabular-nums opacity-50 ml-1 shrink-0">{{ totalCount }}</span>
+      </button>
+
+      <!-- Shared -->
+      <button
+        class="flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-sm transition-colors"
+        :class="showShared
+          ? 'bg-primary-50 dark:bg-primary-950 text-primary-700 dark:text-primary-300 font-medium'
+          : 'text-muted hover:bg-elevated hover:text-default'"
+        @click="selectShared"
+      >
+        <span class="flex items-center gap-2 min-w-0">
+          <UIcon name="i-lucide-globe" class="size-3.5 shrink-0" />
+          <span class="truncate">Shared</span>
+        </span>
+        <span v-if="sharedNotes.length > 0" class="text-xs tabular-nums opacity-50 ml-1 shrink-0">{{ sharedNotes.length }}</span>
       </button>
 
       <!-- Deleted / Trash -->
