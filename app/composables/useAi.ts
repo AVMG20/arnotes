@@ -46,9 +46,21 @@ async function streamAi(body: AiRequest, onChunk: (result: string) => void): Pro
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => null) as { message?: string, statusMessage?: string } | null
+    const errorBody = await response.text()
+    let error: { message?: string, statusMessage?: string } | null = null
+    try {
+      error = JSON.parse(errorBody) as { message?: string, statusMessage?: string }
+    } catch {
+      // Some reverse proxies replace API error JSON with an HTML error page.
+    }
     const message = error?.message ?? error?.statusMessage ?? `AI request failed (${response.status})`
-    console.error('[AI] Request failed', { action: body.action, status: response.status, statusText: response.statusText, error })
+    console.error('[AI] Request failed', {
+      action: body.action,
+      status: response.status,
+      statusText: response.statusText,
+      error,
+      responseBody: errorBody.slice(0, 2_000)
+    })
     throw new Error(message)
   }
   if (!response.body) {

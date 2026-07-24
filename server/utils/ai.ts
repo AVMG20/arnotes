@@ -54,7 +54,7 @@ interface OpenRouterStreamChunk {
 }
 
 interface OpenRouterErrorResponse {
-  error?: { message?: string }
+  error?: { message?: string, metadata?: unknown }
   message?: string
 }
 
@@ -66,24 +66,34 @@ export interface AiUsage {
 }
 
 export async function streamOpenRouter(apiKey: string, model: string, prompt: string, onComplete?: (usage: AiUsage) => Promise<void>): Promise<ReadableStream<Uint8Array>> {
+  const requestCompletion = (reasoning: { effort?: 'none', exclude: true }) => fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://arnotes.local',
+      'X-Title': 'Arnotes',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      reasoning,
+      stream: true,
+      stream_options: { include_usage: true }
+    })
+  })
+
   let res: Response
   try {
-    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://arnotes.local',
-        'X-Title': 'Arnotes',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        reasoning: { exclude: true },
-        stream: true,
-        stream_options: { include_usage: true }
-      })
-    })
+    // `none` disables configurable reasoning (including Tencent HY3).
+    res = await requestCompletion({ effort: 'none', exclude: true })
+
+    // Mandatory-thinking models reject `effort: none`. Retry once with reasoning
+    // hidden from the editor instead, so those models remain usable.
+    if (!res.ok && [400, 422, 500].includes(res.status)) {
+      console.warn('[AI] Retrying without disabled reasoning', { model, status: res.status, statusText: res.statusText })
+      res = await requestCompletion({ exclude: true })
+    }
   } catch (error) {
     console.error('[AI] Unable to reach OpenRouter', { model, error })
     throw createError({ statusCode: 502, message: 'Could not reach OpenRouter. Check the server connection and try again.' })
