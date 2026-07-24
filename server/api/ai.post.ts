@@ -25,16 +25,21 @@ export default defineEventHandler(async (event) => {
   const prompt = buildPrompt(action, text, context, instruction)
 
   const stream = await streamOpenRouter(apiKey, model, prompt, async (usage) => {
-    await db.insert(aiUsageRecords).values({
-      id: crypto.randomUUID(),
-      userId,
-      action,
-      model,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      totalTokens: usage.totalTokens,
-      cost: usage.cost.toFixed(8)
-    })
+    try {
+      await db.insert(aiUsageRecords).values({
+        id: crypto.randomUUID(),
+        userId,
+        action,
+        model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        cost: usage.cost.toFixed(8)
+      })
+    } catch (error) {
+      // Usage tracking must not turn a completed AI response into a client error.
+      console.error('[AI] Failed to save usage record', { userId, action, model, usage, error })
+    }
   })
   return new Response(stream, {
     headers: {

@@ -53,6 +53,11 @@ interface OpenRouterStreamChunk {
   error?: { message?: string }
 }
 
+interface OpenRouterErrorResponse {
+  error?: { message?: string }
+  message?: string
+}
+
 export interface AiUsage {
   inputTokens: number
   outputTokens: number
@@ -61,27 +66,45 @@ export interface AiUsage {
 }
 
 export async function streamOpenRouter(apiKey: string, model: string, prompt: string, onComplete?: (usage: AiUsage) => Promise<void>): Promise<ReadableStream<Uint8Array>> {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://arnotes.local',
-      'X-Title': 'Arnotes',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      stream: true,
-      stream_options: { include_usage: true }
+  let res: Response
+  try {
+    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://arnotes.local',
+        'X-Title': 'Arnotes',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        reasoning: { exclude: true },
+        stream: true,
+        stream_options: { include_usage: true }
+      })
     })
-  })
+  } catch (error) {
+    console.error('[AI] Unable to reach OpenRouter', { model, error })
+    throw createError({ statusCode: 502, message: 'Could not reach OpenRouter. Check the server connection and try again.' })
+  }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => null) as { error?: { message?: string } } | null
-    throw createError({ statusCode: 502, message: body?.error?.message ?? `OpenRouter request failed (${res.status})` })
+    const body = await res.json().catch(() => null) as OpenRouterErrorResponse | null
+    const message = body?.error?.message ?? body?.message ?? `OpenRouter request failed (${res.status})`
+    console.error('[AI] OpenRouter request failed', {
+      model,
+      status: res.status,
+      statusText: res.statusText,
+      requestId: res.headers.get('x-request-id'),
+      error: body
+    })
+    throw createError({ statusCode: 502, message })
   }
-  if (!res.body) throw createError({ statusCode: 502, message: 'OpenRouter returned an empty response' })
+  if (!res.body) {
+    console.error('[AI] OpenRouter returned no response body', { model, requestId: res.headers.get('x-request-id') })
+    throw createError({ statusCode: 502, message: 'OpenRouter returned an empty response.' })
+  }
 
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
@@ -103,8 +126,18 @@ export async function streamOpenRouter(apiKey: string, model: string, prompt: st
           continue
         }
 
-        const event = JSON.parse(data) as OpenRouterStreamChunk
-        if (event.error) throw new Error(event.error.message ?? 'OpenRouter error')
+        let event: OpenRouterStreamChunk
+        try {
+          event = JSON.parse(data) as OpenRouterStreamChunk
+        } catch (error) {
+          console.error('[AI] Invalid OpenRouter stream event', { model, eventLength: data.length, error })
+          throw new Error('The model returned an invalid response.')
+        }
+        if (event.error) {
+          const message = event.error.message ?? 'OpenRouter error'
+          console.error('[AI] OpenRouter stream failed', { model, error: event.error })
+          throw new Error(message)
+        }
         if (event.usage) {
           usage = {
             inputTokens: event.usage.prompt_tokens ?? 0,
@@ -118,7 +151,11 @@ export async function streamOpenRouter(apiKey: string, model: string, prompt: st
       }
     },
     async flush() {
-      if (completed) await onComplete?.(usage)
+      if (!completed) {
+        console.error('[AI] OpenRouter stream ended before completion', { model })
+        throw new Error('The model stopped responding before completing the request.')
+      }
+      await onComplete?.(usage)
     }
   }))
 }

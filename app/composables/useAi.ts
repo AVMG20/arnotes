@@ -46,24 +46,39 @@ async function streamAi(body: AiRequest, onChunk: (result: string) => void): Pro
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => null) as { message?: string } | null
-    throw new Error(error?.message ?? `AI request failed (${response.status})`)
+    const error = await response.json().catch(() => null) as { message?: string, statusMessage?: string } | null
+    const message = error?.message ?? error?.statusMessage ?? `AI request failed (${response.status})`
+    console.error('[AI] Request failed', { action: body.action, status: response.status, statusText: response.statusText, error })
+    throw new Error(message)
   }
-  if (!response.body) throw new Error('AI response could not be streamed')
+  if (!response.body) {
+    console.error('[AI] Successful response had no readable stream', { action: body.action })
+    throw new Error('The AI response could not be streamed. Please try again.')
+  }
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let result = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    result += decoder.decode(value, { stream: true })
-    onChunk(result)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      result += decoder.decode(value, { stream: true })
+      onChunk(result)
+    }
+  } catch (error) {
+    console.error('[AI] Response stream failed', { action: body.action, receivedCharacters: result.length, error })
+    throw new Error('The model stopped responding before finishing. Please try again.')
+  } finally {
+    reader.releaseLock()
   }
 
   result += decoder.decode()
-  if (!result) throw new Error('Empty response from model')
+  if (!result) {
+    console.error('[AI] Model returned an empty response', { action: body.action })
+    throw new Error('The model returned an empty response. Please try again or choose another model.')
+  }
   return result
 }
 
