@@ -2,38 +2,105 @@
 const emit = defineEmits<{ close: [] }>()
 const { activeNoteId, createNote } = useNotes()
 const searchOpen = useSearchModal()
+const { session, signOut } = useAuth()
+const colorMode = useColorMode()
+
+const userInitials = computed(() => {
+  const name = session.value?.user?.name
+  if (!name) return '?'
+  return name.split(' ').map((part: string) => part[0]).join('').slice(0, 2).toUpperCase()
+})
+
+const isDark = computed(() => colorMode.value === 'dark')
+
+function toggleColorMode() {
+  colorMode.preference = isDark.value ? 'light' : 'dark'
+}
+
+const accountItems = computed(() => [[
+  {
+    label: 'Settings',
+    icon: 'i-lucide-settings',
+    onSelect: () => navigateTo('/settings')
+  },
+  {
+    label: isDark.value ? 'Light mode' : 'Dark mode',
+    icon: isDark.value ? 'i-lucide-sun' : 'i-lucide-moon',
+    onSelect: toggleColorMode
+  }
+], [
+  {
+    label: 'Sign out',
+    icon: 'i-lucide-log-out',
+    color: 'error' as const,
+    onSelect: signOut
+  }
+]])
 
 watch(activeNoteId, () => emit('close'))
 </script>
 
 <template>
-  <div class="flex flex-col h-full overflow-hidden">
-    <div class="flex items-center gap-2 px-3 py-2.5 border-b border-default shrink-0 bg-default">
-      <AppLogo class="text-xl ml-2 mr-5 shrink-0" />
-
-      <button
-        class="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-default bg-elevated/50 hover:bg-elevated text-sm text-muted transition-colors"
-        @click="searchOpen = true"
-      >
-        <UIcon name="i-lucide-search" class="size-3.5 shrink-0" />
-        <span class="flex-1 text-left text-xs truncate">Search notes…</span>
-        <span class="text-xs text-muted/60 font-mono shrink-0 hidden sm:block">⌘K</span>
-      </button>
-
+  <div class="flex h-full min-h-0 flex-col overflow-hidden bg-default">
+    <div class="flex shrink-0 items-center gap-3 px-4 pb-3 pt-4">
+      <AppLogo class="min-w-0 flex-1 text-xl" />
       <UButton
-        icon="i-lucide-plus"
+        icon="i-lucide-square-pen"
         size="sm"
         color="primary"
         variant="soft"
         aria-label="New note"
-        class="shrink-0"
+        class="shrink-0 rounded-lg"
         @click="createNote(undefined)"
       />
     </div>
 
-    <div class="flex flex-1 min-h-0">
-      <NotesTagsPanel class="w-36 md:w-52 shrink-0" />
-      <NotesListPanel class="flex-1 min-w-0" />
+    <div class="shrink-0 space-y-2 px-3 pb-2">
+      <button
+        class="flex w-full items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-default"
+        @click="searchOpen = true"
+      >
+        <UIcon
+          name="i-lucide-search"
+          class="size-4 shrink-0"
+        />
+        <span class="min-w-0 flex-1 truncate text-left">Search notes...</span>
+        <UKbd
+          value="meta"
+          size="sm"
+        />
+        <UKbd
+          value="K"
+          size="sm"
+        />
+      </button>
+
+      <NotesTagsPanel />
+    </div>
+
+    <NotesListPanel class="min-h-0 flex-1" />
+
+    <div class="shrink-0 border-t border-default p-2">
+      <UDropdownMenu
+        :items="accountItems"
+        :content="{ align: 'start', collisionPadding: 12 }"
+        :ui="{ content: 'w-(--reka-dropdown-menu-trigger-width) min-w-48' }"
+      >
+        <button class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-default">
+          <UAvatar
+            :alt="userInitials"
+            size="xs"
+            class="shrink-0"
+          />
+          <span class="min-w-0 flex-1 truncate text-left text-xs">
+            {{ session?.user?.name ?? session?.user?.email }}
+          </span>
+          <UIcon
+            name="i-lucide-chevrons-up-down"
+            class="size-3.5 shrink-0 opacity-50"
+          />
+        </button>
+      </UDropdownMenu>
     </div>
   </div>
 </template>
