@@ -3,9 +3,9 @@ import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { differenceInCalendarDays } from 'date-fns'
 import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
 import { DOMSerializer } from '@tiptap/pm/model'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { closeHistory } from '@tiptap/pm/history'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import CodeBlockView from '~/components/CodeBlockView.vue'
@@ -430,6 +430,121 @@ const MarkdownPaste = Extension.create({
   }
 })
 
+const InlineTableControls = Extension.create({
+  name: 'inlineTableControls',
+  addProseMirrorPlugins() {
+    const editor = this.editor
+
+    function getTableContext() {
+      const { $from } = editor.state.selection
+      for (let depth = $from.depth; depth > 0; depth--) {
+        if ($from.node(depth).type.name === 'table') {
+          return { node: $from.node(depth), pos: $from.before(depth), start: $from.start(depth) }
+        }
+      }
+      return null
+    }
+
+    function runEdgeCommand(command: 'addRowAfter' | 'deleteRow' | 'addColumnAfter' | 'deleteColumn') {
+      const table = getTableContext()
+      if (!table) return
+
+      const lastRow = table.node.lastChild
+      const lastCell = lastRow?.lastChild
+      if (!lastRow || !lastCell) return
+
+      const rowPos = table.start + table.node.content.size - lastRow.nodeSize
+      const cellPos = rowPos + 1 + lastRow.content.size - lastCell.nodeSize
+      const selection = Selection.near(editor.state.doc.resolve(cellPos + 1))
+      editor.view.dispatch(editor.state.tr.setSelection(selection))
+
+      if (command === 'addRowAfter') editor.chain().focus().addRowAfter().run()
+      if (command === 'deleteRow') editor.chain().focus().deleteRow().run()
+      if (command === 'addColumnAfter') editor.chain().focus().addColumnAfter().run()
+      if (command === 'deleteColumn') editor.chain().focus().deleteColumn().run()
+    }
+
+    return [
+      new Plugin({
+        key: new PluginKey('inlineTableControls'),
+        view(view) {
+          const controls = document.createElement('div')
+          controls.className = 'table-edge-controls'
+          controls.contentEditable = 'false'
+          let wrapper: HTMLElement | null = null
+
+          const makeButton = (label: string, command: Parameters<typeof runEdgeCommand>[0], axis: 'row' | 'column') => {
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.className = 'table-edge-controls__button'
+            button.textContent = label
+            button.dataset.action = command.startsWith('add') ? 'add' : 'remove'
+            button.addEventListener('pointerdown', (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              runEdgeCommand(command)
+            })
+            button.dataset.axis = axis
+            return button
+          }
+
+          const rowControls = document.createElement('div')
+          rowControls.className = 'table-edge-controls__rows'
+          const addRowButton = makeButton('+ Add row', 'addRowAfter', 'row')
+          const removeRowButton = makeButton('- Remove row', 'deleteRow', 'row')
+          rowControls.append(
+            removeRowButton,
+            addRowButton
+          )
+
+          const columnControls = document.createElement('div')
+          columnControls.className = 'table-edge-controls__columns'
+          const addColumnButton = makeButton('+ Column', 'addColumnAfter', 'column')
+          const removeColumnButton = makeButton('- Column', 'deleteColumn', 'column')
+          columnControls.append(
+            addColumnButton,
+            removeColumnButton
+          )
+          controls.append(rowControls, columnControls)
+
+          const update = () => {
+            const table = getTableContext()
+            const firstRow = table?.node.firstChild
+            let columnCount = 0
+            firstRow?.forEach((cell) => {
+              columnCount += cell.attrs.colspan ?? 1
+            })
+            removeRowButton.disabled = (table?.node.childCount ?? 0) <= 1
+            removeColumnButton.disabled = columnCount <= 1
+            const tableDom = table ? view.nodeDOM(table.pos) as HTMLElement | null : null
+            const nextWrapper = tableDom?.matches('.tableWrapper')
+              ? tableDom
+              : tableDom?.closest<HTMLElement>('.tableWrapper')
+
+            if (nextWrapper === wrapper) return
+            wrapper?.classList.remove('table-controls-active')
+            controls.remove()
+            wrapper = nextWrapper ?? null
+            if (wrapper) {
+              wrapper.classList.add('table-controls-active')
+              wrapper.append(controls)
+            }
+          }
+
+          update()
+          return {
+            update,
+            destroy() {
+              wrapper?.classList.remove('table-controls-active')
+              controls.remove()
+            }
+          }
+        }
+      })
+    ]
+  }
+})
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const extensions: any[] = [
   CodeBlockLowlight.configure({ lowlight }).extend({
@@ -446,7 +561,8 @@ const extensions: any[] = [
   ImagePaste,
   AiPendingDecoration,
   HashtagHighlight,
-  MarkdownPaste
+  MarkdownPaste,
+  InlineTableControls
 ]
 
 // ─── Handlers ────────────────────────────────────────────────
@@ -517,6 +633,26 @@ const customHandlers: any = {
     canExecute: (editor: Editor) => editor.can().deleteTable(),
     execute: (editor: Editor) => editor.chain().focus().deleteTable(),
     isActive: () => false
+  },
+  mergeCells: {
+    canExecute: (editor: Editor) => editor.can().mergeCells(),
+    execute: (editor: Editor) => editor.chain().focus().mergeCells(),
+    isActive: () => false
+  },
+  splitCell: {
+    canExecute: (editor: Editor) => editor.can().splitCell(),
+    execute: (editor: Editor) => editor.chain().focus().splitCell(),
+    isActive: () => false
+  },
+  toggleHeaderRow: {
+    canExecute: (editor: Editor) => editor.can().toggleHeaderRow(),
+    execute: (editor: Editor) => editor.chain().focus().toggleHeaderRow(),
+    isActive: () => false
+  },
+  toggleHeaderColumn: {
+    canExecute: (editor: Editor) => editor.can().toggleHeaderColumn(),
+    execute: (editor: Editor) => editor.chain().focus().toggleHeaderColumn(),
+    isActive: () => false
   }
 }
 
@@ -567,25 +703,35 @@ const bubbleToolbarItems: any[][] = [[
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tableToolbarItems: any[][] = [[
   {
-    label: 'Columns',
-    icon: 'i-lucide-columns-3',
-    items: [
-      { kind: 'addColumnBefore', label: 'Add column left', icon: 'i-lucide-circle-plus' },
-      { kind: 'addColumnAfter', label: 'Add column right', icon: 'i-lucide-circle-plus' },
-      { kind: 'deleteColumn', label: 'Delete column', icon: 'i-lucide-columns-2', color: 'error' }
-    ]
-  },
-  {
-    label: 'Rows',
-    icon: 'i-lucide-rows-3',
-    items: [
-      { kind: 'addRowBefore', label: 'Add row above', icon: 'i-lucide-circle-plus' },
-      { kind: 'addRowAfter', label: 'Add row below', icon: 'i-lucide-circle-plus' },
-      { kind: 'deleteRow', label: 'Delete row', icon: 'i-lucide-rows-2', color: 'error' }
-    ]
-  },
-  { kind: 'deleteTable', icon: 'i-lucide-trash-2', color: 'error', tooltip: { text: 'Delete table' } }
+    label: 'Options',
+    icon: 'i-lucide-table-properties',
+    items: [[
+      { kind: 'mergeCells', label: 'Merge selected cells', icon: 'i-lucide-table-cells-merge' },
+      { kind: 'splitCell', label: 'Split cell', icon: 'i-lucide-table-cells-split' },
+      { kind: 'toggleHeaderRow', label: 'Toggle header row', icon: 'i-lucide-rows-3' },
+      { kind: 'toggleHeaderColumn', label: 'Toggle header column', icon: 'i-lucide-columns-3' }
+    ], [
+      { kind: 'deleteTable', label: 'Delete table', icon: 'i-lucide-trash-2', color: 'error' }
+    ]]
+  }
 ]]
+
+function shouldShowTableToolbar(editor: Editor, view: EditorView, state: EditorState) {
+  const domSelection = view.dom.ownerDocument.getSelection()
+  const hasDomTextSelection = Boolean(
+    domSelection
+    && !domSelection.isCollapsed
+    && domSelection.anchorNode
+    && domSelection.focusNode
+    && view.dom.contains(domSelection.anchorNode)
+    && view.dom.contains(domSelection.focusNode)
+  )
+
+  return view.hasFocus()
+    && state.selection.empty
+    && !hasDomTextSelection
+    && editor.isActive('table')
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const suggestionItems: any[][] = [[
@@ -842,6 +988,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
             :editor="editor"
             :items="bubbleToolbarItems"
             layout="bubble"
+            :ui="{ root: 'z-50' }"
             :should-show="({ editor: e, view, state }) => {
               const { selection } = state
               return view.hasFocus() && !selection.empty && !e.isActive('image')
@@ -854,7 +1001,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
             :items="tableToolbarItems"
             layout="bubble"
             plugin-key="table-toolbar"
-            :should-show="({ editor: e, view }) => view.hasFocus() && e.isActive('table')"
+            :should-show="({ editor: e, view, state }) => shouldShowTableToolbar(e, view, state)"
           />
 
           <!-- Drag handle (hover any block) -->
