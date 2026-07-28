@@ -162,54 +162,6 @@ async function streamAiIntoEditor(
   }
 }
 
-const aiGenerateItems = computed(() => [
-  generateActions.map(action => ({
-    label: action.label,
-    icon: action.icon,
-    onSelect: () => runGenerate(action.id)
-  }))
-])
-
-async function runGenerate(action: string) {
-  const editor = editorRef.value?.editor
-  if (!editor || aiLoading.value) return
-  if (!openrouterApiKey.value) {
-    toast.add({
-      title: 'No OpenRouter API key',
-      description: 'Add your key in Settings → AI to use AI features.',
-      icon: 'i-lucide-key-round',
-      color: 'error',
-      duration: 4000
-    })
-    return
-  }
-  const contextHtml = editor.getHTML()
-  const context = htmlToMarkdown(contextHtml).trim()
-  if (!context) {
-    toast.add({ title: 'Note is empty', icon: 'i-lucide-info', color: 'neutral', duration: 2000 })
-    return
-  }
-  aiLoading.value = true
-  const { from } = editor.state.selection
-  const pending: AiPending = { kind: 'generate', from, to: from }
-  setAiPending(editor, pending)
-  try {
-    await streamAiIntoEditor(editor, pending, onChunk => runAi(action, '', context, onChunk))
-  } catch (e) {
-    const err = e as { data?: { message?: string }, message?: string }
-    toast.add({
-      title: 'AI request failed',
-      description: err?.data?.message ?? err?.message ?? 'Unknown error',
-      icon: 'i-lucide-alert-triangle',
-      color: 'error',
-      duration: 5000
-    })
-  } finally {
-    setAiPending(editor, null)
-    aiLoading.value = false
-  }
-}
-
 async function runTransform(action: string) {
   const editor = editorRef.value?.editor
   if (!editor || aiLoading.value) return
@@ -777,22 +729,6 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                 {{ tagCount }}
               </span>
               <div class="w-px h-4 bg-muted/40" />
-              <UDropdownMenu
-                :items="aiGenerateItems"
-                :content="{ align: 'end', sideOffset: 4 }"
-                :popper="{ placement: 'bottom-end' }"
-              >
-                <UButton
-                  icon="i-lucide-sparkles"
-                  size="xs"
-                  color="primary"
-                  variant="soft"
-                  :loading="aiLoading"
-                  aria-label="AI writing tools"
-                >
-                  <span class="hidden sm:inline">AI</span>
-                </UButton>
-              </UDropdownMenu>
               <UPopover
                 v-model:open="shareOpen"
                 :content="{ align: 'end', sideOffset: 8 }"
