@@ -195,7 +195,7 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 
 ## Marketing Site
 
-The standalone [`index.html`](index.html) is the project marketing page. The `pages` workflow publishes it and the product screenshot to GitHub Pages. In the repository settings, set Pages **Source** to **GitHub Actions** before running the workflow for the first time.
+The standalone [`index.html`](index.html) is the project marketing page. To publish it with GitHub Pages, set Pages **Source** to **Deploy from a branch**, then select the `main` branch and `/(root)` folder.
 
 ## Contributing
 
