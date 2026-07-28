@@ -3,6 +3,8 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { db } from '../db'
 import * as schema from '../db/schema'
 
+const discordEnabled = Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET)
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: 'pg',
@@ -10,17 +12,20 @@ export const auth = betterAuth({
       user: schema.user,
       session: schema.session,
       account: schema.account,
-      verification: schema.verification,
-    },
+      verification: schema.verification
+    }
   }),
-  socialProviders: {
-    discord: {
-      clientId: process.env.DISCORD_CLIENT_ID!,
-      clientSecret: process.env.DISCORD_CLIENT_SECRET!,
-    },
+  emailAndPassword: {
+    enabled: true,
+    disableSignUp: process.env.ALLOW_SIGN_UP === 'false'
   },
-  trustedOrigins: [process.env.BETTER_AUTH_URL || 'http://localhost:3000'],
-  advanced: {
-    useSecureCookies: process.env.NODE_ENV === 'production',
-  },
+  socialProviders: discordEnabled
+    ? {
+        discord: {
+          clientId: process.env.DISCORD_CLIENT_ID!,
+          clientSecret: process.env.DISCORD_CLIENT_SECRET!
+        }
+      }
+    : {},
+  trustedOrigins: [process.env.BETTER_AUTH_URL || 'http://localhost:3000']
 })

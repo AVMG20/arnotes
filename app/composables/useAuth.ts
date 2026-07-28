@@ -1,7 +1,7 @@
 import { createAuthClient } from 'better-auth/vue'
 
 const authClient = createAuthClient({
-  baseURL: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
+  baseURL: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
 })
 
 export function useAuth() {
@@ -10,7 +10,7 @@ export function useAuth() {
   const session = computed(() => sessionRef.value.data)
   const isPending = computed(() => sessionRef.value.isPending)
 
-  async function signIn() {
+  async function signInWithDiscord() {
     await authClient.signIn.social({ provider: 'discord', callbackURL: '/note' })
   }
 
@@ -22,8 +22,8 @@ export function useAuth() {
   return {
     session,
     isPending,
-    signIn,
-    signOut,
+    signInWithDiscord,
+    signOut
   }
 }
 

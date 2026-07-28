@@ -1,4 +1,5 @@
-import {computed, ref} from 'vue'
+import { computed, ref } from 'vue'
+import type MiniSearch from 'minisearch'
 
 export interface Note {
   id: string
@@ -13,6 +14,8 @@ export interface Note {
   deletedAt: number | null
 }
 
+type SearchDoc = Note & { tagsText: string, contentText: string }
+
 // Module-level singleton state
 const _notes = ref<Note[]>([])
 const _activeNoteId = ref<string | null>(null)
@@ -24,14 +27,13 @@ const _ready = ref(false)
 const _recentTags = ref<string[]>([])
 const _autoFocus = ref(false)
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _search: any = null
+let _search: MiniSearch<SearchDoc> | null = null
 
 // ─── helpers ────────────────────────────────────────────────
 
 // Build once, outside the function or memoized
 const notesById = computed(() =>
-    new Map(_notes.value.map(n => [n.id, n]))
+  new Map(_notes.value.map(n => [n.id, n]))
 )
 
 export function extractTags(html: string): string[] {
@@ -62,11 +64,10 @@ function toSearchDoc(note: Note) {
 
 // ─── init (called from plugin) ──────────────────────────────
 
-export function initNotesStore(notes: Note[], search: unknown) {
+export function initNotesStore(notes: Note[], search: MiniSearch<SearchDoc>) {
   _search = search
   _notes.value = notes
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(_search as any).addAll(notes.map(toSearchDoc))
+  _search.addAll(notes.map(toSearchDoc))
   _activeNoteId.value = notes.find(n => !n.deletedAt)?.id ?? null
   _ready.value = true
 }
@@ -95,17 +96,17 @@ export function useNotes() {
   })
 
   const filteredNotes = computed(() => {
-      if (_searchQuery.value.trim() && _search) {
-          const hits = (_search as any).search(_searchQuery.value) as any[]
-          return hits.map((h: any) => notesById.value.get(h.id)).filter(Boolean) as Note[]
-      }
+    if (_searchQuery.value.trim() && _search) {
+      const hits = _search.search(_searchQuery.value)
+      return hits.map(h => notesById.value.get(String(h.id))).filter(Boolean) as Note[]
+    }
     const pool = _showTrash.value
       ? trashedNotes.value
       : _showShared.value
         ? sharedNotes.value
-      : _activeTag.value
-        ? activeNotes.value.filter(n => n.tags.includes(_activeTag.value!))
-        : activeNotes.value
+        : _activeTag.value
+          ? activeNotes.value.filter(n => n.tags.includes(_activeTag.value!))
+          : activeNotes.value
     return [...pool].sort((a, b) => b.updatedAt - a.updatedAt)
   })
 
@@ -151,29 +152,27 @@ export function useNotes() {
     next[idx] = updated
     _notes.value = next
     if (_search) {
-      try { _search.discard(id) } catch {}
+      if (_search.has(id)) _search.discard(id)
       _search.add(toSearchDoc(updated))
     }
   }
 
-    function searchNotes(query: string, filterTags: string[] = []): Note[] {
-        let pool: Note[]
-        if (query.trim() && _search) {
-            const options: Record<string, unknown> = {}
-            if (filterTags.length > 0) {
-                options.filter = (result: any) =>
-                    filterTags.every(t => (result.tags as string[])?.includes(t))
-            }
-            const hits = (_search as any).search(query, options) as any[]
-            pool = hits.map((h: any) => notesById.value.get(h.id)).filter(Boolean) as Note[]
-        } else {
-            pool = activeNotes.value
-            if (filterTags.length > 0) {
-                pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
-            }
-        }
-        return pool
+  function searchNotes(query: string, filterTags: string[] = []): Note[] {
+    let pool: Note[]
+    if (query.trim() && _search) {
+      const hits = _search.search(query, {
+        filter: result => filterTags.length === 0
+          || filterTags.every(t => (result.tags as string[] | undefined)?.includes(t))
+      })
+      pool = hits.map(h => notesById.value.get(String(h.id))).filter(Boolean) as Note[]
+    } else {
+      pool = activeNotes.value
+      if (filterTags.length > 0) {
+        pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
+      }
     }
+    return pool
+  }
 
   async function updateSharing(id: string, isPublic: boolean, publicUntil: number | null): Promise<Note> {
     const idx = _notes.value.findIndex(n => n.id === id)
@@ -189,7 +188,7 @@ export function useNotes() {
   }
 
   async function deleteNote(id: string) {
-    const res = await $fetch<{ ok: boolean; permanent: boolean; note?: Note }>(
+    const res = await $fetch<{ ok: boolean, permanent: boolean, note?: Note }>(
       `/api/notes/${id}`,
       { method: 'DELETE' }
     )
@@ -201,13 +200,13 @@ export function useNotes() {
         next[idx] = res.note
         _notes.value = next
         if (_search) {
-          try { _search.discard(id) } catch {}
+          if (_search.has(id)) _search.discard(id)
           _search.add(toSearchDoc(res.note))
         }
       }
     } else {
       _notes.value = _notes.value.filter(n => n.id !== id)
-      try { _search?.discard(id) } catch {}
+      if (_search?.has(id)) _search.discard(id)
       if (_activeNoteId.value === id) {
         _activeNoteId.value = activeNotes.value[0]?.id ?? null
       }
@@ -222,7 +221,7 @@ export function useNotes() {
       next[idx] = restored
       _notes.value = next
       if (_search) {
-        try { _search.discard(id) } catch {}
+        if (_search.has(id)) _search.discard(id)
         _search.add(toSearchDoc(restored))
       }
     }

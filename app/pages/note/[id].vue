@@ -8,29 +8,36 @@ const router = useRouter()
 const { activeNoteId, activeNote, createNote, deleteNote } = useNotes()
 
 useSeoMeta({
-  title: computed(() => activeNote.value?.title || 'Untitled'),
+  title: computed(() => activeNote.value?.title || 'Untitled')
 })
 const { sidebarOpen } = useSidebar()
 const searchOpen = useSearchModal()
 
 // Back/forward: route param → active note
-watch(() => route.params.id, id => {
+watch(() => route.params.id, (id) => {
   if (typeof id === 'string' && id !== activeNoteId.value) {
     activeNoteId.value = id
   }
 }, { immediate: true })
 
 // Any state change (click, create, delete) → push URL
-watch(activeNoteId, id => {
+watch(activeNoteId, (id) => {
   if (id && route.params.id !== id) router.push('/note/' + id)
   else if (!id) router.replace('/note')
 })
 
 function onKeydown(e: KeyboardEvent) {
   if (!e.metaKey && !e.ctrlKey) return
-  if (e.key === 'k') { e.preventDefault(); searchOpen.value = true }
-  else if (e.key === 'n') { e.preventDefault(); createNote(undefined) }
-  else if (e.key === 'w') { e.preventDefault(); if (activeNote.value) deleteNote(activeNote.value.id) }
+  if (e.key === 'k') {
+    e.preventDefault()
+    searchOpen.value = true
+  } else if (e.key === 'n') {
+    e.preventDefault()
+    createNote(undefined)
+  } else if (e.key === 'w' && activeNote.value) {
+    e.preventDefault()
+    deleteNote(activeNote.value.id)
+  }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))

@@ -11,7 +11,7 @@ const MIME: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
+  '.svg': 'image/svg+xml'
 }
 
 const SAFE_SEGMENT = /^[a-z0-9]+$/i

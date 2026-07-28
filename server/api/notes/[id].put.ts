@@ -2,7 +2,7 @@ import { db } from '../../db'
 import { notes } from '../../db/schema'
 import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
-import { existsSync, unlinkSync } from 'fs'
+import { unlinkSync } from 'fs'
 import type { NewNote } from '../../db/schema'
 
 export default defineEventHandler(async (event) => {
@@ -21,7 +21,11 @@ export default defineEventHandler(async (event) => {
       const kept = current.attachments.filter(f => body.content!.includes(f))
       const removed = current.attachments.filter(f => !body.content!.includes(f))
       for (const f of removed) {
-        try { unlinkSync(join(process.cwd(), 'data', 'attachments', id, f)) } catch {}
+        try {
+          unlinkSync(join(process.cwd(), 'data', 'attachments', id, f))
+        } catch {
+          // A missing attachment is already in the desired state.
+        }
       }
       updatedAttachments = kept
     }
@@ -36,7 +40,7 @@ export default defineEventHandler(async (event) => {
       ...(updatedAttachments !== undefined && { attachments: updatedAttachments }),
       ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
       ...(body.publicUntil !== undefined && { publicUntil: body.publicUntil }),
-      updatedAt: Date.now(),
+      updatedAt: Date.now()
     })
     .where(and(eq(notes.id, id), eq(notes.userId, userId)))
     .returning()

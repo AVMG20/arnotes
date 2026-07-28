@@ -111,7 +111,7 @@ export const DateMention = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     return ['span', mergeAttributes(HTMLAttributes, {
       'data-date-mention': node.attrs.date,
-      class: 'date-mention'
+      'class': 'date-mention'
     }), formatDateMention(node.attrs.date)]
   },
 
@@ -129,13 +129,18 @@ export const DateMention = Node.create({
         dom.setAttribute(
           'data-full-date',
           hasTime
-            ? format(d, "EEEE, MMMM d, yyyy 'at' h:mm a")
+            ? format(d, 'EEEE, MMMM d, yyyy \'at\' h:mm a')
             : format(d, 'EEEE, MMMM d, yyyy')
         )
       }
       update()
       const timer = setInterval(update, 30000)
-      return { dom, destroy() { clearInterval(timer) } }
+      return {
+        dom,
+        destroy() {
+          clearInterval(timer)
+        }
+      }
     }
   },
 
@@ -174,11 +179,18 @@ export const DateMention = Node.create({
               reposition(props.clientRect ?? null)
             },
             onKeyDown({ event }) {
-              if (event.key === 'Escape') { renderer?.destroy(); renderer = null; return true }
+              if (event.key === 'Escape') {
+                renderer?.destroy()
+                renderer = null
+                return true
+              }
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               return (renderer?.ref as any)?.onKeyDown(event) ?? false
             },
-            onExit() { renderer?.destroy(); renderer = null }
+            onExit() {
+              renderer?.destroy()
+              renderer = null
+            }
           }
         },
 

@@ -20,8 +20,12 @@ const filterTagOptions = computed(() => {
   return [...sel, ...rest]
 })
 
-watch(query, () => { highlighted.value = 0 })
-watch(selectedTags, () => { highlighted.value = 0 })
+watch(query, () => {
+  highlighted.value = 0
+})
+watch(selectedTags, () => {
+  highlighted.value = 0
+})
 watch(open, (v) => {
   if (v) {
     query.value = ''
@@ -61,16 +65,13 @@ function handleListKey(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     highlighted.value = (highlighted.value + 1) % Math.max(itemCount.value, 1)
-  }
-  else if (e.key === 'ArrowUp') {
+  } else if (e.key === 'ArrowUp') {
     e.preventDefault()
     highlighted.value = (highlighted.value - 1 + Math.max(itemCount.value, 1)) % Math.max(itemCount.value, 1)
-  }
-  else if (e.key === 'Enter') {
+  } else if (e.key === 'Enter') {
     if (hasQuery.value && highlighted.value === results.value.length) {
       handleCreateNote()
-    }
-    else {
+    } else {
       const note = results.value[highlighted.value]
       if (note) selectNote(note.id)
     }
@@ -129,19 +130,30 @@ function smartSnippet(html: string): string {
       <div @keydown="handleListKey">
         <!-- Search input -->
         <div class="flex items-center gap-3 px-4 py-3 border-b border-default">
-          <UIcon name="i-lucide-search" class="size-4 text-muted shrink-0" />
+          <UIcon
+            name="i-lucide-search"
+            class="size-4 text-muted shrink-0"
+          />
           <input
             v-model="query"
             autofocus
             placeholder="Search or create a note…"
             class="flex-1 bg-transparent outline-none text-sm text-default placeholder:text-muted"
-          />
-          <UKbd size="sm">Esc</UKbd>
+          >
+          <UKbd size="sm">
+            Esc
+          </UKbd>
         </div>
 
         <!-- Tag filter chips -->
-        <div v-if="filterTagOptions.length > 0" class="scrollbar-hidden flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto">
-          <UIcon name="i-lucide-tag" class="size-3 text-muted shrink-0 mr-0.5" />
+        <div
+          v-if="filterTagOptions.length > 0"
+          class="scrollbar-hidden flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto"
+        >
+          <UIcon
+            name="i-lucide-tag"
+            class="size-3 text-muted shrink-0 mr-0.5"
+          />
           <button
             v-for="tag in filterTagOptions"
             :key="tag"
@@ -152,7 +164,11 @@ function smartSnippet(html: string): string {
             @click="toggleTag(tag)"
           >
             <span class="opacity-70">#</span>{{ tag }}
-            <UIcon v-if="selectedTags.includes(tag)" name="i-lucide-x" class="size-2.5 ml-0.5" />
+            <UIcon
+              v-if="selectedTags.includes(tag)"
+              name="i-lucide-x"
+              class="size-2.5 ml-0.5"
+            />
           </button>
         </div>
 
@@ -161,7 +177,9 @@ function smartSnippet(html: string): string {
           <div class="overflow-y-auto max-h-104">
             <!-- Recent notes (top 5) -->
             <div class="px-4 pt-2.5 pb-1">
-              <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Recent Notes</p>
+              <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                Recent Notes
+              </p>
             </div>
             <button
               v-for="note in searchNotes('').slice(0, 5)"
@@ -171,8 +189,15 @@ function smartSnippet(html: string): string {
             >
               <span class="font-medium text-sm text-default truncate">{{ note.title || 'Untitled' }}</span>
               <div class="flex items-center gap-3 shrink-0">
-                <div v-if="note.tags.length" class="flex gap-1">
-                  <span v-for="tag in note.tags.slice(0, 2)" :key="tag" class="text-xs text-primary-500 dark:text-primary-400">#{{ tag }}</span>
+                <div
+                  v-if="note.tags.length"
+                  class="flex gap-1"
+                >
+                  <span
+                    v-for="tag in note.tags.slice(0, 2)"
+                    :key="tag"
+                    class="text-xs text-primary-500 dark:text-primary-400"
+                  >#{{ tag }}</span>
                 </div>
                 <span class="text-xs text-muted">{{ relativeTime(note.updatedAt) }}</span>
               </div>
@@ -184,9 +209,17 @@ function smartSnippet(html: string): string {
                 class="flex items-center gap-3 w-full px-4 py-3 text-sm text-muted hover:bg-elevated/70 transition-colors"
                 @click="handleCreateNote"
               >
-                <UIcon name="i-lucide-plus" class="size-4 shrink-0" />
+                <UIcon
+                  name="i-lucide-plus"
+                  class="size-4 shrink-0"
+                />
                 New note
-                <UKbd size="sm" class="ml-auto">⌘N</UKbd>
+                <UKbd
+                  size="sm"
+                  class="ml-auto"
+                >
+                  ⌘N
+                </UKbd>
               </button>
             </div>
           </div>
@@ -196,9 +229,17 @@ function smartSnippet(html: string): string {
         <template v-else>
           <div class="overflow-y-auto max-h-[26rem]">
             <!-- No results -->
-            <div v-if="results.length === 0" class="flex flex-col items-center justify-center py-10 gap-2">
-              <UIcon name="i-lucide-file-search" class="size-7 text-muted" />
-              <p class="text-sm text-muted">No notes found</p>
+            <div
+              v-if="results.length === 0"
+              class="flex flex-col items-center justify-center py-10 gap-2"
+            >
+              <UIcon
+                name="i-lucide-file-search"
+                class="size-7 text-muted"
+              />
+              <p class="text-sm text-muted">
+                No notes found
+              </p>
             </div>
 
             <button
@@ -210,7 +251,10 @@ function smartSnippet(html: string): string {
               @mouseenter="highlighted = i"
             >
               <div class="flex items-start justify-between gap-4">
-                <span class="font-medium text-sm text-default leading-snug" v-html="highlight(note.title || 'Untitled')" />
+                <span
+                  class="font-medium text-sm text-default leading-snug"
+                  v-html="highlight(note.title || 'Untitled')"
+                />
                 <span class="text-xs text-muted shrink-0 mt-px">{{ relativeTime(note.updatedAt) }}</span>
               </div>
               <p
@@ -218,7 +262,10 @@ function smartSnippet(html: string): string {
                 class="text-xs text-muted line-clamp-2 leading-relaxed"
                 v-html="highlight(smartSnippet(note.content))"
               />
-              <div v-if="note.tags.length" class="flex flex-wrap gap-1.5 mt-0.5">
+              <div
+                v-if="note.tags.length"
+                class="flex flex-wrap gap-1.5 mt-0.5"
+              >
                 <span
                   v-for="tag in note.tags.slice(0, 5)"
                   :key="tag"
@@ -238,7 +285,10 @@ function smartSnippet(html: string): string {
               @click="handleCreateNote"
               @mouseenter="highlighted = results.length"
             >
-              <UIcon name="i-lucide-plus" class="size-4 shrink-0 text-primary-500" />
+              <UIcon
+                name="i-lucide-plus"
+                class="size-4 shrink-0 text-primary-500"
+              />
               Create note
               <span class="font-medium text-default">"{{ query.trim() }}"</span>
             </button>

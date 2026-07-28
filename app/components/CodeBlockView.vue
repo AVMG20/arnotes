@@ -34,7 +34,7 @@ const LANGUAGES = [
   { label: 'SQL', value: 'sql' },
   { label: 'Swift', value: 'swift' },
   { label: 'TypeScript', value: 'typescript' },
-  { label: 'YAML', value: 'yaml' },
+  { label: 'YAML', value: 'yaml' }
 ]
 
 const language = computed(() => props.node.attrs.language ?? '')
@@ -96,7 +96,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
 <template>
   <NodeViewWrapper class="code-block-node not-prose">
     <!-- Header: contenteditable=false keeps the editor from treating it as content -->
-    <div contenteditable="false" class="code-block-header">
+    <div
+      contenteditable="false"
+      class="code-block-header"
+    >
       <span class="text-xs text-muted font-mono select-none leading-none">{ }</span>
 
       <button
@@ -105,14 +108,21 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
         @mousedown="openDropdown"
       >
         {{ displayLabel }}
-        <svg class="size-3 opacity-50" viewBox="0 0 16 16" fill="currentColor">
+        <svg
+          class="size-3 opacity-50"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+        >
           <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z" />
         </svg>
       </button>
     </div>
 
     <!-- Code content -->
-    <pre class="code-block-pre"><NodeViewContent as="code" :class="language ? `language-${language}` : ''" /></pre>
+    <pre class="code-block-pre"><NodeViewContent
+as="code"
+                                                 :class="language ? `language-${language}` : ''"
+    /></pre>
 
     <!-- Teleported dropdown — outside the editor DOM entirely -->
     <Teleport to="body">
@@ -130,12 +140,17 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
             placeholder="Search language…"
             class="w-full px-2 py-1.5 text-xs rounded-md bg-elevated border border-default outline-none text-default placeholder:text-muted"
             @keydown="onSearchKey"
-          />
+          >
         </div>
 
         <!-- List -->
         <div class="max-h-56 overflow-y-auto py-1">
-          <div v-if="filtered.length === 0" class="px-3 py-2 text-xs text-muted">No match</div>
+          <div
+            v-if="filtered.length === 0"
+            class="px-3 py-2 text-xs text-muted"
+          >
+            No match
+          </div>
           <button
             v-for="lang in filtered"
             :key="lang.value"

@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
     tags: body.tags ?? [],
     attachments: [],
     createdAt: now,
-    updatedAt: now,
+    updatedAt: now
   }).returning()
 
   return note

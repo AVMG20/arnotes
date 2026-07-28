@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Arnotes is a fast, self-hosted note-taking app organized by inline tags.">
+  <title>Arnotes - Notes that organize themselves</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101112;
+      --panel: #181a1c;
+      --line: #2a2d2f;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --green: #34d399;
+      --green-dark: #064e3b;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+    a { color: inherit; }
+    .wrap { width: min(1120px, calc(100% - 40px)); margin-inline: auto; }
+    nav { display: flex; justify-content: space-between; align-items: center; padding: 24px 0; }
+    .brand { font-size: 1.15rem; font-weight: 800; text-decoration: none; letter-spacing: -.03em; }
+    .brand span, .accent { color: var(--green); }
+    .nav-links { display: flex; gap: 24px; align-items: center; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: .9rem; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      padding: 11px 18px;
+      background: var(--green);
+      color: #052e22;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .hero { padding: 104px 0 72px; text-align: center; }
+    .eyebrow { color: var(--green); text-transform: uppercase; letter-spacing: .14em; font-size: .75rem; font-weight: 800; }
+    h1 { max-width: 800px; margin: 16px auto 20px; font-size: clamp(2.8rem, 7vw, 5.8rem); line-height: .98; letter-spacing: -.065em; }
+    .lead { max-width: 620px; margin: 0 auto 32px; color: var(--muted); font-size: clamp(1rem, 2vw, 1.25rem); }
+    .actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    .secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .product {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 32px 100px rgba(0,0,0,.4);
+    }
+    .product-bar { display: flex; gap: 7px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #3f3f46; }
+    .product img { width: 100%; display: block; }
+    section { padding: 92px 0; }
+    h2 { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.1; letter-spacing: -.045em; margin: 0 0 14px; }
+    .section-intro { color: var(--muted); max-width: 600px; margin: 0 0 36px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 24px; }
+    .card strong { display: block; margin-bottom: 7px; }
+    .card p { color: var(--muted); margin: 0; font-size: .94rem; }
+    .deploy { display: grid; grid-template-columns: .85fr 1.15fr; gap: 52px; align-items: center; }
+    pre { margin: 0; padding: 24px; overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: #0a0b0c; color: #d4d4d8; font: .9rem/1.8 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    code .prompt { color: var(--green); }
+    .note { margin-top: 14px; color: var(--muted); font-size: .85rem; }
+    footer { border-top: 1px solid var(--line); padding: 32px 0; color: var(--muted); font-size: .88rem; }
+    footer .wrap { display: flex; justify-content: space-between; gap: 20px; }
+    @media (max-width: 760px) {
+      .nav-links a:not(.button) { display: none; }
+      .hero { padding-top: 72px; }
+      .grid, .deploy { grid-template-columns: 1fr; }
+      .deploy { gap: 28px; }
+      section { padding: 64px 0; }
+      footer .wrap { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <nav>
+      <a class="brand" href="#"><span>Arno</span>tes</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#deploy">Self-host</a>
+        <a class="button secondary" href="https://github.com/AVMG20/arnotes">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero wrap">
+      <div class="eyebrow">Open source and self-hosted</div>
+      <h1>Notes that organize <span class="accent">themselves.</span></h1>
+      <p class="lead">A focused writing space with rich editing, inline tags, instant search, attachments, sharing, and optional AI. Your server, your data.</p>
+      <div class="actions">
+        <a class="button" href="#deploy">Deploy Arnotes</a>
+        <a class="button secondary" href="https://github.com/AVMG20/arnotes">View source</a>
+      </div>
+    </div>
+
+    <div class="wrap product" aria-label="Arnotes application preview">
+      <div class="product-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      <img src="public/screenshot.png" alt="Arnotes editor showing a welcome note, tags, and code highlighting">
+    </div>
+
+    <section id="features" class="wrap">
+      <h2>Simple where it matters.</h2>
+      <p class="section-intro">No folder maintenance and no proprietary cloud. Write naturally, add tags in place, and find the thought again when you need it.</p>
+      <div class="grid">
+        <article class="card"><strong>Inline organization</strong><p>Type #tags in a note and the sidebar organizes everything automatically.</p></article>
+        <article class="card"><strong>Capable editor</strong><p>Headings, tables, task lists, code blocks, highlighting, images, and Markdown export.</p></article>
+        <article class="card"><strong>Private by default</strong><p>Accounts and notes live in your PostgreSQL database. Share only the notes you choose.</p></article>
+        <article class="card"><strong>Fast retrieval</strong><p>Search titles, content, and tags instantly without leaving the keyboard.</p></article>
+        <article class="card"><strong>Installable PWA</strong><p>Add Arnotes to desktop or mobile for an app-like writing experience.</p></article>
+        <article class="card"><strong>Optional AI</strong><p>Bring your own OpenRouter key for writing tools. Notes work fully without it.</p></article>
+      </div>
+    </section>
+
+    <section id="deploy" class="wrap deploy">
+      <div>
+        <div class="eyebrow">One-command setup</div>
+        <h2>Run it on your hardware.</h2>
+        <p class="section-intro">Docker Compose builds the application, starts PostgreSQL, runs migrations, and creates a persistent authentication secret. Open the app and create your account.</p>
+        <a class="button secondary" href="https://github.com/AVMG20/arnotes#self-host-with-docker">Deployment guide</a>
+      </div>
+      <div>
+        <pre><code><span class="prompt">$</span> git clone https://github.com/AVMG20/arnotes.git
+<span class="prompt">$</span> cd arnotes
+<span class="prompt">$</span> docker compose up -d --build
+
+# Open http://localhost:3000</code></pre>
+        <p class="note">PostgreSQL data, uploads, and the generated auth secret survive container upgrades.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap"><span>Arnotes v0.1.0</span><span>Open source under the MIT License.</span></div>
+  </footer>
+</body>
+</html>

@@ -47,7 +47,10 @@ defineExpose({ onKeyDown })
       @mouseenter="selectedIndex = i"
     >
       <span class="flex items-center gap-2">
-        <UIcon name="i-lucide-calendar" class="size-3.5 text-muted shrink-0" />
+        <UIcon
+          name="i-lucide-calendar"
+          class="size-3.5 text-muted shrink-0"
+        />
         {{ item.label }}
       </span>
       <span class="text-xs text-muted shrink-0">{{ item.hint }}</span>

@@ -716,7 +716,7 @@ const tableToolbarItems: any[][] = [[
   }
 ]]
 
-function shouldShowTableToolbar(editor: Editor, view: EditorView, state: EditorState) {
+function shouldShowTableToolbar(editor: Pick<Editor, 'isActive'>, view: EditorView, state: EditorState) {
   const domSelection = view.dom.ownerDocument.getSelection()
   const hasDomTextSelection = Boolean(
     domSelection
@@ -894,7 +894,10 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                   <div class="w-80 p-3 space-y-3">
                     <div class="flex items-start gap-2">
                       <div class="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary">
-                        <UIcon name="i-lucide-globe-2" class="size-4" />
+                        <UIcon
+                          name="i-lucide-globe-2"
+                          class="size-4"
+                        />
                       </div>
                       <div>
                         <p class="text-sm font-medium text-default">
@@ -906,7 +909,10 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                       </div>
                     </div>
 
-                    <UFormField label="End date" hint="Optional">
+                    <UFormField
+                      label="End date"
+                      hint="Optional"
+                    >
                       <UInput
                         v-model="shareEndDate"
                         type="date"
@@ -918,7 +924,10 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                       </template>
                     </UFormField>
 
-                    <div v-if="activeNote?.isPublic" class="rounded-md bg-elevated px-2.5 py-2">
+                    <div
+                      v-if="activeNote?.isPublic"
+                      class="rounded-md bg-elevated px-2.5 py-2"
+                    >
                       <p class="text-xs font-medium text-default">
                         Link is active
                       </p>

@@ -3,7 +3,7 @@ import { initNotesStore } from '~/composables/useNotes'
 import type { Note } from '~/composables/useNotes'
 import { authClient } from '~/composables/useAuth'
 
-type SearchDoc = Note & { tagsText: string; contentText: string }
+type SearchDoc = Note & { tagsText: string, contentText: string }
 
 export default defineNuxtPlugin(async () => {
   const { data: session } = await authClient.getSession()

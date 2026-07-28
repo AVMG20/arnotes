@@ -10,11 +10,10 @@ const EXT_FROM_MIME: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
+  'image/svg+xml': 'svg'
 }
 const MAX_SIZE = 10 * 1024 * 1024 // 10 MB
 const MAX_ATTACHMENTS = 15
-
 
 export default defineEventHandler(async (event) => {
   const noteId = getRouterParam(event, 'id')!

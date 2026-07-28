@@ -1,10 +1,64 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+
   modules: [
     '@nuxt/eslint',
     '@nuxt/ui',
     '@vite-pwa/nuxt'
   ],
+
+  ssr: false,
+
+  devtools: {
+    enabled: process.env.NODE_ENV !== 'production'
+  },
+
+  css: ['~/assets/css/main.css'],
+  runtimeConfig: {
+    public: {
+      discordEnabled: false,
+      allowSignUp: true
+    }
+  },
+
+  compatibilityDate: '2025-01-15',
+
+  nitro: {
+    preset: 'bun'
+  },
+
+  vite: {
+    resolve: {
+      dedupe: [
+        '@tiptap/core',
+        '@tiptap/pm',
+        'prosemirror-model',
+        'prosemirror-state',
+        'prosemirror-tables',
+        'prosemirror-view'
+      ]
+    },
+    optimizeDeps: {
+      include: [
+        '@nuxt/ui > prosemirror-state',
+        '@nuxt/ui > prosemirror-transform',
+        '@nuxt/ui > prosemirror-model',
+        '@nuxt/ui > prosemirror-view',
+        '@nuxt/ui > prosemirror-gapcursor',
+        '@tiptap/extension-table',
+        '@tiptap/pm/tables'
+      ]
+    }
+  },
+
+  eslint: {
+    config: {
+      stylistic: {
+        commaDangle: 'never',
+        braceStyle: '1tbs'
+      }
+    }
+  },
 
   pwa: {
     registerType: 'autoUpdate',
@@ -51,53 +105,6 @@ export default defineNuxtConfig({
     devOptions: {
       enabled: false,
       type: 'module'
-    }
-  },
-
-  vite: {
-    resolve: {
-      dedupe: [
-        '@tiptap/core',
-        '@tiptap/pm',
-        'prosemirror-model',
-        'prosemirror-state',
-        'prosemirror-tables',
-        'prosemirror-view'
-      ]
-    },
-    optimizeDeps: {
-      include: [
-        '@nuxt/ui > prosemirror-state',
-        '@nuxt/ui > prosemirror-transform',
-        '@nuxt/ui > prosemirror-model',
-        '@nuxt/ui > prosemirror-view',
-        '@nuxt/ui > prosemirror-gapcursor',
-        '@tiptap/extension-table',
-        '@tiptap/pm/tables'
-      ]
-    }
-  },
-
-  devtools: {
-    enabled: true
-  },
-
-  css: ['~/assets/css/main.css'],
-
-  ssr: false,
-
-  compatibilityDate: '2025-01-15',
-
-    nitro: {
-        preset: 'bun'
-    },
-
-  eslint: {
-    config: {
-      stylistic: {
-        commaDangle: 'never',
-        braceStyle: '1tbs'
-      }
     }
   }
 })

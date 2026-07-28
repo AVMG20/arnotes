@@ -1,6 +1,9 @@
 {
-  "name": "asana",
+  "name": "arnotes",
+  "version": "0.1.0",
+  "description": "A self-hosted, tag-based note-taking application.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "nuxt build",
@@ -8,7 +11,8 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "db:push": "drizzle-kit push --force"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.111",
@@ -45,7 +49,7 @@
     "typescript": "^6.0.3",
     "vue-tsc": "^3.3.3"
   },
-  "packageManager": "pnpm@11.5.0",
+  "packageManager": "bun@1.3.10",
   "overrides": {
     "@tiptap/core": "3.25.0",
     "@tiptap/pm": "3.25.0"

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { Note } from '~/composables/useNotes'
+
 definePageMeta({ layout: 'app' })
 
 const { ready, notes, createNote } = useNotes()
@@ -9,8 +11,9 @@ watch(ready, async (isReady) => {
     navigateTo('/note/' + notes.value[0].id, { replace: true })
   } else {
     await createNote(undefined)
-    if (notes.value[0]) {
-      navigateTo('/note/' + notes.value[0].id, { replace: true })
+    const createdNote = notes.value[0] as Note | undefined
+    if (createdNote) {
+      navigateTo('/note/' + createdNote.id, { replace: true })
     }
   }
 }, { immediate: true })

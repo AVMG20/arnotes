@@ -25,9 +25,10 @@ const apiKeySaving = ref(false)
 const apiKeyDirty = computed(() => apiKeyInput.value.trim() !== '')
 
 const modelInput = ref('')
-const { data: modelCatalog, status: modelCatalogStatus, refresh: refreshModelCatalog } = useFetch<{
+type ModelCatalog = {
   models: Array<{ id: string, name: string, contextLength: number | null, modality: string | null, inputPrice: number | null, outputPrice: number | null }>
-}>('/api/settings/models', { server: false, lazy: true })
+}
+const { data: modelCatalog, status: modelCatalogStatus, refresh: refreshModelCatalog } = useFetch<ModelCatalog>('/api/settings/models', { server: false, lazy: true })
 const modelsRefreshing = ref(false)
 
 const { data: aiHistory } = useFetch<{ totals: { prompts: number, cost: number } }>('/api/settings/ai-history', { server: false, lazy: true })
@@ -47,7 +48,7 @@ function formatPricePerMillion(price: number | null): string | null {
 async function forceRefreshModelCatalog() {
   modelsRefreshing.value = true
   try {
-    modelCatalog.value = await $fetch('/api/settings/models?refresh=true')
+    modelCatalog.value = await $fetch<ModelCatalog>('/api/settings/models?refresh=true')
     toast.add({ title: 'Models and pricing refreshed', icon: 'i-lucide-refresh-cw', duration: 2000 })
   } catch (e) {
     toast.add({ title: 'Could not refresh models', description: errMsg(e), icon: 'i-lucide-alert-triangle', color: 'error' })
