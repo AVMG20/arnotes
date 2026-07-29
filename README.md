@@ -18,7 +18,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags. It 
 - Markdown import and export
 - Soft deletion and trash recovery
 - Private notes with optional expiring public links
-- Email/password accounts and optional Discord OAuth
+- Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
 - Installable Progressive Web App
 - Docker-based self-hosting with persistent PostgreSQL and attachment storage
@@ -103,15 +103,26 @@ Only expose the application through the reverse proxy. PostgreSQL is bound to `1
 | `DATABASE_URL` | bundled PostgreSQL | Complete PostgreSQL connection URL |
 | `BETTER_AUTH_SECRET` | generated | Stable 32+ character authentication secret; generated into the data volume when empty |
 | `ALLOW_SIGN_UP` | `true` | Whether visitors may create email/password accounts |
-| `DISCORD_ENABLED` | `false` | Show and enable Discord OAuth sign-in |
+| `NUXT_PUBLIC_DISCORD_ENABLED` | `false` | Show and enable Discord OAuth sign-in |
 | `DISCORD_CLIENT_ID` | empty | Discord application client ID |
 | `DISCORD_CLIENT_SECRET` | empty | Discord application client secret |
+| `NUXT_PUBLIC_GITHUB_ENABLED` | `false` | Show and enable GitHub OAuth sign-in |
+| `GITHUB_CLIENT_ID` | empty | GitHub application client ID |
+| `GITHUB_CLIENT_SECRET` | empty | GitHub application client secret |
 
 To enable Discord, set all three Discord variables and register this redirect URL in the Discord developer portal:
 
 ```text
 https://notes.example.com/api/auth/callback/discord
 ```
+
+To enable GitHub, set all three GitHub variables and register this authorization callback URL in a GitHub OAuth app:
+
+```text
+https://notes.example.com/api/auth/callback/github
+```
+
+The `NUXT_PUBLIC_*_ENABLED` switches are used by both the server and client, so the same configuration works with native development and Docker Compose.
 
 OpenRouter credentials are entered per user under Settings and are not server environment variables.
 
@@ -188,7 +199,7 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 
 - Nuxt 4 and Vue 3 provide the client and Nitro API server.
 - Nuxt UI and Tailwind CSS provide the interface.
-- Better Auth handles email/password sessions and optional Discord OAuth.
+- Better Auth handles email/password sessions and optional Discord and GitHub OAuth.
 - Drizzle ORM and PostgreSQL store application data.
 - Uploaded files are stored under `data/attachments` and mounted as a Docker volume.
 - OpenRouter powers optional user-configured AI actions.

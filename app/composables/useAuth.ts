@@ -14,6 +14,10 @@ export function useAuth() {
     await authClient.signIn.social({ provider: 'discord', callbackURL: '/note' })
   }
 
+  async function signInWithGitHub() {
+    await authClient.signIn.social({ provider: 'github', callbackURL: '/note' })
+  }
+
   async function signOut() {
     await authClient.signOut()
     window.location.href = '/login'
@@ -23,6 +27,7 @@ export function useAuth() {
     session,
     isPending,
     signInWithDiscord,
+    signInWithGitHub,
     signOut
   }
 }

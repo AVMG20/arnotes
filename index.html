@@ -32,6 +32,7 @@
     .brand span, .accent { color: var(--green); }
     .nav-links { display: flex; gap: 24px; align-items: center; }
     .nav-links a { color: var(--muted); text-decoration: none; font-size: .9rem; }
+    .nav-links .hosted { color: var(--text); font-size: .82rem; }
     .button {
       display: inline-flex;
       align-items: center;
@@ -49,6 +50,7 @@
     .lead { max-width: 620px; margin: 0 auto 32px; color: var(--muted); font-size: clamp(1rem, 2vw, 1.25rem); }
     .actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
     .secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .subtle { padding: 8px 13px; color: var(--muted); font-size: .82rem; align-self: center; }
     .product {
       border: 1px solid var(--line);
       border-radius: 16px;
@@ -89,6 +91,7 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#deploy">Self-host</a>
+        <a class="hosted" href="https://arnotes.avmg.nl">Try online free</a>
         <a class="button secondary" href="https://github.com/AVMG20/arnotes">GitHub</a>
       </div>
     </nav>
@@ -102,6 +105,7 @@
       <div class="actions">
         <a class="button" href="#deploy">Deploy Arnotes</a>
         <a class="button secondary" href="https://github.com/AVMG20/arnotes">View source</a>
+        <a class="button secondary subtle" href="https://arnotes.avmg.nl">Try the hosted version</a>
       </div>
     </div>
 
