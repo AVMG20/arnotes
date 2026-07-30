@@ -22,7 +22,7 @@ const { sidebarOpen } = useSidebar()
         body: 'p-0 gap-0 overflow-hidden',
         footer: 'hidden',
         handle: 'after:hover:bg-primary-500 after:transition-colors',
-        content: 'max-w-[calc(100%-2rem)]'
+        content: 'max-w-[80vw]'
       }"
     >
       <AppSidebar @close="sidebarOpen = false" />
