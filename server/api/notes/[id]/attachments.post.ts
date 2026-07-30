@@ -3,6 +3,7 @@ import { notes } from '../../../db/schema'
 import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
 import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { getNoteAccessFilter } from '../../../utils/auth-helpers'
 
 const ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
 const EXT_FROM_MIME: Record<string, string> = {
@@ -17,9 +18,8 @@ const MAX_ATTACHMENTS = 15
 
 export default defineEventHandler(async (event) => {
   const noteId = getRouterParam(event, 'id')!
-  const userId = event.context.session.user.id
 
-  const [note] = await db.select().from(notes).where(and(eq(notes.id, noteId), eq(notes.userId, userId)))
+  const [note] = await db.select().from(notes).where(and(eq(notes.id, noteId), await getNoteAccessFilter(event)))
   if (!note) throw createError({ statusCode: 404, message: 'Note not found' })
 
   if ((note.attachments ?? []).length >= MAX_ATTACHMENTS) {

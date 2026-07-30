@@ -198,13 +198,21 @@ function swatchStyle(color: string, selected: boolean) {
           Settings
         </h1>
         <UButton
+          to="/settings/teams"
+          label="Teams"
+          icon="i-lucide-users"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="ml-auto"
+        />
+        <UButton
           to="/settings/ai-history"
           label="AI history"
           icon="i-lucide-history"
           color="neutral"
           variant="ghost"
           size="xs"
-          class="ml-auto"
         />
       </div>
     </div>

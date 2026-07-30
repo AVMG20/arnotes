@@ -4,6 +4,7 @@ import { db } from '#server/db'
 import { notes } from '#server/db/schema'
 import { eq } from 'drizzle-orm'
 import { auth } from '#server/lib/auth'
+import { isTeamMember } from '#server/utils/auth-helpers'
 
 const MIME: Record<string, string> = {
   '.png': 'image/png',
@@ -26,7 +27,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const [note] = await db
-    .select({ userId: notes.userId, isPublic: notes.isPublic, publicUntil: notes.publicUntil })
+    .select({ userId: notes.userId, teamId: notes.teamId, isPublic: notes.isPublic, publicUntil: notes.publicUntil })
     .from(notes)
     .where(eq(notes.id, noteId))
 
@@ -35,7 +36,12 @@ export default defineEventHandler(async (event) => {
   const isPublic = note.isPublic && (!note.publicUntil || note.publicUntil > Date.now())
   if (!isPublic) {
     const session = await auth.api.getSession({ headers: event.headers })
-    if (!session || session.user.id !== note.userId) {
+    // A team note's attachments belong to the whole team, not just the uploader.
+    const allowed = session
+      && (session.user.id === note.userId
+        || (note.teamId ? await isTeamMember(session.user.id, note.teamId) : false))
+
+    if (!allowed) {
       throw createError({ statusCode: 403, message: 'Forbidden' })
     }
   }

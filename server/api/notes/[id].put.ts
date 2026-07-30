@@ -4,18 +4,20 @@ import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
 import { unlinkSync } from 'fs'
 import type { NewNote } from '../../db/schema'
+import { getNoteAccessFilter } from '../../utils/auth-helpers'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const userId = event.context.session.user.id
   const body = await readBody<Partial<NewNote>>(event)
+
+  const accessCondition = and(eq(notes.id, id), await getNoteAccessFilter(event))
 
   let updatedAttachments: string[] | undefined
   if (body.content !== undefined) {
     const [current] = await db
       .select({ attachments: notes.attachments })
       .from(notes)
-      .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+      .where(accessCondition)
 
     if (current?.attachments) {
       const kept = current.attachments.filter(f => body.content!.includes(f))
@@ -42,7 +44,7 @@ export default defineEventHandler(async (event) => {
       ...(body.publicUntil !== undefined && { publicUntil: body.publicUntil }),
       updatedAt: Date.now()
     })
-    .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+    .where(accessCondition)
     .returning()
 
   if (!updated) throw createError({ statusCode: 404, message: 'Note not found' })

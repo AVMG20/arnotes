@@ -227,6 +227,28 @@ export function useNotes() {
     }
   }
 
+  // Reloads the note list for whatever workspace is now active. Filters are reset
+  // because tags and trash from the previous workspace do not carry over.
+  async function refreshNotes() {
+    let freshNotes: Note[] = []
+    try {
+      freshNotes = await $fetch<Note[]>('/api/notes')
+    } catch {
+      freshNotes = []
+    }
+
+    _notes.value = freshNotes
+    if (_search) {
+      _search.removeAll()
+      _search.addAll(freshNotes.map(toSearchDoc))
+    }
+    _activeNoteId.value = freshNotes.find(n => !n.deletedAt)?.id ?? null
+    _activeTag.value = null
+    _searchQuery.value = ''
+    _showTrash.value = false
+    _showShared.value = false
+  }
+
   return {
     ready: _ready,
     notes: _notes,
@@ -249,6 +271,7 @@ export function useNotes() {
     updateSharing,
     deleteNote,
     restoreNote,
-    searchNotes
+    searchNotes,
+    refreshNotes
   }
 }

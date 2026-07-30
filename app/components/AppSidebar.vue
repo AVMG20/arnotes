@@ -80,7 +80,8 @@ watch(activeNoteId, () => emit('close'))
 
     <NotesListPanel class="min-h-0 flex-1" />
 
-    <div class="shrink-0 border-t border-default p-2">
+    <div class="shrink-0 space-y-1.5 border-t border-default p-2">
+      <TeamSwitcher />
       <UDropdownMenu
         :items="accountItems"
         :content="{ align: 'start', collisionPadding: 12 }"

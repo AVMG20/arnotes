@@ -1,8 +1,9 @@
 import { db } from '../db'
 import { notes } from '../db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { desc } from 'drizzle-orm'
+import { getNoteAccessFilter } from '../utils/auth-helpers'
 
 export default defineEventHandler(async (event) => {
-  const userId = event.context.session.user.id
-  return db.select().from(notes).where(eq(notes.userId, userId)).orderBy(desc(notes.updatedAt))
+  const accessFilter = await getNoteAccessFilter(event)
+  return db.select().from(notes).where(accessFilter).orderBy(desc(notes.updatedAt))
 })

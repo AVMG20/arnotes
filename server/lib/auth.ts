@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { organization } from 'better-auth/plugins/organization'
 import { db } from '../db'
 import * as schema from '../db/schema'
 
@@ -15,9 +16,26 @@ export const auth = betterAuth({
       user: schema.user,
       session: schema.session,
       account: schema.account,
-      verification: schema.verification
+      verification: schema.verification,
+      organization: schema.organization,
+      member: schema.member,
+      invitation: schema.invitation
     }
   }),
+  plugins: [
+    organization({
+      // Better Auth only returns columns it knows about, so `joinCode` has to be
+      // declared here or it is stripped from every organization response.
+      // `input: false` keeps it server-issued — clients can never set their own.
+      schema: {
+        organization: {
+          additionalFields: {
+            joinCode: { type: 'string', required: false, input: false }
+          }
+        }
+      }
+    })
+  ],
   emailAndPassword: {
     enabled: true,
     disableSignUp: process.env.ALLOW_SIGN_UP === 'false'

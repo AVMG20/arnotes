@@ -20,7 +20,8 @@ export const session = pgTable('session', {
   updatedAt: timestamp('updated_at').notNull(),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' })
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  activeOrganizationId: text('active_organization_id')
 })
 
 export const account = pgTable('account', {
@@ -48,21 +49,62 @@ export const verification = pgTable('verification', {
   updatedAt: timestamp('updated_at')
 })
 
+export const organization = pgTable('organization', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  logo: text('logo'),
+  createdAt: timestamp('created_at').notNull(),
+  metadata: text('metadata'),
+  joinCode: text('join_code').unique()
+})
+
+export const member = pgTable(
+  'member',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id').notNull().references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    createdAt: timestamp('created_at').notNull()
+  },
+  // Every authenticated note request resolves membership for the active team.
+  table => [index('member_org_user_idx').on(table.organizationId, table.userId)]
+)
+
+export const invitation = pgTable('invitation', {
+  id: text('id').primaryKey(),
+  organizationId: text('organization_id').notNull().references(() => organization.id, { onDelete: 'cascade' }),
+  email: text('email').notNull(),
+  role: text('role'),
+  status: text('status').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull(),
+  inviterId: text('inviter_id').notNull().references(() => user.id, { onDelete: 'cascade' })
+})
+
 // ─── App tables ───────────────────────────────────────────────────────────────
 
-export const notes = pgTable('notes', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
-  title: text('title').notNull().default('Untitled'),
-  content: text('content').notNull().default(''),
-  tags: json('tags').$type<string[]>().notNull().default([]),
-  attachments: json('attachments').$type<string[]>().notNull().default([]),
-  isPublic: boolean('is_public').notNull().default(false),
-  publicUntil: bigint('public_until', { mode: 'number' }),
-  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
-  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
-  deletedAt: bigint('deleted_at', { mode: 'number' })
-})
+export const notes = pgTable(
+  'notes',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    // NULL means the note lives in the author's personal workspace. Existing notes
+    // predating teams keep NULL, so they stay exactly where they were.
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    title: text('title').notNull().default('Untitled'),
+    content: text('content').notNull().default(''),
+    tags: json('tags').$type<string[]>().notNull().default([]),
+    attachments: json('attachments').$type<string[]>().notNull().default([]),
+    isPublic: boolean('is_public').notNull().default(false),
+    publicUntil: bigint('public_until', { mode: 'number' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    deletedAt: bigint('deleted_at', { mode: 'number' })
+  },
+  table => [index('notes_team_id_idx').on(table.teamId)]
+)
 
 export type Note = typeof notes.$inferSelect
 export type NewNote = typeof notes.$inferInsert
