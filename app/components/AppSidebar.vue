@@ -55,7 +55,7 @@ watch(activeNoteId, () => emit('close'))
       />
     </div>
 
-    <div class="shrink-0 space-y-2 px-3">
+    <div class="shrink-0 space-y-2 px-3 pb-2">
       <button
         class="flex w-full items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-default"
         @click="searchOpen = true"
