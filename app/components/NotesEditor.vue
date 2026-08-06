@@ -15,6 +15,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
+import { ResizableImage } from '~/utils/resizable-image'
 
 const { activeNote, activeNoteId, autoFocus, updateNote, updateSharing } = useNotes()
 const toast = useToast()
@@ -558,6 +559,7 @@ const extensions: any[] = [
   TableHeader,
   TableCell,
   DateMention,
+  ResizableImage,
   ImagePaste,
   AiPendingDecoration,
   HashtagHighlight,
@@ -853,6 +855,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
           content-type="html"
           placeholder="Start writing… (@ for dates, # for tags)"
           :starter-kit="{ codeBlock: false }"
+          :image="false"
           :extensions="extensions"
           :handlers="customHandlers"
           class="min-h-full"

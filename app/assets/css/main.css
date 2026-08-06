@@ -34,6 +34,36 @@
   padding: 1rem 2.5rem;
 }
 
+/* ─── Cursors ───────────────────────────────────────────────── */
+
+/* Tailwind v4 drops the UA pointer cursor on buttons — put it back. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+
+/* ─── Images ────────────────────────────────────────────────── */
+
+.tiptap img,
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Fallback alignment for images rendered without the node view. */
+.tiptap img[data-align="center"],
+.ProseMirror img[data-align="center"] {
+  display: block;
+  margin-inline: auto;
+}
+
+.tiptap img[data-align="right"],
+.ProseMirror img[data-align="right"] {
+  display: block;
+  margin-inline-start: auto;
+}
+
 /* ─── Tables ────────────────────────────────────────────────── */
 
 .tiptap .tableWrapper,

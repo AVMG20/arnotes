@@ -104,7 +104,7 @@ function smartSnippet(html: string): string {
   el.innerHTML = html
   const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
   const q = query.value.trim()
-  if (!q) return text.slice(0, 120)
+  if (!q) return text.slice(0, 220)
 
   const terms = q.split(/\s+/).filter(t => t.length >= 2)
   let matchIdx = -1
@@ -113,9 +113,9 @@ function smartSnippet(html: string): string {
     if (i >= 0 && (matchIdx < 0 || i < matchIdx)) matchIdx = i
   }
 
-  if (matchIdx < 0) return text.slice(0, 160)
-  const start = Math.max(0, matchIdx - 60)
-  const end = Math.min(text.length, start + 200)
+  if (matchIdx < 0) return text.slice(0, 260)
+  const start = Math.max(0, matchIdx - 80)
+  const end = Math.min(text.length, start + 340)
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
 }
 </script>
@@ -124,21 +124,21 @@ function smartSnippet(html: string): string {
   <UModal
     v-model:open="open"
     :close="false"
-    :ui="{ content: 'p-0 overflow-hidden gap-0 max-w-2xl' }"
+    :ui="{ content: 'p-0 overflow-hidden gap-0 max-w-4xl' }"
   >
     <template #content>
       <div @keydown="handleListKey">
         <!-- Search input -->
-        <div class="flex items-center gap-3 px-4 py-3 border-b border-default">
+        <div class="flex items-center gap-3 px-5 py-4 border-b border-default">
           <UIcon
             name="i-lucide-search"
-            class="size-4 text-muted shrink-0"
+            class="size-5 text-muted shrink-0"
           />
           <input
             v-model="query"
             autofocus
             placeholder="Search or create a note…"
-            class="flex-1 bg-transparent outline-none text-sm text-default placeholder:text-muted"
+            class="flex-1 bg-transparent outline-none text-base text-default placeholder:text-muted"
           >
           <UKbd size="sm">
             Esc
@@ -148,7 +148,7 @@ function smartSnippet(html: string): string {
         <!-- Tag filter chips -->
         <div
           v-if="filterTagOptions.length > 0"
-          class="scrollbar-hidden flex items-center gap-1.5 px-4 py-2 border-b border-default overflow-x-auto"
+          class="scrollbar-hidden flex items-center gap-1.5 px-5 py-2.5 border-b border-default overflow-x-auto"
         >
           <UIcon
             name="i-lucide-tag"
@@ -174,9 +174,9 @@ function smartSnippet(html: string): string {
 
         <!-- Empty state: recent tags + recent notes -->
         <template v-if="!isFiltered">
-          <div class="overflow-y-auto max-h-104">
+          <div class="overflow-y-auto max-h-[34rem]">
             <!-- Recent notes (top 5) -->
-            <div class="px-4 pt-2.5 pb-1">
+            <div class="px-5 pt-3 pb-1">
               <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">
                 Recent Notes
               </p>
@@ -184,7 +184,7 @@ function smartSnippet(html: string): string {
             <button
               v-for="note in searchNotes('').slice(0, 5)"
               :key="note.id"
-              class="flex items-center justify-between w-full px-4 py-2.5 text-left gap-4 hover:bg-elevated/70 transition-colors"
+              class="flex items-center justify-between w-full px-5 py-3 text-left gap-4 hover:bg-elevated/70 transition-colors"
               @click="selectNote(note.id)"
             >
               <span class="font-medium text-sm text-default truncate">{{ note.title || 'Untitled' }}</span>
@@ -206,7 +206,7 @@ function smartSnippet(html: string): string {
             <!-- Create new note (no query) -->
             <div class="border-t border-default/50 mt-1">
               <button
-                class="flex items-center gap-3 w-full px-4 py-3 text-sm text-muted hover:bg-elevated/70 transition-colors"
+                class="flex items-center gap-3 w-full px-5 py-3 text-sm text-muted hover:bg-elevated/70 transition-colors"
                 @click="handleCreateNote"
               >
                 <UIcon
@@ -227,7 +227,7 @@ function smartSnippet(html: string): string {
 
         <!-- Search results -->
         <template v-else>
-          <div class="overflow-y-auto max-h-[26rem]">
+          <div class="overflow-y-auto max-h-[34rem]">
             <!-- No results -->
             <div
               v-if="results.length === 0"
@@ -245,21 +245,21 @@ function smartSnippet(html: string): string {
             <button
               v-for="(note, i) in results"
               :key="note.id"
-              class="flex flex-col gap-1 w-full px-4 py-3 text-left border-b border-default/40 last:border-0 transition-colors"
+              class="flex flex-col gap-1.5 w-full px-5 py-3.5 text-left border-b border-default/40 last:border-0 transition-colors"
               :class="i === highlighted ? 'bg-elevated' : 'hover:bg-elevated/60'"
               @click="selectNote(note.id)"
               @mouseenter="highlighted = i"
             >
               <div class="flex items-start justify-between gap-4">
                 <span
-                  class="font-medium text-sm text-default leading-snug"
+                  class="font-medium text-base text-default leading-snug"
                   v-html="highlight(note.title || 'Untitled')"
                 />
-                <span class="text-xs text-muted shrink-0 mt-px">{{ relativeTime(note.updatedAt) }}</span>
+                <span class="text-xs text-muted shrink-0 mt-0.5">{{ relativeTime(note.updatedAt) }}</span>
               </div>
               <p
                 v-if="smartSnippet(note.content)"
-                class="text-xs text-muted line-clamp-2 leading-relaxed"
+                class="text-sm text-muted line-clamp-3 leading-relaxed"
                 v-html="highlight(smartSnippet(note.content))"
               />
               <div
@@ -280,7 +280,7 @@ function smartSnippet(html: string): string {
             <!-- Create note from query -->
             <button
               v-if="hasQuery"
-              class="flex items-center gap-3 w-full px-4 py-3 text-sm border-t border-default/40 transition-colors"
+              class="flex items-center gap-3 w-full px-5 py-3 text-sm border-t border-default/40 transition-colors"
               :class="highlighted === results.length ? 'bg-elevated text-default' : 'text-muted hover:bg-elevated/60'"
               @click="handleCreateNote"
               @mouseenter="highlighted = results.length"
@@ -296,7 +296,7 @@ function smartSnippet(html: string): string {
         </template>
 
         <!-- Footer hints -->
-        <div class="flex items-center gap-4 px-4 py-2 border-t border-default bg-muted/30 text-xs text-muted">
+        <div class="flex items-center gap-4 px-5 py-2 border-t border-default bg-muted/30 text-xs text-muted">
           <span class="flex items-center gap-1.5"><UKbd size="sm">↑↓</UKbd> navigate</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">↵</UKbd> open</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">Esc</UKbd> close</span>

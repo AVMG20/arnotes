@@ -50,7 +50,7 @@ async function confirmPermanentDelete() {
         :ui="{ viewport: 'px-1' }"
       >
         <div
-          class="group relative flex flex-col gap-1 rounded-lg px-3 py-2.5 transition-colors"
+          class="group relative flex cursor-pointer flex-col gap-1 rounded-lg px-3 py-2.5 transition-colors"
           :class="activeNoteId === note.id ? 'bg-elevated ring-1 ring-inset ring-default' : 'hover:bg-elevated/60'"
           @click="activeNoteId = note.id"
         >

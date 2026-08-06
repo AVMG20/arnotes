@@ -12,6 +12,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
+import { ResizableImage } from '~/utils/resizable-image'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,6 +68,7 @@ const extensions: any[] = [
   TableHeader,
   TableCell,
   DateMention,
+  ResizableImage,
 ]
 
 const editorContent = ref('')
@@ -138,6 +140,7 @@ function copyToMarkdown() {
             content-type="html"
             :editable="false"
             :starter-kit="{ codeBlock: false }"
+            :image="false"
             :extensions="extensions"
             class="min-h-full"
           />
