@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { dropBundledOnnxRuntime } from './modules/onnx-runtime'
+
 export default defineNuxtConfig({
 
   modules: [
@@ -18,7 +20,13 @@ export default defineNuxtConfig({
     public: {
       discordEnabled: false,
       githubEnabled: false,
-      allowSignUp: true
+      allowSignUp: true,
+      // Instance-wide switch for semantic search. Off means no model download, no
+      // embedding generation and keyword-only search, whatever a user prefers.
+      embeddingsEnabled: true,
+      // Must be a key of EMBEDDING_MODELS in app/utils/embedding-models.ts;
+      // anything else falls back to the default multilingual model.
+      embeddingModel: 'Xenova/multilingual-e5-base'
     }
   },
 
@@ -29,6 +37,11 @@ export default defineNuxtConfig({
   },
 
   vite: {
+    // The embedding worker is an ES module so it can import transformers.js.
+    worker: {
+      format: 'es',
+      plugins: () => [dropBundledOnnxRuntime()]
+    },
     resolve: {
       dedupe: [
         '@tiptap/core',
@@ -40,6 +53,9 @@ export default defineNuxtConfig({
       ]
     },
     optimizeDeps: {
+      // transformers.js ships its own WASM/ONNX loader and breaks when Vite
+      // pre-bundles it.
+      exclude: ['@huggingface/transformers'],
       include: [
         '@nuxt/ui > prosemirror-state',
         '@nuxt/ui > prosemirror-transform',

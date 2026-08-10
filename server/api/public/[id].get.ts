@@ -1,11 +1,12 @@
 import { db } from '../../db'
 import { notes } from '../../db/schema'
 import { and, eq, gt, isNull, or } from 'drizzle-orm'
+import { NOTE_COLUMNS } from '../../utils/note-columns'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const [note] = await db
-    .select()
+    .select(NOTE_COLUMNS)
     .from(notes)
     .where(and(
       eq(notes.id, id),

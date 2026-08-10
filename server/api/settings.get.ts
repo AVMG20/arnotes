@@ -19,7 +19,8 @@ export default defineEventHandler(async (event) => {
       neutralColor: 'zinc',
       openrouterApiKey: null,
       openrouterApiKeyMasked: null,
-      openrouterModel: AI_SETTINGS_DEFAULTS.openrouterModel
+      openrouterModel: AI_SETTINGS_DEFAULTS.openrouterModel,
+      semanticSearchEnabled: AI_SETTINGS_DEFAULTS.semanticSearchEnabled
     }
   }
 
@@ -28,6 +29,7 @@ export default defineEventHandler(async (event) => {
     neutralColor: settings.neutralColor,
     openrouterApiKey: settings.openrouterApiKey,
     openrouterApiKeyMasked: maskKey(settings.openrouterApiKey),
-    openrouterModel: settings.openrouterModel
+    openrouterModel: settings.openrouterModel,
+    semanticSearchEnabled: settings.semanticSearchEnabled
   }
 })

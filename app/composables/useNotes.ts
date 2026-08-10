@@ -1,5 +1,6 @@
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import type MiniSearch from 'minisearch'
+import { reciprocalRankFusion, type ScoredId } from '~/utils/embedding'
 
 export interface Note {
   id: string
@@ -28,6 +29,20 @@ const _recentTags = ref<string[]>([])
 const _autoFocus = ref(false)
 
 let _search: MiniSearch<SearchDoc> | null = null
+
+/**
+ * Semantic hits for the sidebar's search box. Populated by `initNotesStore` once
+ * the app is running; stays empty when semantic search is off, which makes every
+ * fusion below collapse back to plain keyword results.
+ */
+let _sidebarSemanticHits: Ref<ScoredId[]> = shallowRef([])
+
+/**
+ * How much a vector hit is worth against a keyword hit of the same rank. Below 1
+ * so that an exact keyword match still wins when both engines find a note, while
+ * a note that only matches in meaning can still surface.
+ */
+const SEMANTIC_WEIGHT = 0.8
 
 // ─── helpers ────────────────────────────────────────────────
 
@@ -70,11 +85,19 @@ export function initNotesStore(notes: Note[], search: MiniSearch<SearchDoc>) {
   _search.addAll(notes.map(toSearchDoc))
   _activeNoteId.value = notes.find(n => !n.deletedAt)?.id ?? null
   _ready.value = true
+
+  const { useSemanticQuery, syncNotes } = useEmbeddings()
+  _sidebarSemanticHits = useSemanticQuery(_searchQuery).hits
+  // Backfills notes that predate semantic search, were edited elsewhere, or were
+  // embedded with a different model. Runs in the background — nothing waits on it.
+  void syncNotes(notes)
 }
 
 // ─── composable ─────────────────────────────────────────────
 
 export function useNotes() {
+  const { queueNote, forgetNote, reset: resetEmbeddings, syncNotes } = useEmbeddings()
+
   const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt))
   const trashedNotes = computed(() => _notes.value.filter(n => n.deletedAt !== null))
   const sharedNotes = computed(() => activeNotes.value.filter(note =>
@@ -97,8 +120,7 @@ export function useNotes() {
 
   const filteredNotes = computed(() => {
     if (_searchQuery.value.trim() && _search) {
-      const hits = _search.search(_searchQuery.value)
-      return hits.map(h => notesById.value.get(String(h.id))).filter(Boolean) as Note[]
+      return searchNotes(_searchQuery.value, [], _sidebarSemanticHits.value)
     }
     const pool = _showTrash.value
       ? trashedNotes.value
@@ -137,6 +159,7 @@ export function useNotes() {
     _searchQuery.value = ''
     _autoFocus.value = true
     _search?.add(toSearchDoc(note))
+    queueNote(note)
   }
 
   async function updateNote(id: string, content: string) {
@@ -155,23 +178,52 @@ export function useNotes() {
       if (_search.has(id)) _search.discard(id)
       _search.add(toSearchDoc(updated))
     }
+    queueNote(updated)
   }
 
-  function searchNotes(query: string, filterTags: string[] = []): Note[] {
-    let pool: Note[]
-    if (query.trim() && _search) {
-      const hits = _search.search(query, {
-        filter: result => filterTags.length === 0
-          || filterTags.every(t => (result.tags as string[] | undefined)?.includes(t))
-      })
-      pool = hits.map(h => notesById.value.get(String(h.id))).filter(Boolean) as Note[]
-    } else {
-      pool = activeNotes.value
+  /**
+   * Keyword search, optionally fused with semantic hits for the same query.
+   *
+   * `semanticHits` comes from `useEmbeddings().useSemanticQuery()`, which resolves
+   * asynchronously — passing an empty list (or none at all) simply yields the
+   * keyword ranking, so callers never have to wait on the encoder.
+   */
+  function searchNotes(query: string, filterTags: string[] = [], semanticHits: ScoredId[] = []): Note[] {
+    if (!query.trim() || !_search) {
+      let pool = activeNotes.value
       if (filterTags.length > 0) {
         pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
       }
+      return pool
     }
-    return pool
+
+    const matchesTags = (note: Note) =>
+      filterTags.length === 0 || filterTags.every(t => note.tags.includes(t))
+
+    const lexicalIds = _search.search(query, {
+      filter: result => filterTags.length === 0
+        || filterTags.every(t => (result.tags as string[] | undefined)?.includes(t))
+    }).map(hit => String(hit.id))
+
+    if (semanticHits.length === 0) {
+      return lexicalIds.map(id => notesById.value.get(id)).filter(Boolean) as Note[]
+    }
+
+    // The vector index only covers live notes, so semantic hits are filtered
+    // against the same tag selection the keyword query already honours.
+    const semanticIds = semanticHits
+      .map(hit => hit.id)
+      .filter((id) => {
+        const note = notesById.value.get(id)
+        return Boolean(note) && matchesTags(note!)
+      })
+
+    return reciprocalRankFusion([
+      { ids: lexicalIds, weight: 1 },
+      { ids: semanticIds, weight: SEMANTIC_WEIGHT }
+    ])
+      .map(hit => notesById.value.get(hit.id))
+      .filter(Boolean) as Note[]
   }
 
   async function updateSharing(id: string, isPublic: boolean, publicUntil: number | null): Promise<Note> {
@@ -204,9 +256,12 @@ export function useNotes() {
           _search.add(toSearchDoc(res.note))
         }
       }
+      // Trashed notes drop out of the vector index; restoring re-embeds them.
+      forgetNote(id)
     } else {
       _notes.value = _notes.value.filter(n => n.id !== id)
       if (_search?.has(id)) _search.discard(id)
+      forgetNote(id)
       if (_activeNoteId.value === id) {
         _activeNoteId.value = activeNotes.value[0]?.id ?? null
       }
@@ -224,6 +279,7 @@ export function useNotes() {
         if (_search.has(id)) _search.discard(id)
         _search.add(toSearchDoc(restored))
       }
+      queueNote(restored)
     }
   }
 
@@ -247,6 +303,10 @@ export function useNotes() {
     _searchQuery.value = ''
     _showTrash.value = false
     _showShared.value = false
+
+    // Vectors are per workspace, so the index is rebuilt rather than merged.
+    resetEmbeddings()
+    void syncNotes(freshNotes)
   }
 
   return {

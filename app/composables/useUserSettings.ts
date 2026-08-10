@@ -27,6 +27,7 @@ interface AppSettings {
   openrouterApiKey: string | null
   openrouterApiKeyMasked: string | null
   openrouterModel: string
+  semanticSearchEnabled: boolean
 }
 
 const DEFAULT_MODEL = 'openai/gpt-4o-mini'
@@ -36,6 +37,7 @@ const _neutralColor = ref<NeutralColor>('zinc')
 const _openrouterApiKey = ref<string | null>(null)
 const _openrouterApiKeyMasked = ref<string | null>(null)
 const _openrouterModel = ref<string>(DEFAULT_MODEL)
+const _semanticSearchEnabled = ref(true)
 
 export async function loadUserSettings() {
   try {
@@ -45,6 +47,7 @@ export async function loadUserSettings() {
     _openrouterApiKey.value = data.openrouterApiKey
     _openrouterApiKeyMasked.value = data.openrouterApiKeyMasked
     _openrouterModel.value = data.openrouterModel || DEFAULT_MODEL
+    _semanticSearchEnabled.value = data.semanticSearchEnabled !== false
     applyColors(data.primaryColor, data.neutralColor)
   } catch {
     // Not authenticated yet — silently skip
@@ -101,18 +104,38 @@ export function useUserSettings() {
     })
   }
 
+  async function setSemanticSearchEnabled(enabled: boolean) {
+    const previous = _semanticSearchEnabled.value
+    _semanticSearchEnabled.value = enabled
+    try {
+      await $fetch('/api/settings', {
+        method: 'PUT',
+        body: {
+          primaryColor: _primaryColor.value,
+          neutralColor: _neutralColor.value,
+          semanticSearchEnabled: enabled
+        }
+      })
+    } catch (error) {
+      _semanticSearchEnabled.value = previous
+      throw error
+    }
+  }
+
   return {
     primaryColor: _primaryColor,
     neutralColor: _neutralColor,
     openrouterApiKey: _openrouterApiKey,
     openrouterApiKeyMasked: _openrouterApiKeyMasked,
     openrouterModel: _openrouterModel,
+    semanticSearchEnabled: _semanticSearchEnabled,
     PRIMARY_COLORS,
     NEUTRAL_COLORS,
     POPULAR_OPENROUTER_MODELS,
     setPrimaryColor,
     setNeutralColor,
     setOpenRouterApiKey,
-    setOpenRouterModel
+    setOpenRouterModel,
+    setSemanticSearchEnabled
   }
 }

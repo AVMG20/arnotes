@@ -5,6 +5,7 @@ import { join } from 'path'
 import { unlinkSync } from 'fs'
 import type { NewNote } from '../../db/schema'
 import { getNoteAccessFilter } from '../../utils/auth-helpers'
+import { NOTE_COLUMNS } from '../../utils/note-columns'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -45,7 +46,7 @@ export default defineEventHandler(async (event) => {
       updatedAt: Date.now()
     })
     .where(accessCondition)
-    .returning()
+    .returning(NOTE_COLUMNS)
 
   if (!updated) throw createError({ statusCode: 404, message: 'Note not found' })
   return updated

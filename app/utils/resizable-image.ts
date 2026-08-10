@@ -1,4 +1,5 @@
 import Image from '@tiptap/extension-image'
+import type { NodeViewRenderer } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import ImageView from '~/components/ImageView.vue'
 
@@ -48,7 +49,9 @@ export const ResizableImage = Image.extend({
     }
   },
 
-  addNodeView() {
+  // Annotated explicitly: without it the node view's type refers back to this
+  // extension and TypeScript gives up on inferring either (TS7022/TS7023).
+  addNodeView(): NodeViewRenderer {
     return VueNodeViewRenderer(ImageView)
   }
 })

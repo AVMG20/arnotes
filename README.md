@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-34d399.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-34d399.svg)](https://github.com/AVMG20/arnotes/releases)
 
-Arnotes is a fast, self-hosted note-taking app organized around inline tags. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, and optional AI writing tools through OpenRouter.
+Arnotes is a fast, self-hosted note-taking app organized around inline tags. It includes a rich-text editor, full-text and semantic search, attachments, expiring public links, an installable PWA, and optional AI writing tools through OpenRouter.
 
 ![Arnotes editor](public/screenshot.png)
 
@@ -15,6 +15,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags. It 
 - Organize notes by typing `#tags` directly in the editor
 - Rich editing with headings, tables, tasks, code blocks, highlighting, and images
 - Search across titles, content, and tags
+- Optional semantic search that also finds notes by meaning, running entirely in your browser
 - Markdown import and export
 - Soft deletion and trash recovery
 - Private notes with optional expiring public links
@@ -109,6 +110,8 @@ Only expose the application through the reverse proxy. PostgreSQL is bound to `1
 | `NUXT_PUBLIC_GITHUB_ENABLED` | `false` | Show and enable GitHub OAuth sign-in |
 | `GITHUB_CLIENT_ID` | empty | GitHub application client ID |
 | `GITHUB_CLIENT_SECRET` | empty | GitHub application client secret |
+| `NUXT_PUBLIC_EMBEDDINGS_ENABLED` | `true` | Enable semantic search for the instance |
+| `NUXT_PUBLIC_EMBEDDING_MODEL` | `Xenova/multilingual-e5-base` | Embedding model browsers download |
 
 To enable Discord, set all three Discord variables and register this redirect URL in the Discord developer portal:
 
@@ -125,6 +128,49 @@ https://notes.example.com/api/auth/callback/github
 The `NUXT_PUBLIC_*_ENABLED` switches are used by both the server and client, so the same configuration works with native development and Docker Compose.
 
 OpenRouter credentials are entered per user under Settings and are not server environment variables.
+
+### Semantic Search
+
+Keyword search only finds the words you typed. Semantic search also finds notes
+that mean the same thing — searching `begroting` surfaces a note about a
+*quarterly budget*, and `bicycle repair` surfaces a note about a *lekke
+fietsband*.
+
+It runs entirely in the browser. There is no embedding server, no API key, and no
+note text leaves the instance:
+
+1. A sentence encoder is downloaded once from the Hugging Face CDN and cached by
+   the browser. Inference runs in a Web Worker on WebAssembly, so indexing never
+   blocks typing. The WebAssembly runtime itself is served by your own instance
+   from `/ort`, not from a third-party CDN.
+2. Saving a note produces a vector, which is stored on the note row. Notes are
+   therefore embedded once rather than once per device or session.
+3. Opening the app compares each note against its stored vector and re-embeds
+   anything that is missing or out of date — notes from before this feature
+   existed, notes edited on another device, and every note after a model change.
+4. Searching embeds the query and merges the vector ranking with the MiniSearch
+   keyword ranking using Reciprocal Rank Fusion, weighted so exact keyword matches
+   stay on top.
+
+All available models are multilingual, because notes are commonly a mix of
+languages and English-only encoders rank non-English text close to randomly:
+
+| `NUXT_PUBLIC_EMBEDDING_MODEL` | Dimensions | Download |
+| --- | --- | --- |
+| `Xenova/multilingual-e5-base` (default) | 768 | ~279 MB |
+| `Xenova/multilingual-e5-small` | 384 | ~118 MB |
+| `Xenova/multilingual-e5-large` | 1024 | ~562 MB |
+| `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~118 MB |
+
+The WebAssembly runtime is copied out of `onnxruntime-web` at build time and
+served from `/ort`, which adds about 24 MB to the built image. Only browsers that
+actually use semantic search download it.
+
+Changing the model invalidates every stored vector, and the next visit re-indexes
+in the background. Set `NUXT_PUBLIC_EMBEDDINGS_ENABLED=false` to turn the feature
+off for everyone, or use the toggle under **Settings → Search** to turn it off for
+one account. With it off, nothing is downloaded and search behaves exactly as it
+did before.
 
 ### Persistent Data
 
@@ -202,6 +248,7 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 - Better Auth handles email/password sessions and optional Discord and GitHub OAuth.
 - Drizzle ORM and PostgreSQL store application data.
 - Uploaded files are stored under `data/attachments` and mounted as a Docker volume.
+- MiniSearch handles keyword search; Transformers.js runs the embedding model in a Web Worker for semantic search.
 - OpenRouter powers optional user-configured AI actions.
 
 ## Marketing Site

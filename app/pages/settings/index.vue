@@ -9,7 +9,7 @@ const router = useRouter()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
 const { notes, activeNotes, allTags, activeNoteId } = useNotes()
-const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor, openrouterApiKeyMasked, openrouterModel, POPULAR_OPENROUTER_MODELS, setOpenRouterApiKey, setOpenRouterModel } = useUserSettings()
+const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor, openrouterApiKeyMasked, openrouterModel, POPULAR_OPENROUTER_MODELS, setOpenRouterApiKey, setOpenRouterModel, semanticSearchEnabled, setSemanticSearchEnabled } = useUserSettings()
 const { sidebarOpen } = useSidebar()
 
 const toast = useToast()
@@ -121,6 +121,60 @@ async function changeModel(model: string) {
 }
 
 const openrouterDocsUrl = 'https://openrouter.ai/keys'
+
+// ─── Semantic search ─────────────────────────────────────────
+const runtimeConfig = useRuntimeConfig()
+const {
+  model: embeddingModel,
+  status: embeddingStatus,
+  error: embeddingError,
+  download: embeddingDownload,
+  pending: embeddingPending,
+  indexedCount
+} = useEmbeddings()
+
+// The instance switch wins: when the deployment has embeddings off there is
+// nothing for the account preference to turn on.
+const embeddingsAvailable = computed(() => runtimeConfig.public.embeddingsEnabled !== false)
+const semanticSaving = ref(false)
+
+const embeddingStatusLabel = computed(() => {
+  if (!embeddingsAvailable.value) return 'Disabled for this instance'
+  if (!semanticSearchEnabled.value) return 'Off'
+  switch (embeddingStatus.value) {
+    case 'loading-model':
+      return embeddingDownload.value
+        ? `Downloading model — ${Math.round(embeddingDownload.value.progress)}%`
+        : 'Loading model…'
+    case 'indexing':
+      return `Indexing notes — ${embeddingPending.value} left`
+    case 'error':
+      return embeddingError.value ?? 'Something went wrong'
+    case 'ready':
+      return 'Ready'
+    default:
+      return 'Idle'
+  }
+})
+
+async function toggleSemanticSearch(enabled: boolean) {
+  semanticSaving.value = true
+  try {
+    await setSemanticSearchEnabled(enabled)
+    toast.add({
+      title: enabled ? 'Semantic search enabled' : 'Semantic search disabled',
+      description: enabled
+        ? `Notes are indexed in your browser with ${embeddingModel.value.label}.`
+        : 'Search falls back to keywords only. Stored vectors are kept.',
+      icon: enabled ? 'i-lucide-sparkles' : 'i-lucide-power-off',
+      duration: 3000
+    })
+  } catch (e) {
+    toast.add({ title: 'Could not change the setting', description: errMsg(e), icon: 'i-lucide-alert-triangle', color: 'error' })
+  } finally {
+    semanticSaving.value = false
+  }
+}
 
 // Clear so clicking any note (including the already-active one) triggers navigation
 activeNoteId.value = null
@@ -438,6 +492,84 @@ function swatchStyle(color: string, selected: boolean) {
                     />
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Search -->
+          <div class="rounded-xl border border-default bg-default overflow-hidden">
+            <div class="px-5 py-3 border-b border-default bg-elevated/40 flex items-center gap-2">
+              <UIcon
+                name="i-lucide-search"
+                class="size-4 text-primary"
+              />
+              <span class="text-xs font-semibold text-muted uppercase tracking-wider">Search</span>
+            </div>
+
+            <div class="px-5 py-4 space-y-3">
+              <div class="flex items-center gap-4">
+                <div class="size-8 rounded-lg bg-elevated flex items-center justify-center shrink-0">
+                  <UIcon
+                    name="i-lucide-brain"
+                    class="size-4 text-default"
+                  />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium">
+                    Semantic search
+                  </p>
+                  <p class="text-xs text-muted mt-0.5">
+                    Also finds notes that match what you meant, not just the words you typed.
+                  </p>
+                </div>
+                <USwitch
+                  :model-value="embeddingsAvailable && semanticSearchEnabled"
+                  :disabled="!embeddingsAvailable || semanticSaving"
+                  class="shrink-0"
+                  aria-label="Toggle semantic search"
+                  @update:model-value="toggleSemanticSearch"
+                />
+              </div>
+
+              <div class="pl-12 space-y-2">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                  <span class="flex items-center gap-1.5">
+                    <span
+                      class="size-1.5 rounded-full"
+                      :class="embeddingStatus === 'error'
+                        ? 'bg-error'
+                        : embeddingStatus === 'ready' ? 'bg-primary' : 'bg-muted'"
+                    />
+                    {{ embeddingStatusLabel }}
+                  </span>
+                  <span v-if="embeddingsAvailable && semanticSearchEnabled">
+                    {{ indexedCount }} of {{ totalNotes }} notes indexed
+                  </span>
+                </div>
+
+                <UProgress
+                  v-if="embeddingStatus === 'loading-model' && embeddingDownload"
+                  :model-value="embeddingDownload.progress"
+                  size="sm"
+                />
+
+                <p
+                  v-if="embeddingsAvailable"
+                  class="text-xs text-muted"
+                >
+                  Runs entirely in your browser with
+                  <code class="font-mono">{{ embeddingModel.label }}</code>
+                  ({{ embeddingModel.approxDownloadMb }} MB, downloaded once and cached).
+                  {{ embeddingModel.description }}
+                  Nothing is sent to a third party, and the resulting vectors are stored with your notes
+                  so each note is only indexed once.
+                </p>
+                <p
+                  v-else
+                  class="text-xs text-muted"
+                >
+                  This instance was started with <code class="font-mono">NUXT_PUBLIC_EMBEDDINGS_ENABLED=false</code>.
+                </p>
               </div>
             </div>
           </div>
