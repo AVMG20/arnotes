@@ -99,15 +99,13 @@ export const notes = pgTable(
     attachments: json('attachments').$type<string[]>().notNull().default([]),
     isPublic: boolean('is_public').notNull().default(false),
     publicUntil: bigint('public_until', { mode: 'number' }),
-    // Semantic search vector, produced in the browser. Stored as base64 of a
+    // Semantic search vector, produced by the server. Stored as base64 of a
     // little-endian Float32Array rather than JSON so a 768-dimension vector costs
     // ~4 KB instead of ~16 KB. NULL means the note has not been embedded yet.
     embedding: text('embedding'),
-    // The model that produced `embedding`. Vectors from different models are not
-    // comparable, so a mismatch with the active model forces a re-embed.
-    embeddingModel: text('embedding_model'),
-    // Fingerprint of the exact text that was embedded. Lets the client skip notes
-    // whose content has not changed since the last embed.
+    // Fingerprint of the exact text that was embedded, with the model id folded
+    // in. Lets both sides skip notes whose content has not changed, and makes a
+    // change of model a self-healing re-index rather than a migration.
     embeddingHash: text('embedding_hash'),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
@@ -127,8 +125,10 @@ export const userSettings = pgTable('user_settings', {
   neutralColor: text('neutral_color').notNull().default('zinc'),
   openrouterApiKey: text('openrouter_api_key'),
   openrouterModel: text('openrouter_model').notNull().default('openai/gpt-4o-mini'),
-  // Opts this account out of both embedding generation and semantic search. The
-  // instance-wide NUXT_PUBLIC_EMBEDDINGS_ENABLED switch overrides it when off.
+  // Opts this account out of semantic search: its searches stay keyword-only and
+  // it never loads the vector index. Vectors are still maintained server-side,
+  // since notes can be shared with a team whose other members use the feature.
+  // The instance-wide NUXT_PUBLIC_EMBEDDINGS_ENABLED switch overrides it when off.
   semanticSearchEnabled: boolean('semantic_search_enabled').notNull().default(true),
   updatedAt: timestamp('updated_at').notNull()
 })
@@ -158,14 +158,6 @@ export const AI_SETTINGS_DEFAULTS = {
   openrouterModel: 'openai/gpt-4o-mini',
   semanticSearchEnabled: true
 } as const
-
-// Guards the embeddings endpoints against oversized payloads. 4096 dimensions is
-// far above any browser-sized embedding model, so anything larger is a bad client.
-export const MAX_EMBEDDING_DIMENSIONS = 4096
-
-// Notes are embedded in the background, so batches stay small enough that a slow
-// write never blocks the rest of the queue.
-export const MAX_EMBEDDING_BATCH = 32
 
 export const POPULAR_OPENROUTER_MODELS = [
   'openai/gpt-4o-mini',

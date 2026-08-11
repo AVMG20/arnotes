@@ -15,7 +15,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags. It 
 - Organize notes by typing `#tags` directly in the editor
 - Rich editing with headings, tables, tasks, code blocks, highlighting, and images
 - Search across titles, content, and tags
-- Optional semantic search that also finds notes by meaning, running entirely in your browser
+- Optional semantic search that also finds notes by meaning, running on your own server
 - Markdown import and export
 - Soft deletion and trash recovery
 - Private notes with optional expiring public links
@@ -111,7 +111,7 @@ Only expose the application through the reverse proxy. PostgreSQL is bound to `1
 | `GITHUB_CLIENT_ID` | empty | GitHub application client ID |
 | `GITHUB_CLIENT_SECRET` | empty | GitHub application client secret |
 | `NUXT_PUBLIC_EMBEDDINGS_ENABLED` | `true` | Enable semantic search for the instance |
-| `NUXT_PUBLIC_EMBEDDING_MODEL` | `Xenova/multilingual-e5-base` | Embedding model browsers download |
+| `EMBEDDING_CACHE_DIR` | `./data/models` | Where the embedding model weights are cached |
 
 To enable Discord, set all three Discord variables and register this redirect URL in the Discord developer portal:
 
@@ -136,41 +136,36 @@ that mean the same thing — searching `begroting` surfaces a note about a
 *quarterly budget*, and `bicycle repair` surfaces a note about a *lekke
 fietsband*.
 
-It runs entirely in the browser. There is no embedding server, no API key, and no
-note text leaves the instance:
+It runs on your own instance. There is no third-party embedding service, no API
+key, and no note text leaves the server:
 
-1. A sentence encoder is downloaded once from the Hugging Face CDN and cached by
-   the browser. Inference runs in a Web Worker on WebAssembly, so indexing never
-   blocks typing. The WebAssembly runtime itself is served by your own instance
-   from `/ort`, not from a third-party CDN.
-2. Saving a note produces a vector, which is stored on the note row. Notes are
-   therefore embedded once rather than once per device or session.
-3. Opening the app compares each note against its stored vector and re-embeds
-   anything that is missing or out of date — notes from before this feature
-   existed, notes edited on another device, and every note after a model change.
-4. Searching embeds the query and merges the vector ranking with the MiniSearch
-   keyword ranking using Reciprocal Rank Fusion, weighted so exact keyword matches
-   stay on top.
+1. The sentence encoder — [Multilingual E5
+   base](https://huggingface.co/Xenova/multilingual-e5-base), 768 dimensions —
+   is downloaded once from the Hugging Face CDN into `EMBEDDING_CACHE_DIR` and
+   loaded lazily, the first time something is actually embedded.
+2. Saving a note queues it for embedding in the background. The save itself never
+   waits on the encoder, and a failed embed never fails a save.
+3. On startup the server compares every note against its stored vector and
+   re-embeds anything missing or out of date, so notes written before this
+   feature existed are picked up without any action.
+4. Searching sends only the query text to the server, which returns its vector.
+   The browser ranks its own copy of the note vectors and merges that with the
+   MiniSearch keyword ranking using Reciprocal Rank Fusion, weighted so exact
+   keyword matches stay on top.
 
-All available models are multilingual, because notes are commonly a mix of
-languages and English-only encoders rank non-English text close to randomly:
+The model is multilingual because notes are commonly a mix of languages and
+English-only encoders rank non-English text close to randomly. There is
+deliberately no choice of model: vectors from different model families are not
+comparable, so the option only bought a re-index.
 
-| `NUXT_PUBLIC_EMBEDDING_MODEL` | Dimensions | Download |
-| --- | --- | --- |
-| `Xenova/multilingual-e5-base` (default) | 768 | ~279 MB |
-| `Xenova/multilingual-e5-small` | 384 | ~118 MB |
-| `Xenova/multilingual-e5-large` | 1024 | ~562 MB |
-| `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~118 MB |
+Running the encoder server-side costs the host roughly 400–600 MB of resident
+memory once loaded, plus ~280 MB of disk for the weights. In exchange, browsers
+download nothing, phones can use the feature at all, and the app's memory
+footprint in the tab stays where it was.
 
-The WebAssembly runtime is copied out of `onnxruntime-web` at build time and
-served from `/ort`, which adds about 24 MB to the built image. Only browsers that
-actually use semantic search download it.
-
-Changing the model invalidates every stored vector, and the next visit re-indexes
-in the background. Set `NUXT_PUBLIC_EMBEDDINGS_ENABLED=false` to turn the feature
-off for everyone, or use the toggle under **Settings → Search** to turn it off for
-one account. With it off, nothing is downloaded and search behaves exactly as it
-did before.
+Set `NUXT_PUBLIC_EMBEDDINGS_ENABLED=false` to turn the feature off for everyone —
+the model is then never loaded — or use the toggle under **Settings → Search** to
+turn it off for one account. With it off, search behaves exactly as it did before.
 
 ### Persistent Data
 

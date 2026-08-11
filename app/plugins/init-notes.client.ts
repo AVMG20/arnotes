@@ -7,9 +7,9 @@ type SearchDoc = Note & { tagsText: string, contentText: string }
 
 export default defineNuxtPlugin({
   name: 'notes-store',
-  // Semantic search is opt-out per account, and `initNotesStore` kicks off the
-  // embedding backfill. Waiting for settings avoids downloading a few hundred
-  // megabytes of model for a user who has the feature switched off.
+  // Semantic search is opt-out per account, and `initNotesStore` loads the vector
+  // index. Waiting for settings avoids pulling several kilobytes per note down
+  // for a user who has the feature switched off.
   dependsOn: ['user-settings'],
 
   async setup() {

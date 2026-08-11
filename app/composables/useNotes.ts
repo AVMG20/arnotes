@@ -1,6 +1,6 @@
 import { computed, ref, shallowRef, type Ref } from 'vue'
 import type MiniSearch from 'minisearch'
-import { reciprocalRankFusion, type ScoredId } from '~/utils/embedding'
+import { reciprocalRankFusion, type ScoredId } from '#shared/utils/embedding'
 
 export interface Note {
   id: string
@@ -88,8 +88,8 @@ export function initNotesStore(notes: Note[], search: MiniSearch<SearchDoc>) {
 
   const { useSemanticQuery, syncNotes } = useEmbeddings()
   _sidebarSemanticHits = useSemanticQuery(_searchQuery).hits
-  // Backfills notes that predate semantic search, were edited elsewhere, or were
-  // embedded with a different model. Runs in the background — nothing waits on it.
+  // Pulls in the vectors the server holds for these notes, and starts watching for
+  // any it still owes. Runs in the background — nothing waits on it.
   void syncNotes(notes)
 }
 

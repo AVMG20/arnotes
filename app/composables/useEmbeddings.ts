@@ -1,30 +1,31 @@
 import { computed, effectScope, ref, shallowRef, watch, type Ref } from 'vue'
 import {
   decodeVector,
-  embeddingHash,
-  encodeVector,
-  noteEmbeddingText,
+  noteEmbeddingHash,
   similarity,
   type ScoredId
-} from '~/utils/embedding'
-import { resolveEmbeddingModel } from '~/utils/embedding-models'
-import type { EmbedderRequest, EmbedderResponse } from '~/workers/embedder.worker'
+} from '#shared/utils/embedding'
+import { EMBEDDING_MIN_SCORE, EMBEDDING_MODEL_LABEL, EMBEDDING_RANK_BAND } from '#shared/utils/embedding-model'
 import type { Note } from '~/composables/useNotes'
 
 /**
- * Client-side semantic index.
+ * The client half of semantic search.
  *
- * Vectors are produced in the browser by `workers/embedder.worker.ts` and stored
- * on the note row, so a note is embedded once and reused across devices and
- * sessions. This module owns the worker, the in-memory index and the queue that
- * keeps the two in sync; it never reads the note store directly, so `useNotes`
- * stays the single owner of note state.
+ * The encoder itself runs on the server (`server/utils/embedder.ts`), which also
+ * writes a vector for every note as it is saved. This module holds those vectors
+ * in memory and does the ranking: a cosine over a few thousand 768-dimension
+ * vectors is a millisecond of work, so keeping it here means search reacts to
+ * keystrokes without a request per keystroke. The only thing it asks the server
+ * for is the vector of the query itself.
+ *
+ * Nothing here downloads or runs a model. An earlier version did, and the tab
+ * grew from ~200 MB to ~1.3 GB for the privilege.
  */
 
 export type EmbeddingStatus
   = | 'disabled'
     | 'idle'
-    | 'loading-model'
+    /** The server still owes vectors for some notes. */
     | 'indexing'
     | 'ready'
     | 'error'
@@ -34,18 +35,21 @@ interface IndexedVector {
   hash: string
 }
 
-/** Notes handed to the worker per round trip. */
-const EMBED_BATCH = 8
 /** How many semantic hits are fused into the keyword ranking. */
 const SEMANTIC_LIMIT = 30
 /** Query embeddings are cheap to keep and users retype the same searches. */
 const QUERY_CACHE_SIZE = 32
+/** Above this, asking for specific ids costs more than refetching the lot. */
+const MAX_ID_REFRESH = 100
+/** Poll schedule while waiting on the server to catch up, in milliseconds. */
+const REFRESH_BACKOFF = [1500, 3000, 6000, 12000, 30000]
+/** Fruitless polls before giving up until something changes. Roughly two minutes. */
+const MAX_REFRESH_ATTEMPTS = 8
 
 // ─── Module-level singleton state ───────────────────────────
 
 const _status = ref<EmbeddingStatus>('idle')
 const _error = ref<string | null>(null)
-const _download = ref<{ file: string, progress: number } | null>(null)
 const _pending = ref(0)
 const _indexedCount = ref(0)
 /** Bumped whenever the index changes so search computeds re-evaluate. */
@@ -54,14 +58,18 @@ const _version = ref(0)
 const vectors = new Map<string, IndexedVector>()
 const queryCache = new Map<string, Float32Array>()
 
-let worker: Worker | null = null
-let workerReady: Promise<void> | null = null
-let requestCounter = 0
-const inflight = new Map<number, { resolve: (v: Float32Array[]) => void, reject: (e: Error) => void }>()
+/**
+ * The hash each note's vector should have, from the note text the client is
+ * holding. A note whose entry here does not match `vectors` is one the server has
+ * not finished embedding — the same comparison the server makes, which is why the
+ * hash lives in `shared/`.
+ */
+const expected = new Map<string, string>()
 
-/** Notes waiting to be embedded, keyed by id so repeated saves collapse. */
-const queue = new Map<string, Note>()
-let draining = false
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+let refreshAttempt = 0
+/** Whether the last poll found the server still had notes queued. */
+let lastServerBusy = false
 let storedVectorsLoaded = false
 let enabledWatcherInstalled = false
 /**
@@ -76,208 +84,134 @@ function isEnabled(): boolean {
     && useUserSettings().semanticSearchEnabled.value
 }
 
-// ─── Worker plumbing ────────────────────────────────────────
-
-function activeModel() {
-  return resolveEmbeddingModel(useRuntimeConfig().public.embeddingModel)
-}
-
-/**
- * Where the ONNX runtime's WebAssembly is served from. Built from the app's base
- * URL so a deployment mounted on a sub-path still finds it. See
- * `modules/onnx-runtime.ts` for why this is self-hosted rather than left to the
- * library's CDN default.
- */
-function runtimeAssetPath(): string {
-  const base = useRuntimeConfig().app.baseURL || '/'
-  return `${base.endsWith('/') ? base : base + '/'}ort/`
-}
-
-function send(message: EmbedderRequest, transfer?: Transferable[]) {
-  worker?.postMessage(message, transfer ?? [])
-}
-
-function handleMessage(event: MessageEvent<EmbedderResponse>) {
-  const message = event.data
-  switch (message.type) {
-    case 'download':
-      _download.value = { file: message.file, progress: message.progress }
-      break
-    case 'result': {
-      inflight.get(message.requestId)?.resolve(message.vectors)
-      inflight.delete(message.requestId)
-      break
-    }
-    case 'error': {
-      inflight.get(message.requestId)?.reject(new Error(message.message))
-      inflight.delete(message.requestId)
-      break
-    }
-  }
-}
-
-/**
- * Boots the worker on first use. The model is a few hundred megabytes, so this is
- * never called speculatively — only when there is something to embed or a search
- * to answer.
- */
-function ensureWorker(): Promise<void> {
-  if (workerReady) return workerReady
-
-  const model = activeModel()
-  _status.value = 'loading-model'
-  _error.value = null
-
-  workerReady = new Promise<void>((resolve, reject) => {
-    worker = new Worker(new URL('../workers/embedder.worker.ts', import.meta.url), { type: 'module' })
-    worker.addEventListener('message', handleMessage)
-
-    const onReady = (event: MessageEvent<EmbedderResponse>) => {
-      if (event.data.type === 'ready') {
-        worker?.removeEventListener('message', onReady)
-        _download.value = null
-        _status.value = 'ready'
-        resolve()
-      } else if (event.data.type === 'init-error') {
-        worker?.removeEventListener('message', onReady)
-        reject(new Error(event.data.message))
-      }
-    }
-    worker.addEventListener('message', onReady)
-    worker.addEventListener('error', event => reject(new Error(event.message || 'Embedding worker failed to start')))
-
-    send({ type: 'init', model: model.id, dtype: model.dtype, wasmPaths: runtimeAssetPath() })
-  }).catch((error: Error) => {
-    _status.value = 'error'
-    _error.value = error.message
-    teardownWorker()
-    throw error
-  })
-
-  return workerReady
-}
-
-function teardownWorker() {
-  worker?.terminate()
-  worker = null
-  workerReady = null
-  for (const { reject } of inflight.values()) reject(new Error('Embedding worker stopped'))
-  inflight.clear()
-}
-
-async function runEmbed(texts: string[], prefix: string): Promise<Float32Array[]> {
-  await ensureWorker()
-  const requestId = ++requestCounter
-  return new Promise<Float32Array[]>((resolve, reject) => {
-    inflight.set(requestId, { resolve, reject })
-    send({ type: 'embed', requestId, texts, prefix })
-  })
-}
-
 // ─── Persistence ────────────────────────────────────────────
 
 interface StoredEmbedding {
   id: string
   embedding: string | null
-  model: string | null
   hash: string | null
 }
 
+interface EmbeddingsResponse {
+  items: StoredEmbedding[]
+  /** Notes the server still has queued, across the whole instance. */
+  pending: number
+}
+
 /**
- * Pulls previously stored vectors into memory. Vectors written by a different
- * model are dropped rather than trusted — cosine between two model families is
- * meaningless — which also makes switching models a self-healing re-index.
+ * Folds fetched vectors into the index. Returns how many actually changed, so a
+ * poll that came back with the same vectors it already had is not mistaken for
+ * progress.
  */
+function ingest(items: StoredEmbedding[]): number {
+  let changed = 0
+  for (const row of items) {
+    if (!row.embedding || !row.hash) continue
+    if (vectors.get(row.id)?.hash === row.hash) continue
+    try {
+      vectors.set(row.id, { vector: decodeVector(row.embedding), hash: row.hash })
+      changed++
+    } catch {
+      // A corrupt vector just means this note stays unranked until it is rewritten.
+    }
+  }
+
+  if (changed > 0) {
+    _indexedCount.value = vectors.size
+    _version.value++
+  }
+  return changed
+}
+
+/** Ids whose stored vector is older than the note text the client is showing. */
+function staleIds(): string[] {
+  const stale: string[] = []
+  for (const [id, hash] of expected) {
+    if (vectors.get(id)?.hash !== hash) stale.push(id)
+  }
+  return stale
+}
+
+function updatePending() {
+  _pending.value = staleIds().length
+  if (_status.value !== 'error') _status.value = _pending.value > 0 ? 'indexing' : 'ready'
+}
+
+async function fetchVectors(ids?: string[]): Promise<{ changed: number, serverBusy: boolean }> {
+  const query = ids && ids.length > 0 && ids.length <= MAX_ID_REFRESH
+    ? `?ids=${ids.map(encodeURIComponent).join(',')}`
+    : ''
+  try {
+    const response = await $fetch<EmbeddingsResponse>(`/api/embeddings${query}`)
+    return { changed: ingest(response.items), serverBusy: response.pending > 0 }
+  } catch {
+    return { changed: 0, serverBusy: false }
+  }
+}
+
 async function loadStoredVectors() {
   if (storedVectorsLoaded) return
   storedVectorsLoaded = true
+  await fetchVectors()
+}
 
-  const model = activeModel()
-  let stored: StoredEmbedding[] = []
-  try {
-    stored = await $fetch<StoredEmbedding[]>('/api/embeddings')
-  } catch {
+// ─── Waiting on the server ──────────────────────────────────
+
+/**
+ * Polls for vectors the server has not written yet.
+ *
+ * A note is embedded a moment after it is saved, and nothing pushes that back to
+ * the client, so the index would otherwise stay stale until the next reload. The
+ * interval backs off because the common case is one note finishing in a second or
+ * two and the uncommon case is a first-run backfill of the whole library, which
+ * should not be polled at a fixed short interval for minutes on end.
+ *
+ * Polling stops after `MAX_REFRESH_ATTEMPTS` fruitless rounds. At that point the
+ * server is either still chewing through a large backfill or has given up on
+ * these notes, and neither is worth a request every thirty seconds for the rest
+ * of the session — the next save, or the next reload, starts it again.
+ */
+function scheduleRefresh(immediate = false) {
+  if (!isEnabled() || refreshTimer) return
+  // A server that still reports queued work is worth waiting on, however long a
+  // first-run backfill takes; the interval has already backed off to its cap.
+  if (refreshAttempt >= MAX_REFRESH_ATTEMPTS && !lastServerBusy) return
+
+  const stale = staleIds()
+  if (stale.length === 0) {
+    refreshAttempt = 0
     return
   }
 
-  for (const row of stored) {
-    if (!row.embedding || !row.hash || row.model !== model.id) continue
-    try {
-      vectors.set(row.id, { vector: decodeVector(row.embedding), hash: row.hash })
-    } catch {
-      // A corrupt vector just means this note gets re-embedded.
-    }
-  }
-  _indexedCount.value = vectors.size
-  _version.value++
+  const delay = immediate ? 0 : REFRESH_BACKOFF[Math.min(refreshAttempt, REFRESH_BACKOFF.length - 1)]!
+  refreshTimer = setTimeout(async () => {
+    refreshTimer = null
+    if (!isEnabled()) return
+
+    // No new vectors means the server is still working, so wait longer next time.
+    const { changed, serverBusy } = await fetchVectors(stale)
+    refreshAttempt = changed > 0 ? 0 : refreshAttempt + 1
+    lastServerBusy = serverBusy
+
+    updatePending()
+    scheduleRefresh()
+  }, delay)
 }
 
-async function persist(items: Array<{ id: string, embedding: string, model: string, hash: string }>) {
-  if (items.length === 0) return
-  await $fetch('/api/embeddings', { method: 'PUT', body: { items } })
-}
-
-// ─── Queue ──────────────────────────────────────────────────
-
-/**
- * Embeds queued notes a batch at a time and writes the vectors back. Runs as a
- * single background drain so a large backfill never floods the worker or the API.
- */
-async function drain() {
-  if (draining) return
-  draining = true
-  const model = activeModel()
-
-  try {
-    while (queue.size > 0) {
-      const batch = [...queue.values()].slice(0, EMBED_BATCH)
-      _status.value = 'indexing'
-
-      const texts = batch.map(note => noteEmbeddingText(note))
-      let produced: Float32Array[]
-      try {
-        produced = await runEmbed(texts, model.passagePrefix)
-      } catch (error) {
-        // Leave the queue intact: the notes are retried on the next app load.
-        _status.value = 'error'
-        _error.value = error instanceof Error ? error.message : String(error)
-        return
-      }
-
-      const toPersist: Array<{ id: string, embedding: string, model: string, hash: string }> = []
-      batch.forEach((note, index) => {
-        const vector = produced[index]
-        queue.delete(note.id)
-        if (!vector || vector.length === 0) return
-
-        const hash = embeddingHash(texts[index]!, model.id)
-        vectors.set(note.id, { vector, hash })
-        toPersist.push({ id: note.id, embedding: encodeVector(vector), model: model.id, hash })
-      })
-
-      _indexedCount.value = vectors.size
-      _pending.value = queue.size
-      _version.value++
-
-      try {
-        await persist(toPersist)
-      } catch {
-        // The vectors are usable this session; a failed write just means the
-        // notes are embedded again next time.
-      }
-    }
-    _status.value = 'ready'
-  } finally {
-    draining = false
-  }
+function cancelRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = null
+  refreshAttempt = 0
+  lastServerBusy = false
 }
 
 // ─── Index maintenance ──────────────────────────────────────
 
 /** Clears the index, for a workspace switch or when the feature is turned off. */
 function reset() {
-  queue.clear()
+  cancelRefresh()
   vectors.clear()
+  expected.clear()
   queryCache.clear()
   storedVectorsLoaded = false
   _pending.value = 0
@@ -286,23 +220,19 @@ function reset() {
 }
 
 /**
- * Queues every note whose text no longer matches its stored vector. Covers three
- * cases with one pass: notes written before semantic search existed, notes edited
- * on another device, and a change of embedding model.
+ * Points the index at the current set of notes and pulls in whatever vectors the
+ * server already has for them.
  */
 async function syncNotes(notes: Note[]) {
   lastSyncedNotes = notes
   if (!isEnabled()) return
-  await loadStoredVectors()
 
-  const modelId = activeModel().id
+  expected.clear()
   const live = new Set<string>()
-
   for (const note of notes) {
     if (note.deletedAt) continue
     live.add(note.id)
-    const hash = embeddingHash(noteEmbeddingText(note), modelId)
-    if (vectors.get(note.id)?.hash !== hash) queue.set(note.id, note)
+    expected.set(note.id, noteEmbeddingHash(note))
   }
 
   // Drop vectors for notes that no longer exist in this workspace.
@@ -310,10 +240,9 @@ async function syncNotes(notes: Note[]) {
     if (!live.has(id)) vectors.delete(id)
   }
 
-  _indexedCount.value = vectors.size
-  _pending.value = queue.size
-  _version.value++
-  if (queue.size > 0) void drain()
+  await loadStoredVectors()
+  updatePending()
+  scheduleRefresh()
 }
 
 /**
@@ -333,11 +262,9 @@ function installEnabledWatcher() {
         void syncNotes(lastSyncedNotes)
         return
       }
-      teardownWorker()
       reset()
       _status.value = 'idle'
       _error.value = null
-      _download.value = null
     })
   })
 }
@@ -345,31 +272,36 @@ function installEnabledWatcher() {
 // ─── Public composable ──────────────────────────────────────
 
 export function useEmbeddings() {
-  const config = useRuntimeConfig()
-
   const enabled = computed(isEnabled)
-  const model = computed(() => resolveEmbeddingModel(config.public.embeddingModel))
   const status = computed<EmbeddingStatus>(() => enabled.value ? _status.value : 'disabled')
 
   installEnabledWatcher()
 
-  /** Re-embeds a single note after a save, if its text actually changed. */
+  /**
+   * Records that a note's text changed. The server embeds it as part of the save;
+   * this only starts watching for the result.
+   *
+   * The previous vector is kept in place while the new one is produced — slightly
+   * out of date beats missing from search entirely for the few seconds involved.
+   */
   function queueNote(note: Note) {
     if (!enabled.value || note.deletedAt) return
-    const hash = embeddingHash(noteEmbeddingText(note), model.value.id)
-    if (vectors.get(note.id)?.hash === hash) return
-    queue.set(note.id, note)
-    _pending.value = queue.size
-    void drain()
+    const hash = noteEmbeddingHash(note)
+    if (expected.get(note.id) === hash && vectors.get(note.id)?.hash === hash) return
+
+    expected.set(note.id, hash)
+    updatePending()
+    refreshAttempt = 0
+    scheduleRefresh(true)
   }
 
   function forgetNote(id: string) {
-    queue.delete(id)
+    expected.delete(id)
     if (vectors.delete(id)) {
       _indexedCount.value = vectors.size
       _version.value++
     }
-    _pending.value = queue.size
+    updatePending()
   }
 
   async function embedQuery(query: string): Promise<Float32Array | null> {
@@ -379,8 +311,12 @@ export function useEmbeddings() {
     const cached = queryCache.get(text)
     if (cached) return cached
 
-    const [vector] = await runEmbed([text], model.value.queryPrefix)
-    if (!vector || vector.length === 0) return null
+    const { embedding } = await $fetch<{ embedding: string }>('/api/embeddings/query', {
+      method: 'POST',
+      body: { query: text }
+    })
+    const vector = decodeVector(embedding)
+    if (vector.length === 0) return null
 
     if (queryCache.size >= QUERY_CACHE_SIZE) {
       queryCache.delete(queryCache.keys().next().value!)
@@ -392,30 +328,28 @@ export function useEmbeddings() {
   /**
    * Ranks the index against a query vector, in two stages.
    *
-   * `minScore` answers "does this library contain anything about the query at
-   * all", so a search with no answer returns nothing rather than the closest
-   * unrelated note. `rankBand` then trims the tail, because within a query that
-   * does have an answer the relevant and irrelevant scores overlap and only the
-   * distance to the best hit distinguishes them.
+   * `EMBEDDING_MIN_SCORE` answers "does this library contain anything about the
+   * query at all", so a search with no answer returns nothing rather than the
+   * closest unrelated note. `EMBEDDING_RANK_BAND` then trims the tail, because
+   * within a query that does have an answer the relevant and irrelevant scores
+   * overlap and only the distance to the best hit distinguishes them.
    */
   function rank(queryVector: Float32Array): ScoredId[] {
-    const { minScore, rankBand } = model.value
-
     const hits: ScoredId[] = []
     for (const [id, entry] of vectors) {
       const score = similarity(queryVector, entry.vector)
-      if (score >= minScore) hits.push({ id, score })
+      if (score >= EMBEDDING_MIN_SCORE) hits.push({ id, score })
     }
     if (hits.length === 0) return hits
 
     hits.sort((a, b) => b.score - a.score)
-    const cutoff = hits[0]!.score - rankBand
+    const cutoff = hits[0]!.score - EMBEDDING_RANK_BAND
     return hits.filter(hit => hit.score >= cutoff).slice(0, SEMANTIC_LIMIT)
   }
 
   /**
-   * Semantic hits for a live query box. Debounced because embedding a query costs
-   * a worker round trip, and keeps the last result visible while the next one is
+   * Semantic hits for a live query box. Debounced because embedding a query is a
+   * request to the server, and keeps the last result visible while the next one is
    * computed so results do not flicker between keystrokes.
    */
   function useSemanticQuery(query: Ref<string>, debounceMs = 250) {
@@ -441,8 +375,16 @@ export function useEmbeddings() {
           const vector = await embedQuery(text)
           if (run !== generation) return
           hits.value = vector ? rank(vector) : []
-        } catch {
-          if (run === generation) hits.value = []
+          _error.value = null
+          if (_status.value === 'error') updatePending()
+        } catch (error) {
+          // Keyword results are still on screen; this only explains why nothing
+          // was added to them.
+          if (run === generation) {
+            hits.value = []
+            _status.value = 'error'
+            _error.value = error instanceof Error ? error.message : String(error)
+          }
         } finally {
           if (run === generation) pending.value = false
         }
@@ -454,10 +396,9 @@ export function useEmbeddings() {
 
   return {
     enabled,
-    model,
+    modelLabel: EMBEDDING_MODEL_LABEL,
     status,
     error: _error,
-    download: _download,
     pending: _pending,
     indexedCount: _indexedCount,
     syncNotes,

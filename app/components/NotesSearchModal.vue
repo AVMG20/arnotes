@@ -18,11 +18,10 @@ const hasQuery = computed(() => query.value.trim().length > 0)
 const isFiltered = computed(() => hasQuery.value || selectedTags.value.length > 0)
 const results = computed(() => searchNotes(query.value, selectedTags.value, semanticHits.value).slice(0, 8))
 
-// Only worth mentioning while the first model download is in flight — after that
-// it is cached and the wait is imperceptible.
+// Explains the moment between the keyword hits appearing and the vector hits
+// landing, and why they sometimes do not.
 const semanticHint = computed(() => {
   if (!semanticEnabled.value || !hasQuery.value) return null
-  if (semanticStatus.value === 'loading-model') return 'Loading the search model…'
   if (semanticStatus.value === 'error') return 'Meaning-based search is unavailable'
   if (semanticPending.value) return 'Adding related notes…'
   if (semanticHits.value.length > 0) return 'Keyword and meaning results combined'

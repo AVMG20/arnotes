@@ -125,10 +125,9 @@ const openrouterDocsUrl = 'https://openrouter.ai/keys'
 // ─── Semantic search ─────────────────────────────────────────
 const runtimeConfig = useRuntimeConfig()
 const {
-  model: embeddingModel,
+  modelLabel: embeddingModelLabel,
   status: embeddingStatus,
   error: embeddingError,
-  download: embeddingDownload,
   pending: embeddingPending,
   indexedCount
 } = useEmbeddings()
@@ -142,10 +141,6 @@ const embeddingStatusLabel = computed(() => {
   if (!embeddingsAvailable.value) return 'Disabled for this instance'
   if (!semanticSearchEnabled.value) return 'Off'
   switch (embeddingStatus.value) {
-    case 'loading-model':
-      return embeddingDownload.value
-        ? `Downloading model — ${Math.round(embeddingDownload.value.progress)}%`
-        : 'Loading model…'
     case 'indexing':
       return `Indexing notes — ${embeddingPending.value} left`
     case 'error':
@@ -164,7 +159,7 @@ async function toggleSemanticSearch(enabled: boolean) {
     toast.add({
       title: enabled ? 'Semantic search enabled' : 'Semantic search disabled',
       description: enabled
-        ? `Notes are indexed in your browser with ${embeddingModel.value.label}.`
+        ? `Notes are indexed on the server with ${embeddingModelLabel}.`
         : 'Search falls back to keywords only. Stored vectors are kept.',
       icon: enabled ? 'i-lucide-sparkles' : 'i-lucide-power-off',
       duration: 3000
@@ -547,22 +542,14 @@ function swatchStyle(color: string, selected: boolean) {
                   </span>
                 </div>
 
-                <UProgress
-                  v-if="embeddingStatus === 'loading-model' && embeddingDownload"
-                  :model-value="embeddingDownload.progress"
-                  size="sm"
-                />
-
                 <p
                   v-if="embeddingsAvailable"
                   class="text-xs text-muted"
                 >
-                  Runs entirely in your browser with
-                  <code class="font-mono">{{ embeddingModel.label }}</code>
-                  ({{ embeddingModel.approxDownloadMb }} MB, downloaded once and cached).
-                  {{ embeddingModel.description }}
-                  Nothing is sent to a third party, and the resulting vectors are stored with your notes
-                  so each note is only indexed once.
+                  Notes are indexed on this server with
+                  <code class="font-mono">{{ embeddingModelLabel }}</code>, a multilingual model that
+                  handles mixed Dutch and English notes. Nothing is sent to a third party, this device
+                  downloads no model, and each note is only indexed once.
                 </p>
                 <p
                   v-else

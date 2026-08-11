@@ -3,6 +3,7 @@ import { notes } from '../db/schema'
 import type { NewNote } from '../db/schema'
 import { getUserActiveTeamId } from '../utils/auth-helpers'
 import { NOTE_COLUMNS } from '../utils/note-columns'
+import { queueNoteEmbedding } from '../utils/embedding-queue'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<Pick<NewNote, 'title' | 'content' | 'tags'>>(event)
@@ -21,6 +22,9 @@ export default defineEventHandler(async (event) => {
     createdAt: now,
     updatedAt: now
   }).returning(NOTE_COLUMNS)
+
+  // Background work: the response does not wait on the encoder.
+  queueNoteEmbedding(note?.id)
 
   return note
 })
