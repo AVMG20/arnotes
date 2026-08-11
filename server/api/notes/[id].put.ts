@@ -5,6 +5,8 @@ import { join } from 'path'
 import { unlinkSync } from 'fs'
 import type { NewNote } from '../../db/schema'
 import { getNoteAccessFilter } from '../../utils/auth-helpers'
+import { NOTE_COLUMNS } from '../../utils/note-columns'
+import { queueNoteEmbedding } from '../../utils/embedding-queue'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -45,8 +47,14 @@ export default defineEventHandler(async (event) => {
       updatedAt: Date.now()
     })
     .where(accessCondition)
-    .returning()
+    .returning(NOTE_COLUMNS)
 
   if (!updated) throw createError({ statusCode: 404, message: 'Note not found' })
+
+  // Only text changes move the vector; sharing and attachment edits do not.
+  if (body.title !== undefined || body.content !== undefined || body.tags !== undefined) {
+    queueNoteEmbedding(updated.id)
+  }
+
   return updated
 })

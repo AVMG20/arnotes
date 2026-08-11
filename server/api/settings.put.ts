@@ -12,6 +12,7 @@ export default defineEventHandler(async (event) => {
     neutralColor: string
     openrouterApiKey?: string | null
     openrouterModel?: string
+    semanticSearchEnabled?: boolean
   }>(event)
 
   if (!body.primaryColor || !body.neutralColor || !VALID_PRIMARY.has(body.primaryColor) || !VALID_NEUTRAL.has(body.neutralColor)) {
@@ -34,13 +35,19 @@ export default defineEventHandler(async (event) => {
     openrouterApiKey = trimmed ? trimmed : null
   }
 
+  // Semantic search: undefined leaves the stored preference alone, so the colour
+  // and model writes that share this endpoint never toggle it by omission.
+  const semanticSearchEnabled = typeof body.semanticSearchEnabled === 'boolean'
+    ? body.semanticSearchEnabled
+    : existing?.semanticSearchEnabled ?? AI_SETTINGS_DEFAULTS.semanticSearchEnabled
+
   await db
     .insert(userSettings)
-    .values({ userId, primaryColor, neutralColor, openrouterApiKey, openrouterModel, updatedAt: new Date() })
+    .values({ userId, primaryColor, neutralColor, openrouterApiKey, openrouterModel, semanticSearchEnabled, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: userSettings.userId,
-      set: { primaryColor, neutralColor, openrouterApiKey, openrouterModel, updatedAt: new Date() }
+      set: { primaryColor, neutralColor, openrouterApiKey, openrouterModel, semanticSearchEnabled, updatedAt: new Date() }
     })
 
-  return { primaryColor, neutralColor, openrouterModel, openrouterApiKey }
+  return { primaryColor, neutralColor, openrouterModel, openrouterApiKey, semanticSearchEnabled }
 })

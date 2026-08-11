@@ -99,6 +99,14 @@ export const notes = pgTable(
     attachments: json('attachments').$type<string[]>().notNull().default([]),
     isPublic: boolean('is_public').notNull().default(false),
     publicUntil: bigint('public_until', { mode: 'number' }),
+    // Semantic search vector, produced by the server. Stored as base64 of a
+    // little-endian Float32Array rather than JSON so a 768-dimension vector costs
+    // ~4 KB instead of ~16 KB. NULL means the note has not been embedded yet.
+    embedding: text('embedding'),
+    // Fingerprint of the exact text that was embedded, with the model id folded
+    // in. Lets both sides skip notes whose content has not changed, and makes a
+    // change of model a self-healing re-index rather than a migration.
+    embeddingHash: text('embedding_hash'),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     deletedAt: bigint('deleted_at', { mode: 'number' })
@@ -117,6 +125,11 @@ export const userSettings = pgTable('user_settings', {
   neutralColor: text('neutral_color').notNull().default('zinc'),
   openrouterApiKey: text('openrouter_api_key'),
   openrouterModel: text('openrouter_model').notNull().default('openai/gpt-4o-mini'),
+  // Opts this account out of semantic search: its searches stay keyword-only and
+  // it never loads the vector index. Vectors are still maintained server-side,
+  // since notes can be shared with a team whose other members use the feature.
+  // The instance-wide NUXT_PUBLIC_EMBEDDINGS_ENABLED switch overrides it when off.
+  semanticSearchEnabled: boolean('semantic_search_enabled').notNull().default(true),
   updatedAt: timestamp('updated_at').notNull()
 })
 
@@ -142,7 +155,8 @@ export const aiUsageRecords = pgTable(
 export type AiUsageRecord = typeof aiUsageRecords.$inferSelect
 
 export const AI_SETTINGS_DEFAULTS = {
-  openrouterModel: 'openai/gpt-4o-mini'
+  openrouterModel: 'openai/gpt-4o-mini',
+  semanticSearchEnabled: true
 } as const
 
 export const POPULAR_OPENROUTER_MODELS = [

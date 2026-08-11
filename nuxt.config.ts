@@ -18,14 +18,25 @@ export default defineNuxtConfig({
     public: {
       discordEnabled: false,
       githubEnabled: false,
-      allowSignUp: true
+      allowSignUp: true,
+      // Instance-wide switch for semantic search. Off means the server never loads
+      // the encoder and search stays keyword-only, whatever a user prefers.
+      // Read on the server too, via NUXT_PUBLIC_EMBEDDINGS_ENABLED.
+      embeddingsEnabled: true
     }
   },
 
   compatibilityDate: '2025-01-15',
 
   nitro: {
-    preset: 'bun'
+    preset: 'bun',
+
+    // transformers.js loads onnxruntime-node's native binding and sharp's, neither
+    // of which survives being bundled. Left external, they are traced into
+    // .output/server/node_modules and required at runtime instead.
+    externals: {
+      external: ['@huggingface/transformers', 'onnxruntime-node', 'sharp']
+    }
   },
 
   vite: {

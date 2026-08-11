@@ -3,15 +3,30 @@ import { computed, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
+const { enabled: semanticEnabled, status: semanticStatus, useSemanticQuery } = useEmbeddings()
 
 const open = useSearchModal()
 const query = ref('')
 const highlighted = ref(0)
 const selectedTags = ref<string[]>([])
 
+// Vector hits arrive a moment after the keyword hits; results re-rank in place
+// once they land rather than blocking the list on the encoder.
+const { hits: semanticHits, pending: semanticPending } = useSemanticQuery(query)
+
 const hasQuery = computed(() => query.value.trim().length > 0)
 const isFiltered = computed(() => hasQuery.value || selectedTags.value.length > 0)
-const results = computed(() => searchNotes(query.value, selectedTags.value).slice(0, 8))
+const results = computed(() => searchNotes(query.value, selectedTags.value, semanticHits.value).slice(0, 8))
+
+// Explains the moment between the keyword hits appearing and the vector hits
+// landing, and why they sometimes do not.
+const semanticHint = computed(() => {
+  if (!semanticEnabled.value || !hasQuery.value) return null
+  if (semanticStatus.value === 'error') return 'Meaning-based search is unavailable'
+  if (semanticPending.value) return 'Adding related notes…'
+  if (semanticHits.value.length > 0) return 'Keyword and meaning results combined'
+  return null
+})
 
 // Selected tags first, then the rest in last-modified order (allTags is already sorted)
 const filterTagOptions = computed(() => {
@@ -300,7 +315,17 @@ function smartSnippet(html: string): string {
           <span class="flex items-center gap-1.5"><UKbd size="sm">↑↓</UKbd> navigate</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">↵</UKbd> open</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">Esc</UKbd> close</span>
-          <span class="ml-auto flex items-center gap-1"><UKbd size="sm">⌘</UKbd><UKbd size="sm">K</UKbd></span>
+          <span
+            v-if="semanticHint"
+            class="flex items-center gap-1.5 min-w-0 truncate"
+          >
+            <UIcon
+              name="i-lucide-sparkles"
+              class="size-3 shrink-0 text-primary"
+            />
+            {{ semanticHint }}
+          </span>
+          <span class="ml-auto flex items-center gap-1 shrink-0"><UKbd size="sm">⌘</UKbd><UKbd size="sm">K</UKbd></span>
         </div>
       </div>
     </template>

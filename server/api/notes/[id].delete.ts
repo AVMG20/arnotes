@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
 import { existsSync, rmSync } from 'fs'
 import { getNoteAccessFilter } from '../../utils/auth-helpers'
+import { NOTE_COLUMNS } from '../../utils/note-columns'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -11,7 +12,7 @@ export default defineEventHandler(async (event) => {
   const accessCondition = and(eq(notes.id, id), await getNoteAccessFilter(event))
 
   const [existing] = await db
-    .select()
+    .select(NOTE_COLUMNS)
     .from(notes)
     .where(accessCondition)
 
@@ -30,7 +31,7 @@ export default defineEventHandler(async (event) => {
     .update(notes)
     .set({ deletedAt: Date.now() })
     .where(accessCondition)
-    .returning()
+    .returning(NOTE_COLUMNS)
 
   return { ok: true, permanent: false, note: softDeleted }
 })
