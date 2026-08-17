@@ -85,6 +85,15 @@ export const invitation = pgTable('invitation', {
 
 // ─── App tables ───────────────────────────────────────────────────────────────
 
+// A task IS a note: same table, same search index, same editor. Only the
+// presentation differs — the tasks view renders these rows as a checklist.
+export type TaskProp = {
+  id: string
+  name: string
+  type: 'text' | 'link' | 'note'
+  value: string
+}
+
 export const notes = pgTable(
   'notes',
   {
@@ -99,6 +108,10 @@ export const notes = pgTable(
     attachments: json('attachments').$type<string[]>().notNull().default([]),
     isPublic: boolean('is_public').notNull().default(false),
     publicUntil: bigint('public_until', { mode: 'number' }),
+    isTask: boolean('is_task').notNull().default(false),
+    taskStatus: text('task_status').notNull().default('open'),
+    dueAt: bigint('due_at', { mode: 'number' }),
+    taskProps: json('task_props').$type<TaskProp[]>().notNull().default([]),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     deletedAt: bigint('deleted_at', { mode: 'number' })

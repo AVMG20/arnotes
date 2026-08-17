@@ -2,16 +2,44 @@
 import { computed, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
+const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote, notes } = useNotes()
 
 const open = useSearchModal()
 const query = ref('')
 const highlighted = ref(0)
 const selectedTags = ref<string[]>([])
 
-const hasQuery = computed(() => query.value.trim().length > 0)
-const isFiltered = computed(() => hasQuery.value || selectedTags.value.length > 0)
-const results = computed(() => searchNotes(query.value, selectedTags.value).slice(0, 8))
+// ─── Query parsing: "#tag1 #tag2 search text" ────────────────
+
+const parsed = computed(() => {
+  const tokens = query.value.split(/\s+/).filter(Boolean)
+  const tags = tokens.filter(t => t.startsWith('#') && t.length > 1).map(t => t.slice(1).toLowerCase())
+  const text = tokens.filter(t => !t.startsWith('#')).join(' ')
+  // Trailing "#par…" token drives the autocomplete suggestions.
+  const trailing = /#([\w]*)$/.exec(query.value)
+  return { tags, text, trailingToken: trailing?.[1] ?? null }
+})
+
+// Tags from the query merge with the manually toggled chips.
+const effectiveTags = computed(() => [...new Set([...selectedTags.value, ...parsed.value.tags])])
+
+const hasQuery = computed(() => parsed.value.text.trim().length > 0)
+const isFiltered = computed(() => hasQuery.value || effectiveTags.value.length > 0)
+const results = computed(() => searchNotes(parsed.value.text, effectiveTags.value).slice(0, 8))
+
+// Autocomplete for the trailing "#par" token.
+const tagSuggestions = computed(() => {
+  const partial = parsed.value.trailingToken
+  if (partial === null) return []
+  return allTags.value
+    .map(t => t.tag)
+    .filter(tag => tag.startsWith(partial.toLowerCase()) && !effectiveTags.value.includes(tag))
+    .slice(0, 6)
+})
+
+function completeTag(tag: string) {
+  query.value = query.value.replace(/#([\w]*)$/, `#${tag} `)
+}
 
 // Selected tags first, then the rest in last-modified order (allTags is already sorted)
 const filterTagOptions = computed(() => {
@@ -46,6 +74,13 @@ function toggleTag(tag: string) {
 // ─── Actions ─────────────────────────────────────────────────
 
 function selectNote(id: string) {
+  const note = notes.value.find(n => n.id === id)
+  // Tasks open in their own view with the drawer pre-selected.
+  if (note?.isTask) {
+    open.value = false
+    navigateTo({ path: '/tasks', query: { id } })
+    return
+  }
   activeNoteId.value = id
   activeTag.value = null
   searchQuery.value = ''
@@ -53,11 +88,18 @@ function selectNote(id: string) {
 }
 
 async function handleCreateNote() {
-  await createNote({ title: hasQuery.value ? query.value.trim() : undefined })
+  await createNote({ title: hasQuery.value ? parsed.value.text.trim() : undefined })
   open.value = false
 }
 
 // ─── Keyboard navigation ─────────────────────────────────────
+
+function onInputKeydown(e: KeyboardEvent) {
+  if (e.key === 'Tab' && tagSuggestions.value.length > 0) {
+    e.preventDefault()
+    completeTag(tagSuggestions.value[0]!)
+  }
+}
 
 const itemCount = computed(() => results.value.length + (hasQuery.value ? 1 : 0))
 
@@ -89,7 +131,7 @@ function escapeRegex(s: string): string {
 }
 
 function highlight(text: string): string {
-  const q = query.value.trim()
+  const q = parsed.value.text.trim()
   const safe = escapeHtml(text)
   if (!q) return safe
   const terms = q.split(/\s+/).filter(t => t.length >= 2).map(escapeRegex)
@@ -103,7 +145,7 @@ function smartSnippet(html: string): string {
   const el = document.createElement('div')
   el.innerHTML = html
   const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
-  const q = query.value.trim()
+  const q = parsed.value.text.trim()
   if (!q) return text.slice(0, 220)
 
   const terms = q.split(/\s+/).filter(t => t.length >= 2)
@@ -137,12 +179,33 @@ function smartSnippet(html: string): string {
           <input
             v-model="query"
             autofocus
-            placeholder="Search or create a note…"
+            placeholder="Search or create a note… (# for tags)"
             class="flex-1 bg-transparent outline-none text-base text-default placeholder:text-muted"
+            @keydown="onInputKeydown"
           >
           <UKbd size="sm">
             Esc
           </UKbd>
+        </div>
+
+        <!-- #tag autocomplete -->
+        <div
+          v-if="tagSuggestions.length > 0"
+          class="flex items-center gap-1.5 px-5 py-2 border-b border-default bg-elevated/30 overflow-x-auto scrollbar-hidden"
+        >
+          <span class="text-xs text-muted shrink-0 mr-0.5">Complete tag:</span>
+          <button
+            v-for="tag in tagSuggestions"
+            :key="tag"
+            class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0 cursor-pointer"
+            @click="completeTag(tag)"
+          >
+            <span class="opacity-70">#</span>{{ tag }}
+            <UIcon
+              name="i-lucide-corner-down-left"
+              class="size-2.5 opacity-50"
+            />
+          </button>
         </div>
 
         <!-- Tag filter chips -->
@@ -252,8 +315,13 @@ function smartSnippet(html: string): string {
             >
               <div class="flex items-start justify-between gap-4">
                 <span
-                  class="font-medium text-base text-default leading-snug"
+                  class="font-medium text-base text-default leading-snug flex items-center gap-1.5 min-w-0"
                   v-html="highlight(note.title || 'Untitled')"
+                />
+                <UIcon
+                  v-if="note.isTask"
+                  name="i-lucide-square-check-big"
+                  class="size-3.5 shrink-0 mt-1 text-muted"
                 />
                 <span class="text-xs text-muted shrink-0 mt-0.5">{{ relativeTime(note.updatedAt) }}</span>
               </div>
@@ -299,6 +367,7 @@ function smartSnippet(html: string): string {
         <div class="flex items-center gap-4 px-5 py-2 border-t border-default bg-muted/30 text-xs text-muted">
           <span class="flex items-center gap-1.5"><UKbd size="sm">↑↓</UKbd> navigate</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">↵</UKbd> open</span>
+          <span class="flex items-center gap-1.5"><UKbd size="sm">Tab</UKbd> complete #tag</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">Esc</UKbd> close</span>
           <span class="ml-auto flex items-center gap-1"><UKbd size="sm">⌘</UKbd><UKbd size="sm">K</UKbd></span>
         </div>

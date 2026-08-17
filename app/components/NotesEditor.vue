@@ -1172,11 +1172,13 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
       <div v-if="tablePicker.open">
         <div
           class="fixed inset-0 z-50"
+          data-editor-overlay
           @click="closeSlashTablePicker"
           @contextmenu.prevent="closeSlashTablePicker"
         />
         <div
           class="fixed z-[60] rounded-lg border border-default bg-default shadow-lg"
+          data-editor-overlay
           :style="{ left: `${tablePicker.x}px`, top: `${tablePicker.y}px` }"
         >
           <TableGridPicker @select="onSlashTablePick" />

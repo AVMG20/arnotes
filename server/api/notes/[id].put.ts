@@ -12,6 +12,11 @@ export default defineEventHandler(async (event) => {
 
   const accessCondition = and(eq(notes.id, id), await getNoteAccessFilter(event))
 
+  // Task metadata — validated separately so a bad status never lands in the DB.
+  const taskStatus = body.taskStatus !== undefined
+    ? (body.taskStatus === 'done' ? 'done' : 'open')
+    : undefined
+
   let updatedAttachments: string[] | undefined
   if (body.content !== undefined) {
     const [current] = await db
@@ -42,6 +47,10 @@ export default defineEventHandler(async (event) => {
       ...(updatedAttachments !== undefined && { attachments: updatedAttachments }),
       ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
       ...(body.publicUntil !== undefined && { publicUntil: body.publicUntil }),
+      ...(body.isTask !== undefined && { isTask: body.isTask }),
+      ...(taskStatus !== undefined && { taskStatus }),
+      ...(body.dueAt !== undefined && { dueAt: body.dueAt }),
+      ...(body.taskProps !== undefined && { taskProps: body.taskProps }),
       updatedAt: Date.now()
     })
     .where(accessCondition)

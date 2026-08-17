@@ -1,6 +1,13 @@
 import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
 
+export interface TaskProp {
+  id: string
+  name: string
+  type: 'text' | 'link' | 'note'
+  value: string
+}
+
 export interface Note {
   id: string
   title: string
@@ -9,6 +16,10 @@ export interface Note {
   attachments: string[]
   isPublic: boolean
   publicUntil: number | null
+  isTask: boolean
+  taskStatus: 'open' | 'done'
+  dueAt: number | null
+  taskProps: TaskProp[]
   createdAt: number
   updatedAt: number
   deletedAt: number | null
@@ -54,6 +65,10 @@ export function extractTitle(html: string): string {
   return text.slice(0, 80) || 'Untitled'
 }
 
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function toSearchDoc(note: Note) {
   return {
     ...note,
@@ -68,14 +83,19 @@ export function initNotesStore(notes: Note[], search: MiniSearch<SearchDoc>) {
   _search = search
   _notes.value = notes
   _search.addAll(notes.map(toSearchDoc))
-  _activeNoteId.value = notes.find(n => !n.deletedAt)?.id ?? null
+  // Prefer a plain note for the initial selection — tasks live in their own view.
+  _activeNoteId.value = notes.find(n => !n.deletedAt && !n.isTask)?.id
+    ?? notes.find(n => !n.deletedAt)?.id
+    ?? null
   _ready.value = true
 }
 
 // ─── composable ─────────────────────────────────────────────
 
 export function useNotes() {
-  const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt))
+  // Tasks share the same store but render in their own view, so the notes
+  // sidebar only lists plain notes.
+  const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt && !n.isTask))
   const trashedNotes = computed(() => _notes.value.filter(n => n.deletedAt !== null))
   const sharedNotes = computed(() => activeNotes.value.filter(note =>
     note.isPublic && (note.publicUntil === null || note.publicUntil > Date.now())
@@ -137,6 +157,7 @@ export function useNotes() {
     _searchQuery.value = ''
     _autoFocus.value = true
     _search?.add(toSearchDoc(note))
+    return note
   }
 
   async function updateNote(id: string, content: string) {
@@ -157,6 +178,51 @@ export function useNotes() {
     }
   }
 
+  async function createTask(options?: { title?: string, tags?: string[] }) {
+    const titleText = options?.title?.trim() || 'Untitled'
+    const tags = options?.tags ?? []
+    // Tags are embedded as hashtags so later description edits (which re-derive
+    // tags from content) keep them.
+    let content = `<h1>${escapeHtmlText(titleText)}</h1>`
+    for (const tag of tags) content += `<p>#${tag}</p>`
+    const task = await $fetch<Note>('/api/notes', {
+      method: 'POST',
+      body: {
+        title: titleText,
+        content,
+        tags,
+        isTask: true
+      }
+    })
+    _notes.value = [task, ..._notes.value]
+    _search?.add(toSearchDoc(task))
+    return task
+  }
+
+  // Partial task metadata update — status, due date, custom props, or the
+  // isTask flag itself (used to convert between task and note).
+  async function updateTaskMeta(id: string, patch: {
+    taskStatus?: 'open' | 'done'
+    dueAt?: number | null
+    taskProps?: TaskProp[]
+    isTask?: boolean
+  }) {
+    const idx = _notes.value.findIndex(n => n.id === id)
+    if (idx < 0) return
+    const updated = await $fetch<Note>(`/api/notes/${id}`, {
+      method: 'PUT',
+      body: patch
+    })
+    const next = [..._notes.value]
+    next[idx] = updated
+    _notes.value = next
+    if (_search) {
+      if (_search.has(id)) _search.discard(id)
+      _search.add(toSearchDoc(updated))
+    }
+    return updated
+  }
+
   function searchNotes(query: string, filterTags: string[] = []): Note[] {
     let pool: Note[]
     if (query.trim() && _search) {
@@ -166,7 +232,8 @@ export function useNotes() {
       })
       pool = hits.map(h => notesById.value.get(String(h.id))).filter(Boolean) as Note[]
     } else {
-      pool = activeNotes.value
+      // Includes tasks — the search modal covers both views.
+      pool = _notes.value.filter(n => !n.deletedAt)
       if (filterTags.length > 0) {
         pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
       }
@@ -242,7 +309,9 @@ export function useNotes() {
       _search.removeAll()
       _search.addAll(freshNotes.map(toSearchDoc))
     }
-    _activeNoteId.value = freshNotes.find(n => !n.deletedAt)?.id ?? null
+    _activeNoteId.value = freshNotes.find(n => !n.deletedAt && !n.isTask)?.id
+      ?? freshNotes.find(n => !n.deletedAt)?.id
+      ?? null
     _activeTag.value = null
     _searchQuery.value = ''
     _showTrash.value = false
@@ -267,6 +336,8 @@ export function useNotes() {
     trackTagClick,
     autoFocus: _autoFocus,
     createNote,
+    createTask,
+    updateTaskMeta,
     updateNote,
     updateSharing,
     deleteNote,

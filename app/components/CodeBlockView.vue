@@ -129,6 +129,7 @@ as="code"
       <div
         v-if="open"
         class="code-lang-dropdown fixed z-[9999] w-52 bg-default shadow-xl overflow-hidden"
+        data-editor-overlay
         :style="{ top: pos.top + 'px', right: pos.right + 'px' }"
         @mousedown.stop
       >

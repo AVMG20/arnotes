@@ -4,6 +4,9 @@ const { activeNoteId, createNote } = useNotes()
 const searchOpen = useSearchModal()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
+const route = useRoute()
+
+const isTasksView = computed(() => route.path.startsWith('/tasks'))
 
 const userInitials = computed(() => {
   const name = session.value?.user?.name
@@ -56,6 +59,19 @@ watch(activeNoteId, () => emit('close'))
     </div>
 
     <div class="shrink-0 space-y-2 px-3 pb-2">
+      <!-- Tasks nav -->
+      <button
+        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer"
+        :class="isTasksView ? 'bg-elevated text-default font-medium' : 'text-muted hover:bg-elevated hover:text-default'"
+        @click="navigateTo('/tasks')"
+      >
+        <UIcon
+          name="i-lucide-square-check-big"
+          class="size-4 shrink-0"
+        />
+        <span class="min-w-0 flex-1 truncate text-left">Tasks</span>
+      </button>
+
       <button
         class="flex w-full items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-default"
         @click="searchOpen = true"
