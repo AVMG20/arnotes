@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
+import { markdownToHtml } from '~/utils/markdown'
 
 export interface TaskProp {
   id: string
@@ -178,20 +179,29 @@ export function useNotes() {
     }
   }
 
-  async function createTask(options?: { title?: string, tags?: string[] }) {
+  async function createTask(options?: {
+    title?: string
+    description?: string
+    tags?: string[]
+    dueAt?: number | null
+    taskProps?: TaskProp[]
+  }) {
     const titleText = options?.title?.trim() || 'Untitled'
     const tags = options?.tags ?? []
     // Tags are embedded as hashtags so later description edits (which re-derive
     // tags from content) keep them.
     let content = `<h1>${escapeHtmlText(titleText)}</h1>`
     for (const tag of tags) content += `<p>#${tag}</p>`
+    if (options?.description) content += markdownToHtml(options.description)
     const task = await $fetch<Note>('/api/notes', {
       method: 'POST',
       body: {
         title: titleText,
         content,
         tags,
-        isTask: true
+        isTask: true,
+        dueAt: options?.dueAt ?? null,
+        taskProps: options?.taskProps ?? []
       }
     })
     _notes.value = [task, ..._notes.value]

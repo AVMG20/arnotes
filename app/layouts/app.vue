@@ -33,5 +33,6 @@ const { sidebarOpen } = useSidebar()
     </div>
 
     <NotesSearchModal />
+    <AiChatWidget />
   </UDashboardGroup>
 </template>
