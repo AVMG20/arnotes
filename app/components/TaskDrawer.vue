@@ -17,7 +17,7 @@ function closeDrawer() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeDrawer()
+  if (e.key === 'Escape' && !resizing.value) closeDrawer()
 }
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
@@ -41,6 +41,54 @@ function onPointerDown(e: PointerEvent) {
 
 onMounted(() => window.addEventListener('pointerdown', onPointerDown, true))
 onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, true))
+
+// ─── Resizable drawer (width persisted in a cookie) ──────────
+
+// Percent of viewport width, kept between 25% and 80%.
+const savedWidth = useCookie<number>('tasks-drawer-width', {
+  default: () => 46,
+  maxAge: 60 * 60 * 24 * 365
+})
+
+const drawerWidth = ref<number | null>(null) // px while dragging; null = idle
+const resizing = ref(false)
+
+const drawerStyle = computed(() => {
+  if (drawerWidth.value !== null) return { width: `${drawerWidth.value}px` }
+  if (import.meta.client && window.innerWidth < 640) return undefined
+  return { width: `${savedWidth.value}%` }
+})
+
+function onResizeStart(_e: PointerEvent) {
+  resizing.value = true
+  drawerWidth.value = asideRef.value?.offsetWidth ?? null
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeEnd)
+}
+
+function onResizeMove(e: PointerEvent) {
+  if (!resizing.value) return
+  const min = Math.max(320, window.innerWidth * 0.2)
+  const max = Math.min(window.innerWidth * 0.85, window.innerWidth - 260)
+  const next = Math.max(min, Math.min(window.innerWidth - e.clientX, max))
+  drawerWidth.value = next
+}
+
+function onResizeEnd() {
+  if (resizing.value && asideRef.value) {
+    savedWidth.value = Math.round((asideRef.value.offsetWidth / window.innerWidth) * 1000) / 10
+  }
+  resizing.value = false
+  drawerWidth.value = null
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeEnd)
+}
+
+onBeforeUnmount(onResizeEnd)
 
 const noteById = computed(() => new Map(notes.value.map(n => [n.id, n])))
 
@@ -287,8 +335,15 @@ async function removeTask() {
       <aside
         v-if="selectedTask"
         ref="asideRef"
-        class="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-default bg-default shadow-2xl sm:w-[46%] lg:w-[44%] xl:w-[40%] min-w-0"
+        class="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-default bg-default shadow-2xl sm:min-w-0"
+        :style="drawerStyle"
       >
+        <!-- Resize handle -->
+        <div
+          class="absolute inset-y-0 left-0 z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize touch-none transition-colors hover:bg-primary-500/40 sm:block"
+          :class="resizing ? 'bg-primary-500/60' : 'bg-transparent'"
+          @pointerdown.prevent="onResizeStart"
+        />
         <!-- Header -->
         <div class="flex items-start gap-3 px-5 pt-5 shrink-0">
           <button
