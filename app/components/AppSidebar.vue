@@ -41,6 +41,12 @@ const accountItems = computed(() => [[
 ]])
 
 watch(activeNoteId, () => emit('close'))
+
+// Works from the tasks view too, where creating a note has to move the router.
+async function newNote() {
+  const note = await createNote()
+  navigateTo(`/note/${note.id}`)
+}
 </script>
 
 <template>
@@ -54,7 +60,7 @@ watch(activeNoteId, () => emit('close'))
         variant="soft"
         aria-label="New note"
         class="shrink-0 rounded-lg"
-        @click="createNote(undefined)"
+        @click="newNote"
       />
     </div>
 

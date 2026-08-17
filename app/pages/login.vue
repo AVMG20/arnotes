@@ -29,7 +29,9 @@ async function submit() {
     return
   }
 
-  await navigateTo('/note')
+  // A full page load, not a client-side one: the notes store and user settings
+  // are seeded by plugins that only run once, and they need the fresh session.
+  await navigateTo('/note', { external: true })
 }
 
 function switchMode() {
