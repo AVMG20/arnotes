@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { differenceInCalendarDays } from 'date-fns'
 import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
@@ -13,9 +13,11 @@ import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import { CellSelection } from '@tiptap/pm/tables'
 import { createLowlight, common } from 'lowlight'
 import { DateMention } from '~/composables/useDateMention'
 import { ResizableImage } from '~/utils/resizable-image'
+import TableGridPicker from '~/components/TableGridPicker.vue'
 
 const { activeNote, activeNoteId, autoFocus, updateNote, updateSharing } = useNotes()
 const toast = useToast()
@@ -27,6 +29,44 @@ const aiPromptOpen = ref(false)
 const aiPrompt = ref('')
 const aiPromptPosition = ref<number | null>(null)
 const aiPromptIncludeContext = ref(true)
+
+// ─── Table creation picker ───────────────────────────────────
+
+const tablePickerOpen = ref(false)
+const tablePicker = reactive({ open: false, x: 0, y: 0 })
+let tablePickerEditor: Editor | null = null
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function insertTableOfSize(editor: any, size: { rows: number, cols: number }) {
+  editor.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: true }).run()
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function onToolbarTablePick(editor: any, size: { rows: number, cols: number }) {
+  tablePickerOpen.value = false
+  insertTableOfSize(editor, size)
+}
+
+function onSlashTablePick(size: { rows: number, cols: number }) {
+  const editor = tablePickerEditor
+  tablePickerEditor = null
+  tablePicker.open = false
+  if (editor && !editor.isDestroyed) insertTableOfSize(editor, size)
+}
+
+function closeSlashTablePicker() {
+  tablePickerEditor = null
+  tablePicker.open = false
+}
+
+function onTablePickerKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeSlashTablePicker()
+}
+
+watch(() => tablePicker.open, (open) => {
+  if (open) window.addEventListener('keydown', onTablePickerKeydown, true)
+  else window.removeEventListener('keydown', onTablePickerKeydown, true)
+})
 
 type AiPending = {
   kind: 'generate' | 'transform'
@@ -431,6 +471,9 @@ const MarkdownPaste = Extension.create({
   }
 })
 
+// Hover-revealed "+" buttons to append a row/column at the end of the table.
+// Destructive row/column operations live in the table bubble toolbar instead,
+// where they act on the cell the cursor is in.
 const InlineTableControls = Extension.create({
   name: 'inlineTableControls',
   addProseMirrorPlugins() {
@@ -446,23 +489,19 @@ const InlineTableControls = Extension.create({
       return null
     }
 
-    function runEdgeCommand(command: 'addRowAfter' | 'deleteRow' | 'addColumnAfter' | 'deleteColumn') {
+    function appendToTable(axis: 'row' | 'column') {
       const table = getTableContext()
-      if (!table) return
-
-      const lastRow = table.node.lastChild
+      const lastRow = table?.node.lastChild
       const lastCell = lastRow?.lastChild
-      if (!lastRow || !lastCell) return
+      if (!table || !lastRow || !lastCell) return
 
       const rowPos = table.start + table.node.content.size - lastRow.nodeSize
       const cellPos = rowPos + 1 + lastRow.content.size - lastCell.nodeSize
       const selection = Selection.near(editor.state.doc.resolve(cellPos + 1))
       editor.view.dispatch(editor.state.tr.setSelection(selection))
 
-      if (command === 'addRowAfter') editor.chain().focus().addRowAfter().run()
-      if (command === 'deleteRow') editor.chain().focus().deleteRow().run()
-      if (command === 'addColumnAfter') editor.chain().focus().addColumnAfter().run()
-      if (command === 'deleteColumn') editor.chain().focus().deleteColumn().run()
+      if (axis === 'row') editor.chain().focus().addRowAfter().run()
+      else editor.chain().focus().addColumnAfter().run()
     }
 
     return [
@@ -472,51 +511,28 @@ const InlineTableControls = Extension.create({
           const controls = document.createElement('div')
           controls.className = 'table-edge-controls'
           controls.contentEditable = 'false'
-          let wrapper: HTMLElement | null = null
 
-          const makeButton = (label: string, command: Parameters<typeof runEdgeCommand>[0], axis: 'row' | 'column') => {
+          const makeButton = (axis: 'row' | 'column') => {
             const button = document.createElement('button')
             button.type = 'button'
             button.className = 'table-edge-controls__button'
-            button.textContent = label
-            button.dataset.action = command.startsWith('add') ? 'add' : 'remove'
+            button.dataset.axis = axis
+            button.textContent = '+'
+            button.title = axis === 'row' ? 'Add row at the end' : 'Add column at the end'
+            button.setAttribute('aria-label', button.title)
             button.addEventListener('pointerdown', (event) => {
               event.preventDefault()
               event.stopPropagation()
-              runEdgeCommand(command)
+              appendToTable(axis)
             })
-            button.dataset.axis = axis
             return button
           }
 
-          const rowControls = document.createElement('div')
-          rowControls.className = 'table-edge-controls__rows'
-          const addRowButton = makeButton('+ Add row', 'addRowAfter', 'row')
-          const removeRowButton = makeButton('- Remove row', 'deleteRow', 'row')
-          rowControls.append(
-            removeRowButton,
-            addRowButton
-          )
+          controls.append(makeButton('row'), makeButton('column'))
 
-          const columnControls = document.createElement('div')
-          columnControls.className = 'table-edge-controls__columns'
-          const addColumnButton = makeButton('+ Column', 'addColumnAfter', 'column')
-          const removeColumnButton = makeButton('- Column', 'deleteColumn', 'column')
-          columnControls.append(
-            addColumnButton,
-            removeColumnButton
-          )
-          controls.append(rowControls, columnControls)
-
+          let wrapper: HTMLElement | null = null
           const update = () => {
             const table = getTableContext()
-            const firstRow = table?.node.firstChild
-            let columnCount = 0
-            firstRow?.forEach((cell) => {
-              columnCount += cell.attrs.colspan ?? 1
-            })
-            removeRowButton.disabled = (table?.node.childCount ?? 0) <= 1
-            removeColumnButton.disabled = columnCount <= 1
             const tableDom = table ? view.nodeDOM(table.pos) as HTMLElement | null : null
             const nextWrapper = tableDom?.matches('.tableWrapper')
               ? tableDom
@@ -598,7 +614,20 @@ const customHandlers: any = {
   },
   table: {
     canExecute: () => true,
-    execute: (editor: Editor) => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
+    execute: (editor: Editor) => {
+      const { state, view } = editor
+      try {
+        const coords = view.coordsAtPos(state.selection.from)
+        tablePicker.x = Math.min(coords.left, Math.max(window.innerWidth - 260, 8))
+        tablePicker.y = Math.min(coords.bottom + 8, window.innerHeight - 220)
+      } catch {
+        tablePicker.x = window.innerWidth / 2 - 110
+        tablePicker.y = window.innerHeight / 2 - 100
+      }
+      tablePickerEditor = editor
+      tablePicker.open = true
+      return editor.chain()
+    },
     isActive: () => false
   },
   addColumnBefore: {
@@ -675,7 +704,7 @@ const fixedToolbarItems: any[][] = [[
   { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
   { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Ordered list' } },
   { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
-  { kind: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
+  { kind: 'table', slot: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
   { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
   { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } }
 ]]
@@ -705,6 +734,26 @@ const bubbleToolbarItems: any[][] = [[
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tableToolbarItems: any[][] = [[
   {
+    label: 'Row',
+    icon: 'i-lucide-rows-3',
+    items: [[
+      { kind: 'addRowBefore', label: 'Add row above', icon: 'i-lucide-arrow-up-to-line' },
+      { kind: 'addRowAfter', label: 'Add row below', icon: 'i-lucide-arrow-down-to-line' }
+    ], [
+      { kind: 'deleteRow', label: 'Delete row', icon: 'i-lucide-trash-2', color: 'error' }
+    ]]
+  },
+  {
+    label: 'Column',
+    icon: 'i-lucide-columns-3',
+    items: [[
+      { kind: 'addColumnBefore', label: 'Add column left', icon: 'i-lucide-arrow-left-to-line' },
+      { kind: 'addColumnAfter', label: 'Add column right', icon: 'i-lucide-arrow-right-to-line' }
+    ], [
+      { kind: 'deleteColumn', label: 'Delete column', icon: 'i-lucide-trash-2', color: 'error' }
+    ]]
+  },
+  {
     label: 'Options',
     icon: 'i-lucide-table-properties',
     items: [[
@@ -719,20 +768,24 @@ const tableToolbarItems: any[][] = [[
 ]]
 
 function shouldShowTableToolbar(editor: Pick<Editor, 'isActive'>, view: EditorView, state: EditorState) {
-  const domSelection = view.dom.ownerDocument.getSelection()
-  const hasDomTextSelection = Boolean(
-    domSelection
-    && !domSelection.isCollapsed
-    && domSelection.anchorNode
-    && domSelection.focusNode
-    && view.dom.contains(domSelection.anchorNode)
-    && view.dom.contains(domSelection.focusNode)
-  )
+  // Also show while multiple cells are selected, otherwise merge/split are unreachable.
+  const cellSelection = state.selection instanceof CellSelection
+  if (!cellSelection && !state.selection.empty) return false
 
-  return view.hasFocus()
-    && state.selection.empty
-    && !hasDomTextSelection
-    && editor.isActive('table')
+  if (!cellSelection) {
+    const domSelection = view.dom.ownerDocument.getSelection()
+    const hasDomTextSelection = Boolean(
+      domSelection
+      && !domSelection.isCollapsed
+      && domSelection.anchorNode
+      && domSelection.focusNode
+      && view.dom.contains(domSelection.anchorNode)
+      && view.dom.contains(domSelection.focusNode)
+    )
+    if (hasDomTextSelection) return false
+  }
+
+  return view.hasFocus() && editor.isActive('table')
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -749,7 +802,7 @@ const suggestionItems: any[][] = [[
   { kind: 'taskList', label: 'Task list', icon: 'i-lucide-list-checks' },
   { kind: 'blockquote', label: 'Blockquote', icon: 'i-lucide-text-quote' },
   { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
-  { kind: 'table', label: 'Table', description: 'Insert a 3 x 3 table', icon: 'i-lucide-table' },
+  { kind: 'table', label: 'Table', description: 'Pick a size and insert a table', icon: 'i-lucide-table' },
   { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
 ], [
   { type: 'label', label: 'Insert' },
@@ -794,6 +847,8 @@ watch(editorContent, (html) => {
 
 watch(activeNoteId, async (newId, oldId) => {
   if (oldId) flushSave(oldId)
+  closeSlashTablePicker()
+  tablePickerOpen.value = false
   suppressSave = true
   editorContent.value = activeNote.value?.content ?? ''
   await nextTick()
@@ -806,7 +861,10 @@ watch(activeNoteId, async (newId, oldId) => {
   }
 }, { immediate: true })
 
-onBeforeUnmount(() => flushSave())
+onBeforeUnmount(() => {
+  flushSave()
+  window.removeEventListener('keydown', onTablePickerKeydown, true)
+})
 
 // ─── Copy to Markdown ────────────────────────────────────────
 
@@ -865,7 +923,28 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
             <UEditorToolbar
               :editor="editor"
               :items="fixedToolbarItems"
-            />
+            >
+              <template #table>
+                <UPopover
+                  v-model:open="tablePickerOpen"
+                  :content="{ align: 'start', sideOffset: 8 }"
+                >
+                  <UTooltip text="Insert table">
+                    <UButton
+                      icon="i-lucide-table"
+                      size="sm"
+                      color="neutral"
+                      variant="ghost"
+                      aria-label="Insert table"
+                    />
+                  </UTooltip>
+
+                  <template #content>
+                    <TableGridPicker @select="size => onToolbarTablePick(editor, size)" />
+                  </template>
+                </UPopover>
+              </template>
+            </UEditorToolbar>
             <div class="flex items-center gap-1 shrink-0 ml-auto">
               <span
                 v-if="tagCount > 0"
@@ -1003,7 +1082,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
             :ui="{ root: 'z-50' }"
             :should-show="({ editor: e, view, state }) => {
               const { selection } = state
-              return view.hasFocus() && !selection.empty && !e.isActive('image')
+              return view.hasFocus() && !selection.empty && !(selection instanceof CellSelection) && !e.isActive('image')
             }"
           />
 
@@ -1087,5 +1166,22 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
         </div>
       </template>
     </UModal>
+
+    <!-- Table size picker (opened from the slash menu) -->
+    <Teleport to="body">
+      <div v-if="tablePicker.open">
+        <div
+          class="fixed inset-0 z-50"
+          @click="closeSlashTablePicker"
+          @contextmenu.prevent="closeSlashTablePicker"
+        />
+        <div
+          class="fixed z-[60] rounded-lg border border-default bg-default shadow-lg"
+          :style="{ left: `${tablePicker.x}px`, top: `${tablePicker.y}px` }"
+        >
+          <TableGridPicker @select="onSlashTablePick" />
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
