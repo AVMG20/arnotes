@@ -2,6 +2,8 @@ import { db } from '../db'
 import { aiUsageRecords, userSettings } from '../db/schema'
 import { eq } from 'drizzle-orm'
 import { CHAT_TOOLS, CHAT_SYSTEM_PROMPT } from '../utils/chatTools'
+import { trimHistory, toProviderMessages } from '../utils/chatHistory'
+import type { WireMessage, WireToolCall } from '../utils/chatHistory'
 import { DEFAULT_OPENROUTER_MODEL } from '../utils/ai'
 
 // Chat endpoint for the Arnai assistant. Streams NDJSON events to the client:
@@ -12,23 +14,11 @@ import { DEFAULT_OPENROUTER_MODEL } from '../utils/ai'
 //   { type: 'error', message }           — failure
 // Tool execution happens on the client, which owns the notes store.
 
-interface ToolCall {
-  id: string
-  type: 'function'
-  function: { name: string, arguments: string }
-}
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content?: string | null
-  tool_calls?: ToolCall[]
-  tool_call_id?: string
-  name?: string
-}
-
 interface RequestBody {
-  messages: ChatMessage[]
+  messages: WireMessage[]
   thinking?: boolean
+  /** The client's local date (YYYY-MM-DD) so relative dates resolve correctly. */
+  today?: string
 }
 
 interface OpenRouterDelta {
@@ -57,7 +47,7 @@ export default defineEventHandler(async (event) => {
   const userId = event.context.session.user.id
   const body = await readBody<RequestBody>(event)
 
-  const history = Array.isArray(body.messages) ? body.messages.slice(-40) : []
+  const history = Array.isArray(body.messages) ? trimHistory(body.messages) : []
   if (history.length === 0) throw createError({ statusCode: 400, statusMessage: 'Missing messages' })
 
   const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId))
@@ -66,20 +56,13 @@ export default defineEventHandler(async (event) => {
   const model = settings?.openrouterModel || DEFAULT_OPENROUTER_MODEL
   const thinking = body.thinking === true
 
+  const today = typeof body.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.today)
+    ? body.today
+    : new Date().toISOString().slice(0, 10)
+
   const buildMessages = () => [
-    { role: 'system', content: CHAT_SYSTEM_PROMPT },
-    ...history.map((m) => {
-      // `name` on tool messages is not in the OpenAI chat spec and some
-      // providers reject it — only forward spec-compliant fields.
-      if (m.role === 'tool') {
-        return { role: 'tool' as const, tool_call_id: m.tool_call_id, content: m.content }
-      }
-      return {
-        role: m.role,
-        content: m.content ?? '',
-        ...(m.tool_calls && { tool_calls: m.tool_calls })
-      }
-    })
+    { role: 'system', content: `${CHAT_SYSTEM_PROMPT}\n\nToday is ${today}.` },
+    ...toProviderMessages(history)
   ]
 
   const requestCompletion = (reasoning: { effort?: 'none' | 'medium', exclude?: boolean }) =>
@@ -135,12 +118,14 @@ export default defineEventHandler(async (event) => {
   let buffer = ''
   let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
   let sawToolCalls = false
+  let failed = false
 
   // Tool-call arguments arrive fragmented across deltas; reassemble by index.
-  const pendingCalls = new Map<number, ToolCall>()
+  const pendingCalls = new Map<number, WireToolCall>()
 
   const stream = res.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
+      if (failed) return
       buffer += decoder.decode(chunk, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
@@ -158,6 +143,7 @@ export default defineEventHandler(async (event) => {
           continue
         }
         if (parsed.error) {
+          failed = true
           controller.enqueue(emit({ type: 'error', message: parsed.error.message ?? 'OpenRouter error' }))
           return
         }
@@ -190,11 +176,13 @@ export default defineEventHandler(async (event) => {
       }
     },
     async flush(controller) {
-      if (pendingCalls.size > 0) {
-        sawToolCalls = true
-        controller.enqueue(emit({ type: 'tool_calls', calls: [...pendingCalls.values()] }))
+      if (!failed) {
+        if (pendingCalls.size > 0) {
+          sawToolCalls = true
+          controller.enqueue(emit({ type: 'tool_calls', calls: [...pendingCalls.values()] }))
+        }
+        controller.enqueue(emit({ type: 'done' }))
       }
-      controller.enqueue(emit({ type: 'done' }))
       try {
         await db.insert(aiUsageRecords).values({
           id: crypto.randomUUID(),

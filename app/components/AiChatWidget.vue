@@ -1,39 +1,39 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { marked } from 'marked'
+import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { ChatMessage } from '~/composables/useAiChat'
+import { renderChatMarkdown } from '~/utils/markdown'
 
 // ─── Panel state ─────────────────────────────────────────────
 
 const open = ref(false)
-const { messages, thinking, busy, send, stop, clearChat } = useAiChat()
-const { openrouterModel } = useUserSettings()
+const expanded = useCookie<boolean>('arnai-expanded', { default: () => false, maxAge: 60 * 60 * 24 * 365 })
+
+const { messages, thinking, busy, send, retry, stop, clearChat } = useAiChat()
+const { openrouterModel, openrouterApiKey, openrouterApiKeyMasked } = useUserSettings()
 const router = useRouter()
 
 const input = ref('')
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const scrollEl = ref<HTMLElement | null>(null)
-const panelEl = ref<HTMLElement | null>(null)
+
+const hasApiKey = computed(() => !!openrouterApiKey.value || !!openrouterApiKeyMasked.value)
 
 function toggle() {
   open.value = !open.value
   if (open.value) nextTick(() => inputEl.value?.focus())
 }
 
-// ─── Click outside closes the panel ──────────────────────────
-
-function onPointerDown(e: PointerEvent) {
-  if (!open.value) return
-  const target = e.target as HTMLElement | null
-  if (!target) return
-  if (panelEl.value?.contains(target)) return
-  // Ignore clicks in teleported Nuxt UI overlays (menus, tooltips, pickers).
-  if (target.closest('[data-reka-popper-content-wrapper], [role="menu"], [role="dialog"], [role="listbox"]')) return
+// Escape closes the panel, unless a menu or dialog on top of it owns the key.
+// Clicking elsewhere in the app deliberately does *not* close it: the chat is a
+// side panel you work alongside, not a modal.
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !open.value) return
+  if (document.querySelector('[data-reka-popper-content-wrapper], [role="dialog"], [role="menu"]')) return
   open.value = false
 }
 
-onMounted(() => window.addEventListener('pointerdown', onPointerDown, true))
-onBeforeUnmount(() => window.removeEventListener('pointerdown', onPointerDown, true))
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 // ─── Sending ─────────────────────────────────────────────────
 
@@ -52,19 +52,22 @@ async function submit() {
   await send(text)
 }
 
-function onKeydown(e: KeyboardEvent) {
+function onInputKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     submit()
   }
 }
 
-// ─── Rendering ───────────────────────────────────────────────
-
-function renderMarkdown(text: string): string {
-  if (!text) return ''
-  return marked.parse(text, { async: false, gfm: true }) as string
+function useSuggestion(text: string) {
+  input.value = text
+  nextTick(() => {
+    inputEl.value?.focus()
+    autoGrow()
+  })
 }
+
+// ─── Rendering ───────────────────────────────────────────────
 
 const toolIcon: Record<string, string> = {
   search_items: 'i-lucide-search',
@@ -82,37 +85,38 @@ const SUGGESTIONS = [
 ]
 
 const hasContent = computed(() => messages.value.some(m => m.role === 'user' || m.content))
+const lastMessage = computed(() => messages.value[messages.value.length - 1])
+const canRetry = computed(() => !busy.value && !!lastMessage.value?.error)
 
 // ─── Auto-scroll ─────────────────────────────────────────────
 
-let pinnedToBottom = true
+const pinnedToBottom = ref(true)
 
 function onScroll() {
   const el = scrollEl.value
   if (!el) return
-  pinnedToBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 80
+  pinnedToBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 80
 }
 
-watch(messages, async () => {
-  if (!pinnedToBottom) return
+async function scrollToBottom() {
   await nextTick()
   const el = scrollEl.value
   if (el) el.scrollTop = el.scrollHeight
+  pinnedToBottom.value = true
+}
+
+watch(messages, () => {
+  if (pinnedToBottom.value) scrollToBottom()
 }, { deep: true })
 
-watch(open, async (v) => {
-  if (v) {
-    pinnedToBottom = true
-    await nextTick()
-    const el = scrollEl.value
-    if (el) el.scrollTop = el.scrollHeight
-  }
+watch([open, expanded], ([isOpen]) => {
+  if (isOpen) scrollToBottom()
 })
 
 function openTarget(m: ChatMessage) {
   if (!m.targetId) return
   router.push(m.targetKind === 'task' ? `/tasks?id=${m.targetId}` : `/note/${m.targetId}`)
-  open.value = false
+  if (window.innerWidth < 640) open.value = false
 }
 </script>
 
@@ -120,7 +124,7 @@ function openTarget(m: ChatMessage) {
   <!-- Floating launcher -->
   <button
     v-if="!open"
-    class="group fixed bottom-6 right-6 z-40 flex size-13 items-center justify-center rounded-full bg-primary text-inverted shadow-lg shadow-primary/25 transition-all hover:scale-105 hover:shadow-xl hover:shadow-primary/30 active:scale-95 max-lg:bottom-20 cursor-pointer"
+    class="fixed bottom-6 right-6 z-60 flex size-13 cursor-pointer items-center justify-center rounded-full bg-primary text-inverted shadow-lg shadow-primary/25 transition-all hover:scale-105 hover:shadow-xl hover:shadow-primary/30 active:scale-95 max-lg:bottom-20"
     aria-label="Open Arnai chat"
     @click="toggle"
   >
@@ -130,11 +134,14 @@ function openTarget(m: ChatMessage) {
     />
   </button>
 
-  <!-- Chat panel -->
+  <!-- Chat panel: bottom sheet on phones, floating card from `sm` up -->
   <div
     v-else
-    ref="panelEl"
-    class="fixed bottom-6 right-6 z-50 flex max-h-[calc(100vh-3rem)] w-[420px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-default bg-default shadow-2xl max-lg:bottom-20"
+    class="fixed z-60 flex flex-col overflow-hidden border border-default bg-default shadow-2xl
+           inset-x-0 bottom-0 max-h-[85dvh] rounded-t-xl
+           sm:inset-x-auto sm:bottom-6 sm:right-6 sm:max-h-[calc(100dvh-3rem)] sm:rounded-xl max-lg:sm:bottom-20"
+    :class="expanded ? 'sm:w-[760px] sm:h-[calc(100dvh-6rem)]' : 'sm:w-[420px]'"
+    style="max-width: 100vw"
   >
     <!-- Header -->
     <div class="flex shrink-0 items-center gap-2.5 border-b border-default px-4 py-3">
@@ -145,28 +152,38 @@ function openTarget(m: ChatMessage) {
         />
       </div>
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold text-default leading-tight">
+        <p class="text-sm font-semibold leading-tight text-default">
           Arnai
         </p>
-        <p class="truncate text-xs text-muted leading-tight">
+        <p class="truncate text-xs leading-tight text-muted">
           {{ openrouterModel }}
         </p>
       </div>
 
-      <label class="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-default">
-        <UIcon
-          name="i-lucide-brain"
-          class="size-4"
-          :class="thinking ? 'text-primary' : ''"
-        />
-        <span>Thinking</span>
-        <USwitch
-          :model-value="thinking"
-          size="xs"
-          @update:model-value="thinking = $event"
-        />
-      </label>
+      <UTooltip text="Show the model's reasoning">
+        <label class="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-default">
+          <UIcon
+            name="i-lucide-brain"
+            class="size-4"
+            :class="thinking ? 'text-primary' : ''"
+          />
+          <span class="max-sm:sr-only">Thinking</span>
+          <USwitch
+            v-model="thinking"
+            size="xs"
+          />
+        </label>
+      </UTooltip>
 
+      <UButton
+        :icon="expanded ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        class="max-sm:hidden"
+        :aria-label="expanded ? 'Shrink chat' : 'Expand chat'"
+        @click="expanded = !expanded"
+      />
       <UButton
         icon="i-lucide-rotate-ccw"
         color="neutral"
@@ -206,14 +223,37 @@ function openTarget(m: ChatMessage) {
           Hi, I'm Arnai
         </p>
         <p class="text-xs text-muted">
-          Search your notes &amp; tasks, or paste Asana tasks and I'll create them for you.
+          Search your notes &amp; tasks, or paste tasks from another tool and I'll create them for you.
         </p>
-        <div class="mt-4 w-full space-y-1.5">
+
+        <div
+          v-if="!hasApiKey"
+          class="mt-4 w-full rounded-lg border border-default bg-elevated/40 p-3 text-left"
+        >
+          <p class="text-xs text-default">
+            No OpenRouter API key yet — add one to start chatting.
+          </p>
+          <UButton
+            label="Open AI settings"
+            icon="i-lucide-key-round"
+            size="xs"
+            color="primary"
+            variant="soft"
+            class="mt-2"
+            to="/settings"
+            @click="open = false"
+          />
+        </div>
+
+        <div
+          v-else
+          class="mt-4 w-full space-y-1.5"
+        >
           <button
             v-for="s in SUGGESTIONS"
             :key="s.label"
-            class="flex w-full items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2.5 text-left text-xs text-default transition-colors hover:bg-elevated cursor-pointer"
-            @click="input = s.label; inputEl?.focus()"
+            class="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2.5 text-left text-xs text-default transition-colors hover:bg-elevated"
+            @click="useSuggestion(s.label)"
           >
             <UIcon
               :name="s.icon"
@@ -233,7 +273,7 @@ function openTarget(m: ChatMessage) {
           v-if="m.role === 'user'"
           class="flex justify-end"
         >
-          <div class="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm text-inverted whitespace-pre-wrap break-words">
+          <div class="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm text-inverted">
             {{ m.content }}
           </div>
         </div>
@@ -244,8 +284,11 @@ function openTarget(m: ChatMessage) {
           class="flex"
         >
           <button
-            class="inline-flex max-w-full items-center gap-1.5 rounded-full border border-default bg-elevated/50 px-2.5 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-default"
-            :class="m.targetId ? 'cursor-pointer' : 'cursor-default'"
+            class="inline-flex max-w-full items-center gap-1.5 rounded-full border border-default bg-elevated/50 px-2.5 py-1 text-xs transition-colors hover:bg-elevated"
+            :class="[
+              m.targetId ? 'cursor-pointer hover:text-default' : 'cursor-default',
+              m.error ? 'text-error' : 'text-muted'
+            ]"
             @click="openTarget(m)"
           >
             <UIcon
@@ -289,7 +332,7 @@ function openTarget(m: ChatMessage) {
             v-if="m.content"
             class="markdown-content max-w-full text-sm leading-relaxed text-default"
             :class="m.error ? 'text-error' : ''"
-            v-html="renderMarkdown(m.content)"
+            v-html="renderChatMarkdown(m.content)"
           />
 
           <div
@@ -304,18 +347,49 @@ function openTarget(m: ChatMessage) {
           </div>
         </div>
       </template>
+
+      <div
+        v-if="canRetry"
+        class="flex"
+      >
+        <UButton
+          label="Retry"
+          icon="i-lucide-rotate-cw"
+          size="xs"
+          color="neutral"
+          variant="outline"
+          @click="retry"
+        />
+      </div>
     </div>
 
+    <!-- Jump to latest -->
+    <button
+      v-if="!pinnedToBottom && hasContent"
+      class="absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border border-default bg-default px-2.5 py-1 text-xs text-muted shadow-md transition-colors hover:text-default"
+      @click="scrollToBottom"
+    >
+      <UIcon
+        name="i-lucide-arrow-down"
+        class="size-3.5"
+      />
+      Latest
+    </button>
+
     <!-- Composer -->
-    <div class="shrink-0 border-t border-default p-3">
+    <div
+      class="shrink-0 border-t border-default p-3"
+      style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))"
+    >
       <div class="flex items-end gap-2 rounded-xl border border-default bg-elevated/40 px-3 py-2 transition-colors focus-within:border-primary/60">
         <textarea
           ref="inputEl"
           v-model="input"
           rows="1"
           placeholder="Ask about your tasks & notes…"
+          aria-label="Message Arnai"
           class="max-h-40 min-h-[1.5rem] flex-1 resize-none bg-transparent text-sm text-default outline-none placeholder:text-muted"
-          @keydown="onKeydown"
+          @keydown="onInputKeydown"
           @input="autoGrow"
         />
         <UButton
