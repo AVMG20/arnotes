@@ -1,4 +1,5 @@
 import Image from '@tiptap/extension-image'
+import type { AnyExtension } from '@tiptap/core'
 import { VueNodeViewRenderer } from '@tiptap/vue-3'
 import ImageView from '~/components/ImageView.vue'
 
@@ -23,7 +24,9 @@ function parseWidth(element: HTMLElement): number | null {
  * typed width) and aligned left/center/right. Pass `:image="false"` to
  * `UEditor` and register this extension instead.
  */
-export const ResizableImage = Image.extend({
+// The annotation is required: the node view renders a component that is typed
+// from this extension, which TypeScript cannot infer without going in circles.
+export const ResizableImage: AnyExtension = Image.extend({
   draggable: true,
 
   addAttributes() {

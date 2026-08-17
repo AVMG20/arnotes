@@ -85,11 +85,13 @@ function selectNote(id: string) {
   activeTag.value = null
   searchQuery.value = ''
   open.value = false
+  navigateTo(`/note/${id}`)
 }
 
 async function handleCreateNote() {
-  await createNote({ title: hasQuery.value ? parsed.value.text.trim() : undefined })
+  const note = await createNote({ title: hasQuery.value ? parsed.value.text.trim() : undefined })
   open.value = false
+  navigateTo(`/note/${note.id}`)
 }
 
 // ─── Keyboard navigation ─────────────────────────────────────

@@ -148,3 +148,45 @@ export function htmlToMarkdown(html: string): string {
 export function normalizeAiOutput(text: string): string {
   return normalizeMarkdown(text)
 }
+
+// ─── Untrusted markdown (AI chat answers) ────────────────────
+
+const ALLOWED_TAGS = new Set([
+  'A', 'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'HR', 'I', 'INPUT', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY',
+  'TD', 'TH', 'THEAD', 'TR', 'UL'
+])
+const ALLOWED_ATTRS = new Set(['href', 'title', 'type', 'checked', 'disabled', 'align'])
+const SAFE_URL = /^(https?:|mailto:|#|\/)/i
+
+// Model output is rendered with v-html, so it is treated as untrusted: only a
+// markdown-shaped subset of tags and attributes survives.
+export function sanitizeHtml(html: string): string {
+  if (!import.meta.client) return ''
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  for (const el of [...doc.body.querySelectorAll('*')]) {
+    if (!ALLOWED_TAGS.has(el.tagName)) {
+      el.replaceWith(...el.childNodes)
+      continue
+    }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase()
+      if (!ALLOWED_ATTRS.has(name)) {
+        el.removeAttribute(attr.name)
+      } else if ((name === 'href' || name === 'src') && !SAFE_URL.test(attr.value.trim())) {
+        el.removeAttribute(attr.name)
+      }
+    }
+    if (el.tagName === 'A') {
+      el.setAttribute('target', '_blank')
+      el.setAttribute('rel', 'noopener noreferrer nofollow')
+    }
+    if (el.tagName === 'INPUT') el.setAttribute('disabled', '')
+  }
+  return doc.body.innerHTML
+}
+
+export function renderChatMarkdown(text: string): string {
+  if (!text) return ''
+  return sanitizeHtml(marked.parse(text, { async: false, gfm: true, breaks: true }) as string)
+}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { dueInfo } from '~/composables/useTasks'
 
@@ -9,11 +9,12 @@ const route = useRoute()
 const router = useRouter()
 const { sidebarOpen } = useSidebar()
 const searchOpen = useSearchModal()
-const { ready, notes, activeNoteId } = useNotes()
+const { ready, getNote } = useNotes()
 const {
-  tasks,
   openCount,
   doneCount,
+  overdueCount,
+  taskTags,
   filteredTasks,
   statusFilter,
   sort,
@@ -22,97 +23,81 @@ const {
   selectTask,
   createTask,
   toggleTask,
-  deleteNote
+  deleteNote,
+  restoreNote,
+  hasTagFilter,
+  toggleTagFilter
 } = useTasks()
+
+const toast = useToast()
 
 useSeoMeta({ title: 'Tasks' })
 
 // ─── URL ↔ drawer sync ───────────────────────────────────────
-// ?id= opens the drawer; opening/closing the drawer updates ?id= via the
-// selectedTaskId watcher below. router.push keeps browser-history entries so
-// back/forward close and reopen the drawer.
-
-// Guards the selectedTaskId watcher while a URL-driven change propagates.
-// Watchers flush asynchronously, so the flag must survive until nextTick.
-let suppressUrlSync = false
+// ?id= opens the drawer and the drawer writes it back, so browser back/forward
+// (and the Android back button) close and reopen it. Both directions bail out
+// when the two are already in agreement, which is what keeps them from looping.
 
 watch(() => route.query.id, (id) => {
-  suppressUrlSync = true
-  if (typeof id === 'string') selectTask(id)
-  else if (id === undefined) selectTask(null)
-  nextTick(() => {
-    suppressUrlSync = false
-  })
-})
+  const next = typeof id === 'string' ? id : null
+  if (next !== selectedTaskId.value) selectTask(next)
+}, { immediate: true })
 
 watch(selectedTaskId, (id) => {
-  if (suppressUrlSync) return
-  // Once we've left /tasks (e.g. sidebar note click), never push back to it.
   if (route.path !== '/tasks') return
-  if (id && route.query.id !== id) router.push({ path: '/tasks', query: { id } })
-  else if (!id && route.query.id !== undefined) router.push({ path: '/tasks' })
+  const current = typeof route.query.id === 'string' ? route.query.id : null
+  if (id === current) return
+  router.push(id ? { path: '/tasks', query: { id } } : { path: '/tasks' })
 })
 
-// Navigating away (e.g. to a note) must still clear the drawer state.
-watch(() => route.path, (p) => {
-  if (!p.startsWith('/tasks')) selectTask(null)
+// Leaving the tasks view (a linked note, a sidebar click) drops the selection —
+// the drawer state is a singleton shared with the rest of the app.
+watch(() => route.path, (path) => {
+  if (!path.startsWith('/tasks')) selectTask(null)
 })
 
-// Clicking a note in the sidebar while on Tasks returns to the notes view.
-// Suppression is required: the route change would otherwise trigger the
-// sync watcher and insert a bare /tasks entry into the history.
-watch(activeNoteId, (id) => {
-  if (!id || id === selectedTaskId.value) return
-  const note = notes.value.find(n => n.id === id)
-  if (note && !note.isTask) {
-    suppressUrlSync = true
-    router.push('/note/' + id).finally(() => {
-      nextTick(() => {
-        suppressUrlSync = false
-      })
-    })
-  }
-})
-
-// Opening a linked note from the task drawer.
 function openLinkedNote(id: string) {
-  suppressUrlSync = true
-  router.push('/note/' + id).finally(() => {
-    nextTick(() => {
-      suppressUrlSync = false
-    })
-  })
+  router.push('/note/' + id)
 }
 
-// ─── Tag filtering (query supports "#tag" tokens) ────────────
+// ─── Quick add ───────────────────────────────────────────────
+// "Design the landing page #work" → title + tags, without leaving the keyboard.
 
-function toggleTagFilter(tag: string) {
-  const tokens = query.value.split(/\s+/).filter(Boolean)
-  const token = '#' + tag
-  const next = tokens.includes(token)
-    ? tokens.filter(t => t !== token)
-    : [...tokens, token]
-  query.value = next.join(' ')
+const draft = ref('')
+const draftEl = ref<HTMLInputElement | null>(null)
+const creating = ref(false)
+
+async function submitDraft() {
+  const raw = draft.value.trim()
+  if (!raw || creating.value) return
+  const tags = [...raw.matchAll(/#([a-zA-Z][a-zA-Z0-9_]*)/g)].map(m => m[1]!.toLowerCase())
+  const title = raw.replace(/#[a-zA-Z][a-zA-Z0-9_]*/g, '').replace(/\s+/g, ' ').trim() || 'Untitled'
+
+  creating.value = true
+  try {
+    await createTask({ title, tags: [...new Set(tags)] })
+    draft.value = ''
+    // Keep the composer focused so several tasks can be typed in a row.
+    draftEl.value?.focus()
+  } catch {
+    toast.add({ title: 'Could not create task', icon: 'i-lucide-alert-triangle', color: 'error', duration: 3000 })
+  } finally {
+    creating.value = false
+  }
 }
 
-function hasTagFilter(tag: string) {
-  return query.value.split(/\s+/).includes('#' + tag)
+function focusDraft() {
+  draftEl.value?.focus()
 }
+
+// ─── Filtering ───────────────────────────────────────────────
 
 // Autocomplete for a trailing "#par…" token in the filter input.
 const tagSuggestions = computed(() => {
   const partial = /#([\w]*)$/.exec(query.value)?.[1]
   if (partial === undefined) return []
-  const counts = new Map<string, number>()
-  for (const t of tasks.value) {
-    for (const tag of t.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1)
-  }
   const lower = partial.toLowerCase()
-  return [...counts.entries()]
-    .filter(([tag]) => tag.startsWith(lower))
-    .sort((a, b) => b[1] - a[1])
-    .map(([tag]) => tag)
-    .slice(0, 6)
+  return taskTags.value.filter(tag => tag.startsWith(lower)).slice(0, 6)
 })
 
 function completeTag(tag: string) {
@@ -123,14 +108,17 @@ function completeTag(tag: string) {
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
 function onSearchKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && query.value) {
+    e.stopPropagation()
+    query.value = ''
+    return
+  }
   if (tagSuggestions.value.length === 0) return
   if (e.key === 'Tab' || e.key === 'Enter') {
     e.preventDefault()
     completeTag(tagSuggestions.value[0]!)
   }
 }
-
-// ─── Sort menu ───────────────────────────────────────────────
 
 const sortItems = [
   { label: 'Last updated', value: 'updated' },
@@ -144,42 +132,68 @@ const statusTabs = computed(() => [
   { label: 'All', value: 'all' as const, count: openCount.value + doneCount.value }
 ])
 
-function setTab(value: string | number) {
-  statusFilter.value = value as 'open' | 'done' | 'all'
-}
+// One due-date computation per task per render pass instead of one per badge.
+const dueByTask = computed(() =>
+  new Map(filteredTasks.value.map(t => [t.id, dueInfo(t.dueAt)]))
+)
 
-// ─── Due badge ───────────────────────────────────────────────
+const emptyStateText = computed(() => {
+  if (query.value.trim()) return 'No tasks match your filter'
+  if (statusFilter.value === 'done') return 'No completed tasks yet'
+  return 'All clear — nothing to do'
+})
 
-function dueBadge(dueAt: number | null): { label: string, color: 'error' | 'warning' | 'primary' | 'neutral' } | null {
-  const info = dueInfo(dueAt)
-  if (!info) return null
-  const color = info.tone === 'overdue'
-    ? 'error'
-    : info.tone === 'today'
-      ? 'warning'
-      : info.tone === 'soon'
-        ? 'primary'
-        : 'neutral'
-  return { label: info.label, color }
+// ─── Actions ─────────────────────────────────────────────────
+
+async function removeTask(id: string) {
+  const title = getNote(id)?.title ?? 'Task'
+  await deleteNote(id)
+  toast.add({
+    title: `"${title}" moved to trash`,
+    icon: 'i-lucide-trash-2',
+    duration: 5000,
+    actions: [{
+      label: 'Undo',
+      color: 'neutral',
+      variant: 'outline',
+      onClick: () => {
+        restoreNote(id)
+      }
+    }]
+  })
 }
 
 // ─── Keyboard shortcuts ──────────────────────────────────────
 
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && selectedTaskId.value) {
-    selectTask(null)
-    return
-  }
-  if (!e.metaKey && !e.ctrlKey) return
-  if (e.key === 'n') {
-    e.preventDefault()
-    submitUntitled()
-  }
+function isTyping(target: EventTarget | null) {
+  const el = target as HTMLElement | null
+  return !!el && (['INPUT', 'TEXTAREA'].includes(el.tagName) || el.isContentEditable)
 }
 
-async function submitUntitled() {
-  const task = await createTask({})
-  selectTask(task.id)
+function moveSelection(delta: number) {
+  const list = filteredTasks.value
+  if (list.length === 0) return
+  const current = list.findIndex(t => t.id === selectedTaskId.value)
+  const next = current < 0
+    ? (delta > 0 ? 0 : list.length - 1)
+    : Math.min(list.length - 1, Math.max(0, current + delta))
+  selectTask(list[next]!.id)
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+    e.preventDefault()
+    focusDraft()
+    return
+  }
+  if (isTyping(e.target)) return
+  if (e.key === 'ArrowDown' || e.key === 'j') {
+    e.preventDefault()
+    moveSelection(1)
+  } else if (e.key === 'ArrowUp' || e.key === 'k') {
+    e.preventDefault()
+    moveSelection(-1)
+  }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
@@ -191,8 +205,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <!-- List column -->
     <div class="flex min-w-0 flex-1 flex-col bg-default pb-14 lg:pb-0">
       <!-- Header -->
-      <div class="shrink-0 border-b border-default px-6 py-4">
-        <div class="flex items-center gap-3">
+      <div class="shrink-0 border-b border-default px-4 py-4 sm:px-6">
+        <div class="flex items-center gap-2">
           <h1 class="text-xl font-semibold text-default">
             Tasks
           </h1>
@@ -203,6 +217,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           >
             {{ openCount }} open
           </UBadge>
+          <UBadge
+            v-if="overdueCount > 0"
+            color="error"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-calendar-clock"
+          >
+            {{ overdueCount }} overdue
+          </UBadge>
         </div>
 
         <!-- Status tabs -->
@@ -210,11 +233,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <button
             v-for="tab in statusTabs"
             :key="tab.value"
-            class="flex items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors cursor-pointer"
+            class="flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors"
             :class="statusFilter === tab.value
               ? 'bg-primary/10 font-medium text-primary'
               : 'text-muted hover:bg-elevated hover:text-default'"
-            @click="setTab(tab.value)"
+            @click="statusFilter = tab.value"
           >
             {{ tab.label }}
             <span class="text-xs opacity-60">{{ tab.count }}</span>
@@ -222,11 +245,41 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </div>
       </div>
 
-      <!-- Toolbar: search + sort + new task -->
+      <!-- Quick add -->
       <div class="shrink-0 px-4 pt-3">
+        <form
+          class="flex items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 transition-colors focus-within:border-primary/60"
+          @submit.prevent="submitDraft"
+        >
+          <UIcon
+            name="i-lucide-plus"
+            class="size-4 shrink-0 text-muted"
+          />
+          <input
+            ref="draftEl"
+            v-model="draft"
+            placeholder="Add a task… (#tag to label it)"
+            aria-label="New task"
+            class="min-w-0 flex-1 bg-transparent text-sm text-default outline-none placeholder:text-muted"
+          >
+          <UButton
+            type="submit"
+            icon="i-lucide-corner-down-left"
+            size="xs"
+            color="primary"
+            variant="soft"
+            :loading="creating"
+            :disabled="!draft.trim()"
+            aria-label="Create task"
+          />
+        </form>
+      </div>
+
+      <!-- Filter + sort -->
+      <div class="shrink-0 px-4 pt-2">
         <div class="flex items-center gap-2">
           <div class="relative min-w-0 flex-1">
-            <div class="flex items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 transition-colors focus-within:border-primary/60">
+            <div class="flex items-center gap-2.5 rounded-lg px-3 py-1.5 transition-colors">
               <UIcon
                 name="i-lucide-search"
                 class="size-4 shrink-0 text-muted"
@@ -234,10 +287,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <input
                 ref="searchInputRef"
                 v-model="query"
-                placeholder="Search tasks… (# for tags)"
+                placeholder="Filter tasks… (# for tags)"
+                aria-label="Filter tasks"
                 class="min-w-0 flex-1 bg-transparent text-sm text-default outline-none placeholder:text-muted"
                 @keydown="onSearchKeydown"
               >
+              <UButton
+                v-if="query"
+                icon="i-lucide-x"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                aria-label="Clear filter"
+                @click="query = ''"
+              />
             </div>
 
             <!-- #tag autocomplete -->
@@ -248,7 +311,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <button
                 v-for="tag in tagSuggestions"
                 :key="tag"
-                class="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 shrink-0 cursor-pointer"
+                class="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
                 @click="completeTag(tag)"
               >
                 <span class="opacity-70">#</span>{{ tag }}
@@ -266,15 +329,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             icon="i-lucide-arrow-up-down"
             size="sm"
             class="w-36 shrink-0"
-          />
-          <UButton
-            icon="i-lucide-plus"
-            label="New task"
-            size="sm"
-            color="primary"
-            variant="soft"
-            class="shrink-0"
-            @click="submitUntitled"
+            aria-label="Sort tasks"
           />
         </div>
       </div>
@@ -288,11 +343,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           :virtualize="{
             estimateSize: 56,
             overscan: 20,
-            paddingStart: 12,
+            paddingStart: 8,
             paddingEnd: 12,
             gap: 2
           }"
-          class="mx-2 mb-2 mt-2 min-h-0 flex-1"
+          class="mx-2 mb-2 mt-1 min-h-0 flex-1"
           :ui="{ viewport: 'px-1' }"
         >
           <div
@@ -302,11 +357,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           >
             <!-- Checkbox -->
             <button
-              class="flex size-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors cursor-pointer"
+              class="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition-colors"
               :class="task.taskStatus === 'done'
                 ? 'border-primary bg-primary text-inverted'
                 : 'border-muted hover:border-primary'"
-              aria-label="Toggle done"
+              :aria-label="task.taskStatus === 'done' ? 'Mark as open' : 'Mark as done'"
               @click.stop="toggleTask(task.id)"
             >
               <UIcon
@@ -331,8 +386,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 <button
                   v-for="tag in task.tags.slice(0, 4)"
                   :key="tag"
-                  class="rounded px-0.5 text-xs transition-colors cursor-pointer"
-                  :class="hasTagFilter(tag) ? 'text-primary font-medium' : 'text-primary/70 dark:text-primary-400/70 hover:text-primary'"
+                  class="cursor-pointer rounded px-0.5 text-xs transition-colors"
+                  :class="hasTagFilter(tag) ? 'font-medium text-primary' : 'text-primary/70 hover:text-primary dark:text-primary-400/70'"
                   @click.stop="toggleTagFilter(tag)"
                 >
                   #{{ tag }}
@@ -343,13 +398,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <!-- Meta -->
             <div class="flex shrink-0 items-center gap-2.5">
               <UBadge
-                v-if="dueBadge(task.dueAt)"
-                :color="dueBadge(task.dueAt)!.color"
+                v-if="dueByTask.get(task.id)"
+                :color="dueByTask.get(task.id)!.color"
                 variant="subtle"
                 size="sm"
                 icon="i-lucide-calendar"
               >
-                {{ dueBadge(task.dueAt)!.label }}
+                {{ dueByTask.get(task.id)!.label }}
               </UBadge>
               <span class="hidden text-xs text-muted sm:inline">{{ relativeTime(task.updatedAt) }}</span>
               <UButton
@@ -359,7 +414,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 variant="ghost"
                 class="opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                 aria-label="Delete task"
-                @click.stop="deleteNote(task.id)"
+                @click.stop="removeTask(task.id)"
               />
             </div>
           </div>
@@ -368,15 +423,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <!-- Empty state -->
         <div
           v-else
-          class="flex flex-col items-center justify-center gap-2 py-16 text-center flex-1"
+          class="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-center"
         >
           <UIcon
             name="i-lucide-square-check-big"
             class="size-10 text-muted"
           />
           <p class="text-sm text-muted">
-            {{ query ? 'No tasks match your filter' : statusFilter === 'done' ? 'No completed tasks yet' : 'All clear — nothing to do' }}
+            {{ emptyStateText }}
           </p>
+          <UButton
+            v-if="!query.trim() && statusFilter !== 'done'"
+            icon="i-lucide-plus"
+            label="Add a task"
+            color="primary"
+            variant="soft"
+            size="sm"
+            @click="focusDraft"
+          />
         </div>
       </template>
 
@@ -420,12 +484,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         @click="searchOpen = true"
       />
       <UButton
-        icon="i-lucide-square-check-big"
+        icon="i-lucide-plus"
         color="primary"
         variant="soft"
         size="md"
         aria-label="New task"
-        @click="submitUntitled"
+        @click="focusDraft"
       />
     </div>
   </div>

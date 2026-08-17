@@ -3,6 +3,14 @@ import { ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const { ready, filteredNotes, activeNoteId, showTrash, showShared, deleteNote, restoreNote } = useNotes()
+const route = useRoute()
+
+// Selecting a note always lands on the notes view, even when the click comes
+// from the tasks view and the note is already the active one.
+function openNote(id: string) {
+  activeNoteId.value = id
+  if (route.path !== `/note/${id}`) navigateTo(`/note/${id}`)
+}
 
 const scrollArea = useTemplateRef('scrollArea')
 
@@ -52,7 +60,7 @@ async function confirmPermanentDelete() {
         <div
           class="group relative flex cursor-pointer flex-col gap-1 rounded-lg px-3 py-2.5 transition-colors"
           :class="activeNoteId === note.id ? 'bg-elevated ring-1 ring-inset ring-default' : 'hover:bg-elevated/60'"
-          @click="activeNoteId = note.id"
+          @click="openNote(note.id)"
         >
           <!-- Title row -->
           <div class="flex items-start gap-1">

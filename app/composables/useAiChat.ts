@@ -1,6 +1,7 @@
-import { ref, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import type { TaskProp, Note } from '~/composables/useNotes'
 import { markdownToHtml, htmlToMarkdown } from '~/utils/markdown'
+import { toWireMessages } from '~/utils/chatHistory'
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -48,14 +49,11 @@ function loadSession() {
   _initialized.value = true
   try {
     const raw = sessionStorage.getItem(SESSION_KEY)
-    if (raw) {
-      const saved = JSON.parse(raw) as { messages: ChatMessage[], thinking?: boolean }
-      // Drop unfinished tool traffic from a previous page unload.
-      _messages.value = (saved.messages ?? []).filter(m =>
-        m.role !== 'tool' && !m.pending && !(m.role === 'assistant' && m.toolCalls && !m.content)
-      )
-      _thinking.value = saved.thinking ?? false
-    }
+    if (!raw) return
+    const saved = JSON.parse(raw) as { messages?: ChatMessage[], thinking?: boolean }
+    // Anything still in flight when the page unloaded is dead on arrival.
+    _messages.value = (saved.messages ?? []).filter(m => !m.pending)
+    _thinking.value = saved.thinking ?? false
   } catch {
     // Corrupt session — start fresh.
   }
@@ -82,10 +80,14 @@ function endOfDay(dateStr: string): number | null {
   return Number.isNaN(ts) ? null : ts
 }
 
-function toTaskProps(props: Array<{ name?: string, type?: string, value?: string }> | undefined): TaskProp[] {
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+function toTaskProps(props: unknown): TaskProp[] {
   if (!Array.isArray(props)) return []
   return props
-    .filter(p => p?.name && p?.value !== undefined)
+    .filter((p): p is { name: string, type?: string, value?: string } => !!p && typeof p === 'object' && 'name' in p)
     .map(p => ({
       id: uid(),
       name: String(p.name),
@@ -94,19 +96,14 @@ function toTaskProps(props: Array<{ name?: string, type?: string, value?: string
     }))
 }
 
-// Splits stored HTML content into (title, tags, markdown body) so edits can
-// rebuild it without duplicating the heading or tag paragraphs.
-function splitContent(note: Note): { body: string } {
-  const md = htmlToMarkdown(note.content)
-  const lines = md.split('\n')
-  let start = lines[0]?.startsWith('# ') ? 1 : 0
-  const body: string[] = []
-  for (; start < lines.length; start++) {
-    const line = lines[start] ?? ''
-    if (/^#[a-zA-Z][a-zA-Z0-9_]*$/.test(line.trim())) continue
-    body.push(line)
-  }
-  return { body: body.join('\n').trim() }
+// Stored HTML content is "<h1>title</h1><p>#tag</p>…body", so the body is
+// everything after the heading and the tag paragraphs.
+function descriptionOf(note: Note): string {
+  const lines = htmlToMarkdown(note.content).split('\n')
+  const body = lines
+    .slice(lines[0]?.startsWith('# ') ? 1 : 0)
+    .filter(line => !/^#[a-zA-Z][a-zA-Z0-9_]*$/.test(line.trim()))
+  return body.join('\n').trim()
 }
 
 function buildContent(title: string, tags: string[], bodyMd: string): string {
@@ -130,23 +127,24 @@ function noteToResult(n: Note) {
 }
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<{ result: unknown, label: string }> {
-  const { notes, searchNotes, createTask, createNote, updateNote, updateTaskMeta, deleteNote } = useNotes()
+  const { getNote, searchNotes, createTask, createNote, updateNote, updateTaskMeta, deleteNote } = useNotes()
+
+  const notFound = { result: { error: 'Item not found' }, label: 'Item not found' }
 
   switch (name) {
     case 'search_items': {
       const query = String(args.query ?? '')
       const kind = (['task', 'note', 'both'].includes(String(args.kind)) ? args.kind : 'both') as 'task' | 'note' | 'both'
-      const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
-      let pool = searchNotes(query, tags).filter(n => !n.deletedAt)
+      let pool = searchNotes(query, toStringArray(args.tags))
       if (kind !== 'both') pool = pool.filter(n => n.isTask === (kind === 'task'))
       const results = pool.slice(0, 25).map(noteToResult)
       return { result: { count: results.length, results }, label: `Searched "${query || 'all'}"` }
     }
     case 'get_item': {
-      const n = notes.value.find(x => x.id === String(args.id ?? ''))
-      if (!n || n.deletedAt) return { result: { error: 'Item not found' }, label: 'Item not found' }
+      const n = getNote(String(args.id ?? ''))
+      if (!n || n.deletedAt) return notFound
       return {
-        result: { ...noteToResult(n), description: splitContent(n).body },
+        result: { ...noteToResult(n), description: descriptionOf(n) },
         label: `Read "${n.title}"`
       }
     }
@@ -154,90 +152,66 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const task = await createTask({
         title: String(args.title ?? 'Untitled'),
         description: String(args.description ?? ''),
-        tags: Array.isArray(args.tags) ? args.tags.map(String) : [],
+        tags: toStringArray(args.tags),
         dueAt: endOfDay(String(args.due_date ?? '')),
-        taskProps: toTaskProps(args.custom_properties as never)
+        taskProps: toTaskProps(args.custom_properties)
       })
       return { result: noteToResult(task), label: `Created task "${task.title}"` }
     }
     case 'create_note': {
-      const title = String(args.title ?? 'Untitled')
-      const tags = Array.isArray(args.tags) ? args.tags.map(String) : []
-      const content = buildContent(title, tags, String(args.content ?? ''))
-      const note = await createNote({ title })
-      await updateNote(note.id, content)
-      return { result: noteToResult({ ...note, content }), label: `Created note "${title}"` }
+      // `select: false` — a background creation must not move the user's cursor
+      // to a different note while they are working.
+      const note = await createNote({
+        title: String(args.title ?? 'Untitled'),
+        content: String(args.content ?? ''),
+        tags: toStringArray(args.tags),
+        select: false
+      })
+      return { result: noteToResult(note), label: `Created note "${note.title}"` }
     }
     case 'update_item': {
       const id = String(args.id ?? '')
-      const n = notes.value.find(x => x.id === id)
-      if (!n || n.deletedAt) return { result: { error: 'Item not found' }, label: 'Item not found' }
+      const n = getNote(id)
+      if (!n || n.deletedAt) return notFound
 
-      const meta: {
-        taskStatus?: 'open' | 'done'
-        dueAt?: number | null
-        taskProps?: TaskProp[]
-        isTask?: boolean
-      } = {}
-      if (n.isTask || args.is_task === true || args.is_task === false) {
-        // Status/due/props only apply to tasks; is_task converts either way.
+      const willBeTask = args.is_task === undefined ? n.isTask : args.is_task === true
+      const meta: Parameters<typeof updateTaskMeta>[1] = {}
+      if (args.is_task !== undefined && willBeTask !== n.isTask) meta.isTask = willBeTask
+      if (willBeTask) {
         if (args.status === 'open' || args.status === 'done') meta.taskStatus = args.status
         if (args.due_date !== undefined) meta.dueAt = endOfDay(String(args.due_date ?? ''))
-        if (args.custom_properties !== undefined) meta.taskProps = toTaskProps(args.custom_properties as never)
-        if (args.is_task !== undefined) meta.isTask = args.is_task === true
-        if (Object.keys(meta).length > 0) await updateTaskMeta(id, meta)
+        if (args.custom_properties !== undefined) meta.taskProps = toTaskProps(args.custom_properties)
       }
+      if (Object.keys(meta).length > 0) await updateTaskMeta(id, meta)
 
       if (args.title !== undefined || args.description !== undefined || args.tags !== undefined) {
-        const { body } = splitContent(n)
         const title = args.title !== undefined ? String(args.title) : n.title
-        const tags = args.tags !== undefined
-          ? (Array.isArray(args.tags) ? args.tags.map(String) : [])
-          : n.tags
-        const desc = args.description !== undefined ? String(args.description ?? '') : body
-        await updateNote(id, buildContent(title, tags, desc))
+        const tags = args.tags !== undefined ? toStringArray(args.tags) : n.tags
+        const description = args.description !== undefined ? String(args.description) : descriptionOf(n)
+        await updateNote(id, buildContent(title, tags, description))
       }
 
-      const updated = notes.value.find(x => x.id === id)
+      const updated = getNote(id)
+      if (!updated) return { result: { error: 'Update failed' }, label: `Could not update "${n.title}"` }
       return {
-        result: updated ? { ...noteToResult(updated), description: splitContent(updated).body } : { error: 'Update failed' },
-        label: args.is_task === true && !n.isTask
-          ? `Converted "${n.title}" to task`
-          : args.is_task === false && n.isTask
-            ? `Converted "${n.title}" to note`
-            : `Updated "${n.title}"`
+        result: { ...noteToResult(updated), description: descriptionOf(updated) },
+        label: meta.isTask === true
+          ? `Converted "${updated.title}" to task`
+          : meta.isTask === false
+            ? `Converted "${updated.title}" to note`
+            : `Updated "${updated.title}"`
       }
     }
     case 'delete_item': {
       const id = String(args.id ?? '')
-      const n = notes.value.find(x => x.id === id)
-      if (!n || n.deletedAt) return { result: { error: 'Item not found' }, label: 'Item not found' }
+      const n = getNote(id)
+      if (!n || n.deletedAt) return notFound
       await deleteNote(id) // soft delete — restorable from trash
       return { result: { ok: true, id, deleted: true }, label: `Moved "${n.title}" to trash` }
     }
     default:
       return { result: { error: `Unknown tool: ${name}` }, label: `Unknown tool ${name}` }
   }
-}
-
-// ─── Wire format (OpenAI messages sent to /api/chat) ─────────
-
-function toWire(): Array<Record<string, unknown>> {
-  return _messages.value
-    .filter((m) => {
-      if (m.role === 'tool') return !m.pending
-      if (m.error || m.pending) return false
-      return m.content.trim() !== '' || !!m.toolCalls
-    })
-    .map((m) => {
-      if (m.role === 'assistant' && m.toolCalls) {
-        return { role: 'assistant', content: m.content || null, tool_calls: m.toolCalls }
-      }
-      if (m.role === 'tool') {
-        return { role: 'tool', tool_call_id: m.toolCallId, name: m.name, content: m.content }
-      }
-      return { role: m.role, content: m.content }
-    })
 }
 
 // ─── Composable ──────────────────────────────────────────────
@@ -248,134 +222,161 @@ export function useAiChat() {
   async function send(text: string) {
     const input = text.trim()
     if (!input || _busy.value) return
-
     _messages.value.push({ id: uid(), role: 'user', content: input })
     await runCompletion()
+  }
+
+  // Re-runs the last user turn after a failure, dropping the failed reply.
+  async function retry() {
+    if (_busy.value) return
+    const lastUser = [..._messages.value].reverse().find(m => m.role === 'user')
+    if (!lastUser) return
+    const index = _messages.value.indexOf(lastUser)
+    _messages.value = _messages.value.slice(0, index + 1)
+    await runCompletion()
+  }
+
+  async function streamRound(assistant: ChatMessage, signal: AbortSignal): Promise<ToolCallRequest[] | null> {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // The model needs the user's local date to resolve "today", "this week"
+      // and relative due dates — the server clock may be in another timezone.
+      body: JSON.stringify({
+        messages: toWireMessages(_messages.value),
+        thinking: _thinking.value,
+        today: new Date().toLocaleDateString('en-CA')
+      }),
+      signal
+    })
+
+    if (!res.ok || !res.body) {
+      const err = JSON.parse(await res.text().catch(() => '{}')) as { statusMessage?: string, message?: string }
+      throw new Error(err.statusMessage ?? err.message ?? `Chat failed (${res.status})`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let toolCalls: ToolCallRequest[] | null = null
+    let buffer = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        let evt: {
+          type: 'delta' | 'reasoning' | 'tool_calls' | 'done' | 'error'
+          text?: string
+          calls?: ToolCallRequest[]
+          message?: string
+        }
+        try {
+          evt = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (evt.type === 'delta' && evt.text) assistant.content += evt.text
+        else if (evt.type === 'reasoning' && evt.text) assistant.reasoning = (assistant.reasoning ?? '') + evt.text
+        else if (evt.type === 'tool_calls' && evt.calls) toolCalls = evt.calls
+        else if (evt.type === 'error') throw new Error(evt.message ?? 'Model error')
+        else if (evt.type === 'done') return toolCalls
+      }
+    }
+    return toolCalls
+  }
+
+  async function runTools(calls: ToolCallRequest[]) {
+    for (const call of calls) {
+      const toolMsg = reactive<ChatMessage>({
+        id: uid(),
+        role: 'tool',
+        content: '',
+        toolCallId: call.id,
+        name: call.function.name,
+        pending: true
+      })
+      _messages.value.push(toolMsg)
+
+      let args: Record<string, unknown> = {}
+      try {
+        args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>
+      } catch {
+        // Malformed arguments — run with none and let the model see the error.
+      }
+      try {
+        const { result, label } = await executeTool(call.function.name, args)
+        toolMsg.content = JSON.stringify(result)
+        toolMsg.label = label
+        const target = result as { id?: string, kind?: 'task' | 'note', error?: string }
+        if (target?.id && !target.error && (target.kind === 'task' || target.kind === 'note')) {
+          toolMsg.targetId = target.id
+          toolMsg.targetKind = target.kind
+        }
+      } catch (error) {
+        toolMsg.content = JSON.stringify({ error: (error as Error).message })
+        toolMsg.label = `${call.function.name} failed`
+        toolMsg.error = true
+      }
+      toolMsg.pending = false
+    }
   }
 
   async function runCompletion() {
     _busy.value = true
     _abort = new AbortController()
+    const signal = _abort.signal
 
-    let rounds = 0
     try {
-      while (rounds < MAX_TOOL_ROUNDS) {
-        rounds++
-        const assistant = ref<ChatMessage>({
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const assistant = reactive<ChatMessage>({
           id: uid(),
           role: 'assistant',
           content: '',
           reasoning: '',
           pending: true
         })
-        _messages.value.push(assistant.value)
+        _messages.value.push(assistant)
 
         let toolCalls: ToolCallRequest[] | null = null
         try {
-          const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: toWire(), thinking: _thinking.value }),
-            signal: _abort.signal
-          })
-
-          if (!res.ok || !res.body) {
-            const err = JSON.parse(await res.text().catch(() => '{}')) as { statusMessage?: string, message?: string }
-            throw new Error(err.statusMessage ?? err.message ?? `Chat failed (${res.status})`)
-          }
-
-          const reader = res.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
-          stream: while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-            for (const line of lines) {
-              if (!line.trim()) continue
-              let evt: {
-                type: 'delta' | 'reasoning' | 'tool_calls' | 'done' | 'error'
-                text?: string
-                calls?: ToolCallRequest[]
-                message?: string
-              }
-              try {
-                evt = JSON.parse(line)
-              } catch {
-                continue
-              }
-              if (evt.type === 'delta' && evt.text) {
-                assistant.value.content += evt.text
-              } else if (evt.type === 'reasoning' && evt.text) {
-                assistant.value.reasoning = (assistant.value.reasoning ?? '') + evt.text
-              } else if (evt.type === 'tool_calls' && evt.calls) {
-                toolCalls = evt.calls
-              } else if (evt.type === 'error') {
-                throw new Error(evt.message ?? 'Model error')
-              } else if (evt.type === 'done') {
-                break stream
-              }
-            }
-          }
+          toolCalls = await streamRound(assistant, signal)
         } catch (error) {
+          assistant.pending = false
           if ((error as Error).name === 'AbortError') {
-            assistant.value.pending = false
-            if (!assistant.value.content && !assistant.value.reasoning) {
-              _messages.value = _messages.value.filter(m => m.id !== assistant.value.id)
+            if (!assistant.content && !assistant.reasoning) {
+              _messages.value = _messages.value.filter(m => m.id !== assistant.id)
             }
-            break
+            return
           }
-          assistant.value.content = assistant.value.content || `⚠️ ${(error as Error).message}`
-          assistant.value.error = true
-          assistant.value.pending = false
-          break
+          assistant.content = assistant.content || `⚠️ ${(error as Error).message}`
+          assistant.error = true
+          return
         }
 
-        assistant.value.toolCalls = toolCalls ?? undefined
-        assistant.value.pending = false
+        assistant.toolCalls = toolCalls ?? undefined
+        assistant.pending = false
+        if (!toolCalls) return
 
-        if (!toolCalls) break
-
-        // Execute tools locally, append tool results, let the model continue.
-        for (const call of toolCalls) {
-          const toolMsg = ref<ChatMessage>({
-            id: uid(),
-            role: 'tool',
-            content: '',
-            toolCallId: call.id,
-            name: call.function.name,
-            pending: true
-          })
-          _messages.value.push(toolMsg.value)
-          let args: Record<string, unknown> = {}
-          try {
-            args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>
-          } catch {
-            // Malformed arguments — pass through empty and let the model retry.
-          }
-          try {
-            const { result, label } = await executeTool(call.function.name, args)
-            toolMsg.value.content = JSON.stringify(result)
-            toolMsg.value.label = label
-            const target = result as { id?: string, kind?: 'task' | 'note', error?: string }
-            if (target && !target.error && target.id && (target.kind === 'task' || target.kind === 'note')) {
-              toolMsg.value.targetId = target.id
-              toolMsg.value.targetKind = target.kind
-            }
-          } catch (error) {
-            toolMsg.value.content = JSON.stringify({ error: (error as Error).message })
-            toolMsg.value.label = `${call.function.name} failed`
-          }
-          toolMsg.value.pending = false
-        }
-        // Loop: next round sends tool results back to the model.
+        await runTools(toolCalls)
+        if (signal.aborted) return
+        // Next round sends the tool results back to the model.
       }
+
+      _messages.value.push({
+        id: uid(),
+        role: 'assistant',
+        content: `⚠️ Stopped after ${MAX_TOOL_ROUNDS} tool rounds. Ask me to continue if there is more to do.`,
+        error: true
+      })
     } finally {
       _busy.value = false
       _abort = null
-      // Trim trailing empty assistant messages (e.g. aborted before any token).
+      // Drop assistant turns that produced nothing at all (aborted mid-stream).
       _messages.value = _messages.value.filter(m => m.role !== 'assistant' || m.content.trim() || m.toolCalls)
     }
   }
@@ -395,6 +396,7 @@ export function useAiChat() {
     thinking: _thinking,
     busy: _busy,
     send,
+    retry,
     stop,
     clearChat
   }
