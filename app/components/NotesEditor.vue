@@ -19,9 +19,17 @@ import { DateMention } from '~/composables/useDateMention'
 import { ResizableImage } from '~/utils/resizable-image'
 import TableGridPicker from '~/components/TableGridPicker.vue'
 
-const { activeNote, activeNoteId, autoFocus, updateNote, updateSharing } = useNotes()
+// Without `noteId` the editor follows the globally selected note (notes view).
+// Passing one binds it to that note instead, so embedded editors (the task
+// drawer) no longer have to hijack the global selection.
+const props = defineProps<{ noteId?: string | null }>()
+
+const { activeNoteId, autoFocus, getNote, createNote, updateNote, updateSharing } = useNotes()
 const toast = useToast()
 const { openrouterApiKey } = useUserSettings()
+
+const noteId = computed(() => props.noteId !== undefined ? props.noteId : activeNoteId.value)
+const note = computed(() => getNote(noteId.value))
 
 // ─── AI helpers ───────────────────────────────────────────────
 const aiLoading = ref(false)
@@ -292,7 +300,7 @@ const shareEndDate = ref('')
 const sharing = ref(false)
 
 watch(shareOpen, (open) => {
-  if (open) shareEndDate.value = formatShareEndDate(activeNote.value?.publicUntil ?? null)
+  if (open) shareEndDate.value = formatShareEndDate(note.value?.publicUntil ?? null)
 })
 
 function formatShareEndDate(timestamp: number | null) {
@@ -309,7 +317,7 @@ function getShareExpiry() {
 }
 
 function publicLink() {
-  return activeNote.value ? `${window.location.origin}/public/${activeNote.value.id}` : ''
+  return note.value ? `${window.location.origin}/public/${note.value.id}` : ''
 }
 
 function shareExpiryLabel(timestamp: number | null) {
@@ -327,7 +335,7 @@ async function copyPublicLink() {
 }
 
 async function saveSharing(isPublic: boolean) {
-  if (!activeNoteId.value) return
+  if (!noteId.value) return
   const publicUntil = isPublic ? getShareExpiry() : null
   if (publicUntil && publicUntil <= Date.now()) {
     toast.add({ title: 'Choose a future end date', icon: 'i-lucide-calendar-x', color: 'error', duration: 3000 })
@@ -335,7 +343,7 @@ async function saveSharing(isPublic: boolean) {
   }
   sharing.value = true
   try {
-    const updated = await updateSharing(activeNoteId.value, isPublic, publicUntil)
+    const updated = await updateSharing(noteId.value, isPublic, publicUntil)
     shareEndDate.value = formatShareEndDate(updated.publicUntil)
     toast.add({
       title: updated.isPublic ? 'Note is shared' : 'Sharing stopped',
@@ -354,12 +362,12 @@ const editorRef = ref()
 // ─── Image upload ────────────────────────────────────────────
 
 async function uploadImage(file: File): Promise<string | null> {
-  const noteId = activeNoteId.value
-  if (!noteId) return null
+  const id = noteId.value
+  if (!id) return null
   const form = new FormData()
   form.append('file', file)
   try {
-    const res = await $fetch<{ url: string }>(`/api/notes/${noteId}/attachments`, { method: 'POST', body: form })
+    const res = await $fetch<{ url: string }>(`/api/notes/${id}/attachments`, { method: 'POST', body: form })
     return res.url
   } catch {
     toast.add({ title: 'Image upload failed', icon: 'i-lucide-image-off', color: 'error', duration: 3000 })
@@ -819,7 +827,7 @@ let suppressSave = false
 function scheduleAutoSave(html: string) {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    const id = activeNoteId.value
+    const id = noteId.value
     if (id) {
       updateNote(id, html)
       isDirty.value = false
@@ -828,7 +836,7 @@ function scheduleAutoSave(html: string) {
 }
 
 function flushSave(id?: string) {
-  const targetId = id ?? activeNoteId.value
+  const targetId = id ?? noteId.value
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
@@ -845,21 +853,34 @@ watch(editorContent, (html) => {
   scheduleAutoSave(html)
 })
 
-watch(activeNoteId, async (newId, oldId) => {
+watch(noteId, async (newId, oldId) => {
   if (oldId) flushSave(oldId)
   closeSlashTablePicker()
   tablePickerOpen.value = false
   suppressSave = true
-  editorContent.value = activeNote.value?.content ?? ''
+  editorContent.value = note.value?.content ?? ''
   await nextTick()
   suppressSave = false
   isDirty.value = false
-  shareEndDate.value = formatShareEndDate(activeNote.value?.publicUntil ?? null)
+  shareEndDate.value = formatShareEndDate(note.value?.publicUntil ?? null)
   if (newId && autoFocus.value) {
     autoFocus.value = false
     editorRef.value?.editor?.commands.focus('start')
   }
 }, { immediate: true })
+
+// Pull in changes made to this note elsewhere (renaming from the task drawer,
+// edits by the AI chat). Skipped while the user has unsaved keystrokes so a
+// background write can never clobber what is being typed.
+watch(() => note.value?.content, (content) => {
+  if (content === undefined || isDirty.value || saveTimer) return
+  if (content === editorContent.value) return
+  suppressSave = true
+  editorContent.value = content
+  nextTick(() => {
+    suppressSave = false
+  })
+})
 
 onBeforeUnmount(() => {
   flushSave()
@@ -874,13 +895,13 @@ function copyToMarkdown() {
   })
 }
 
-const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
+const tagCount = computed(() => note.value?.tags.length ?? 0)
 </script>
 
 <template>
   <div class="flex flex-col h-full bg-default">
     <!-- Empty state -->
-    <template v-if="!activeNote">
+    <template v-if="!note">
       <div class="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
         <UIcon
           name="i-lucide-notebook-pen"
@@ -895,7 +916,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
           color="primary"
           variant="soft"
           size="sm"
-          @click="useNotes().createNote()"
+          @click="createNote()"
         />
       </div>
     </template>
@@ -963,9 +984,9 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                 @open-auto-focus.prevent
               >
                 <UButton
-                  :icon="activeNote?.isPublic ? 'i-lucide-globe' : 'i-lucide-share-2'"
+                  :icon="note?.isPublic ? 'i-lucide-globe' : 'i-lucide-share-2'"
                   size="xs"
-                  :color="activeNote?.isPublic ? 'primary' : 'neutral'"
+                  :color="note?.isPublic ? 'primary' : 'neutral'"
                   variant="ghost"
                   aria-label="Share note"
                 >
@@ -986,7 +1007,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                           Share this note
                         </p>
                         <p class="text-xs text-muted">
-                          {{ activeNote?.isPublic ? 'Anyone with the link can view it.' : 'Create a view-only public link.' }}
+                          {{ note?.isPublic ? 'Anyone with the link can view it.' : 'Create a view-only public link.' }}
                         </p>
                       </div>
                     </div>
@@ -1007,7 +1028,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                     </UFormField>
 
                     <div
-                      v-if="activeNote?.isPublic"
+                      v-if="note?.isPublic"
                       class="rounded-md bg-elevated px-2.5 py-2"
                     >
                       <p class="text-xs font-medium text-default">
@@ -1017,13 +1038,13 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                         {{ publicLink() }}
                       </p>
                       <p class="mt-1 text-xs text-muted">
-                        {{ shareExpiryLabel(activeNote?.publicUntil ?? null) }}
+                        {{ shareExpiryLabel(note?.publicUntil ?? null) }}
                       </p>
                     </div>
 
                     <div class="flex gap-2">
                       <UButton
-                        :label="activeNote?.isPublic ? 'Save changes' : 'Share note'"
+                        :label="note?.isPublic ? 'Save changes' : 'Share note'"
                         icon="i-lucide-send"
                         size="sm"
                         class="flex-1 justify-center"
@@ -1031,7 +1052,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                         @click="saveSharing(true)"
                       />
                       <UButton
-                        v-if="activeNote?.isPublic"
+                        v-if="note?.isPublic"
                         label="Copy link"
                         icon="i-lucide-copy"
                         size="sm"
@@ -1042,7 +1063,7 @@ const tagCount = computed(() => activeNote.value?.tags.length ?? 0)
                     </div>
 
                     <UButton
-                      v-if="activeNote?.isPublic"
+                      v-if="note?.isPublic"
                       label="Stop sharing"
                       icon="i-lucide-lock"
                       size="sm"
