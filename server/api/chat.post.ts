@@ -66,9 +66,24 @@ export default defineEventHandler(async (event) => {
   const model = settings?.openrouterModel || DEFAULT_OPENROUTER_MODEL
   const thinking = body.thinking === true
 
-  let res: Response
-  try {
-    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const buildMessages = () => [
+    { role: 'system', content: CHAT_SYSTEM_PROMPT },
+    ...history.map((m) => {
+      // `name` on tool messages is not in the OpenAI chat spec and some
+      // providers reject it — only forward spec-compliant fields.
+      if (m.role === 'tool') {
+        return { role: 'tool' as const, tool_call_id: m.tool_call_id, content: m.content }
+      }
+      return {
+        role: m.role,
+        content: m.content ?? '',
+        ...(m.tool_calls && { tool_calls: m.tool_calls })
+      }
+    })
+  ]
+
+  const requestCompletion = (reasoning: { effort?: 'none' | 'medium', exclude?: boolean }) =>
+    fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -78,22 +93,28 @@ export default defineEventHandler(async (event) => {
       },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: CHAT_SYSTEM_PROMPT },
-          ...history.map(m => ({
-            role: m.role,
-            content: m.content ?? '',
-            ...(m.tool_calls && { tool_calls: m.tool_calls }),
-            ...(m.tool_call_id && { tool_call_id: m.tool_call_id }),
-            ...(m.name && { name: m.name })
-          }))
-        ],
+        messages: buildMessages(),
         tools: CHAT_TOOLS,
-        reasoning: thinking ? { effort: 'medium' } : { effort: 'none', exclude: true },
+        reasoning,
         stream: true,
         stream_options: { include_usage: true }
       })
     })
+
+  let res: Response
+  try {
+    if (thinking) {
+      res = await requestCompletion({ effort: 'medium' })
+    } else {
+      // `none` disables configurable reasoning. Mandatory-thinking models
+      // reject it — retry once with reasoning merely hidden (same policy
+      // as /api/ai so those models stay usable here too).
+      res = await requestCompletion({ effort: 'none', exclude: true })
+      if (!res.ok && [400, 422, 500].includes(res.status)) {
+        console.warn('[AI Chat] Retrying without disabled reasoning', { model, status: res.status })
+        res = await requestCompletion({ exclude: true })
+      }
+    }
   } catch (error) {
     console.error('[AI Chat] Unable to reach OpenRouter', { model, error })
     throw createError({ statusCode: 502, statusMessage: 'Could not reach OpenRouter. Check the server connection and try again.' })

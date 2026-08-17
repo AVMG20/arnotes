@@ -96,7 +96,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
     type: 'function',
     function: {
       name: 'update_item',
-      description: 'Edit an existing task or note. Only provided fields change; description/tags/tags-lists are replaced as a whole when given. Tasks support status, due_date and custom_properties.',
+      description: 'Edit an existing task or note. Only provided fields change; description/tags/custom_properties are replaced as a whole when given. Set is_task=true to convert a note into a task, is_task=false to convert back.',
       parameters: {
         type: 'object',
         properties: {
@@ -106,6 +106,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
           tags: { type: 'array', items: { type: 'string' }, description: 'Full replacement tag list (no # prefix).' },
           status: { type: 'string', enum: ['open', 'done'], description: 'Task status.' },
           due_date: { type: 'string', description: 'New due date as YYYY-MM-DD, or empty string to clear.' },
+          is_task: { type: 'boolean', description: 'Convert the item between task (true) and note (false).' },
           custom_properties: {
             type: 'array',
             description: 'Full replacement custom property list (existing ones not repeated here are removed).',
@@ -123,6 +124,20 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
         required: ['id']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_item',
+      description: 'Move a task or note to the trash (soft delete, recoverable from the trash view).',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The item id.' }
+        },
+        required: ['id']
+      }
+    }
   }
 ]
 
@@ -133,6 +148,7 @@ You can search, read, create and edit the user's tasks and notes through the pro
 Common flows:
 - The user often pastes tasks exported from Asana or similar tools (tab/pipe separated rows, bullet lists, or links). Parse them and create one task each: a short actionable title and a markdown description with the details. Turn subtasks into "- [ ]" checklist items in the description. If a row or the pasted text contains a source URL (e.g. app.asana.com/...), store it as a custom property named "Asana" with type "link" on that task. Extract due dates when present and set due_date.
 - For questions like "what do I still need to do" or "find the note about X", search and summarize concisely (group, count, list titles with due dates when relevant).
-- When editing, always pass complete replacement values for description/tags/custom_properties, not deltas.
+- When editing, always pass complete replacement values for description/tags/custom_properties, not deltas. To turn a note into a task (or back), use update_item with is_task — never recreate an item to convert it.
+- delete_item only moves items to trash (users recover them there); there is no permanent delete. Never recreate items as a substitute for editing.
 
 Dates are YYYY-MM-DD. Be concise, use markdown, and reply in the user's language.`

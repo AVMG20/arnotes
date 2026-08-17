@@ -71,7 +71,8 @@ const toolIcon: Record<string, string> = {
   get_item: 'i-lucide-file-text',
   create_task: 'i-lucide-square-check-big',
   create_note: 'i-lucide-notebook-pen',
-  update_item: 'i-lucide-pencil-line'
+  update_item: 'i-lucide-pencil-line',
+  delete_item: 'i-lucide-trash-2'
 }
 
 const SUGGESTIONS = [

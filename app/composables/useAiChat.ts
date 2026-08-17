@@ -130,7 +130,7 @@ function noteToResult(n: Note) {
 }
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<{ result: unknown, label: string }> {
-  const { notes, searchNotes, createTask, createNote, updateNote, updateTaskMeta } = useNotes()
+  const { notes, searchNotes, createTask, createNote, updateNote, updateTaskMeta, deleteNote } = useNotes()
 
   switch (name) {
     case 'search_items': {
@@ -173,12 +173,18 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const n = notes.value.find(x => x.id === id)
       if (!n || n.deletedAt) return { result: { error: 'Item not found' }, label: 'Item not found' }
 
-      const isTask = n.isTask
-      if (isTask) {
-        const meta: { taskStatus?: 'open' | 'done', dueAt?: number | null, taskProps?: TaskProp[] } = {}
+      const meta: {
+        taskStatus?: 'open' | 'done'
+        dueAt?: number | null
+        taskProps?: TaskProp[]
+        isTask?: boolean
+      } = {}
+      if (n.isTask || args.is_task === true || args.is_task === false) {
+        // Status/due/props only apply to tasks; is_task converts either way.
         if (args.status === 'open' || args.status === 'done') meta.taskStatus = args.status
         if (args.due_date !== undefined) meta.dueAt = endOfDay(String(args.due_date ?? ''))
         if (args.custom_properties !== undefined) meta.taskProps = toTaskProps(args.custom_properties as never)
+        if (args.is_task !== undefined) meta.isTask = args.is_task === true
         if (Object.keys(meta).length > 0) await updateTaskMeta(id, meta)
       }
 
@@ -195,8 +201,19 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const updated = notes.value.find(x => x.id === id)
       return {
         result: updated ? { ...noteToResult(updated), description: splitContent(updated).body } : { error: 'Update failed' },
-        label: `Updated "${n.title}"`
+        label: args.is_task === true && !n.isTask
+          ? `Converted "${n.title}" to task`
+          : args.is_task === false && n.isTask
+            ? `Converted "${n.title}" to note`
+            : `Updated "${n.title}"`
       }
+    }
+    case 'delete_item': {
+      const id = String(args.id ?? '')
+      const n = notes.value.find(x => x.id === id)
+      if (!n || n.deletedAt) return { result: { error: 'Item not found' }, label: 'Item not found' }
+      await deleteNote(id) // soft delete — restorable from trash
+      return { result: { ok: true, id, deleted: true }, label: `Moved "${n.title}" to trash` }
     }
     default:
       return { result: { error: `Unknown tool: ${name}` }, label: `Unknown tool ${name}` }
