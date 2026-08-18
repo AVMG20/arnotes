@@ -77,6 +77,23 @@ const toolIcon: Record<string, string> = {
   delete_note: 'i-lucide-trash-2'
 }
 
+const toolVerb: Record<string, string> = {
+  search_notes: 'Searching notes',
+  get_note: 'Reading a note',
+  create_note: 'Writing a new note',
+  update_note: 'Rewriting a note',
+  delete_note: 'Moving a note to trash'
+}
+
+// While the model writes a long tool argument (a whole note body) no text
+// streams in, so say what it is doing instead of showing a bare spinner.
+function pendingLabel(m: ChatMessage): string {
+  if (m.retrying) return 'Connection lost — reconnecting…'
+  const call = m.toolProgress?.[m.toolProgress.length - 1]
+  if (call?.name) return `${toolVerb[call.name] ?? call.name}…`
+  return 'Thinking…'
+}
+
 const SUGGESTIONS = [
   { icon: 'i-lucide-search', label: 'Find notes about ' },
   { icon: 'i-lucide-notebook-pen', label: 'Write a note about ' },
@@ -335,14 +352,16 @@ function openTarget(m: ChatMessage) {
           />
 
           <div
-            v-if="m.pending && !m.content && !m.reasoning"
-            class="flex items-center gap-1.5 text-xs text-muted"
+            v-if="m.pending && (m.retrying || m.toolProgress?.length || (!m.content && !m.reasoning))"
+            class="flex items-center gap-1.5 text-xs"
+            :class="m.retrying ? 'text-warning' : 'text-muted'"
           >
             <UIcon
-              name="i-lucide-loader-circle"
-              class="size-3.5 animate-spin"
+              :name="m.retrying ? 'i-lucide-wifi-off' : 'i-lucide-loader-circle'"
+              class="size-3.5"
+              :class="{ 'animate-spin': !m.retrying }"
             />
-            Thinking…
+            {{ pendingLabel(m) }}
           </div>
         </div>
       </template>
