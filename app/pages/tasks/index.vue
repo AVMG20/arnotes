@@ -187,6 +187,8 @@ function onKeydown(e: KeyboardEvent) {
     return
   }
   if (isTyping(e.target)) return
+  // Bare keys only — ⌘K belongs to the search modal, not to list navigation.
+  if (e.metaKey || e.ctrlKey || e.altKey) return
   if (e.key === 'ArrowDown' || e.key === 'j') {
     e.preventDefault()
     moveSelection(1)

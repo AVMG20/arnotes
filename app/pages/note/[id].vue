@@ -26,12 +26,10 @@ watch(activeNoteId, (id) => {
   else if (!id) router.replace('/note')
 })
 
+// ⌘K is owned by NotesSearchModal so it works on every view.
 function onKeydown(e: KeyboardEvent) {
   if (!e.metaKey && !e.ctrlKey) return
-  if (e.key === 'k') {
-    e.preventDefault()
-    searchOpen.value = true
-  } else if (e.key === 'n') {
+  if (e.key === 'n') {
     e.preventDefault()
     createNote(undefined)
   } else if (e.key === 'w' && activeNote.value) {

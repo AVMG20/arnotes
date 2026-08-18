@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote, notes } = useNotes()
@@ -122,6 +122,23 @@ function handleListKey(e: KeyboardEvent) {
   }
 }
 
+// ─── Global shortcut ─────────────────────────────────────────
+// The modal is mounted once by the app layout, so owning ⌘K here keeps it
+// working on every view — including ones that run their own key handling, such
+// as the tasks list with an open task drawer. Capture phase, so an editor or a
+// dialog further down cannot swallow the combo first.
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+  if (e.key.toLowerCase() !== 'k') return
+  e.preventDefault()
+  e.stopPropagation()
+  open.value = true
+}
+
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown, true))
+onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown, true))
+
 // ─── Snippet & highlighting ───────────────────────────────────
 
 function escapeHtml(s: string): string {
@@ -168,7 +185,7 @@ function smartSnippet(html: string): string {
   <UModal
     v-model:open="open"
     :close="false"
-    :ui="{ content: 'p-0 overflow-hidden gap-0 max-w-4xl' }"
+    :ui="{ content: 'p-0 overflow-hidden gap-0 sm:max-w-2xl' }"
   >
     <template #content>
       <div @keydown="handleListKey">
@@ -249,23 +266,25 @@ function smartSnippet(html: string): string {
             <button
               v-for="note in searchNotes('').slice(0, 5)"
               :key="note.id"
-              class="flex items-center justify-between w-full px-5 py-3 text-left gap-4 hover:bg-elevated/70 transition-colors"
+              class="group flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-elevated/70"
               @click="selectNote(note.id)"
             >
-              <span class="font-medium text-sm text-default truncate">{{ note.title || 'Untitled' }}</span>
-              <div class="flex items-center gap-3 shrink-0">
-                <div
-                  v-if="note.tags.length"
-                  class="flex gap-1"
-                >
-                  <span
-                    v-for="tag in note.tags.slice(0, 2)"
-                    :key="tag"
-                    class="text-xs text-primary-500 dark:text-primary-400"
-                  >#{{ tag }}</span>
-                </div>
-                <span class="text-xs text-muted">{{ relativeTime(note.updatedAt) }}</span>
+              <UIcon
+                :name="note.isTask ? 'i-lucide-square-check-big' : 'i-lucide-file-text'"
+                class="size-4 shrink-0 text-dimmed group-hover:text-muted"
+              />
+              <span class="min-w-0 flex-1 truncate text-sm font-medium text-default">{{ note.title || 'Untitled' }}</span>
+              <div
+                v-if="note.tags.length"
+                class="hidden shrink-0 gap-1 sm:flex"
+              >
+                <span
+                  v-for="tag in note.tags.slice(0, 2)"
+                  :key="tag"
+                  class="text-xs text-primary-500 dark:text-primary-400"
+                >#{{ tag }}</span>
               </div>
+              <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(note.updatedAt) }}</span>
             </button>
 
             <!-- Create new note (no query) -->
@@ -310,48 +329,54 @@ function smartSnippet(html: string): string {
             <button
               v-for="(note, i) in results"
               :key="note.id"
-              class="flex flex-col gap-1.5 w-full px-5 py-3.5 text-left border-b border-default/40 last:border-0 transition-colors"
-              :class="i === highlighted ? 'bg-elevated' : 'hover:bg-elevated/60'"
+              class="flex w-full gap-3 border-b border-l-2 border-b-default/40 px-5 py-3 text-left transition-colors"
+              :class="i === highlighted
+                ? 'border-l-primary-500 bg-elevated'
+                : 'border-l-transparent hover:bg-elevated/60'"
               @click="selectNote(note.id)"
               @mouseenter="highlighted = i"
             >
-              <div class="flex items-start justify-between gap-4">
-                <span
-                  class="font-medium text-base text-default leading-snug flex items-center gap-1.5 min-w-0"
-                  v-html="highlight(note.title || 'Untitled')"
-                />
-                <UIcon
-                  v-if="note.isTask"
-                  name="i-lucide-square-check-big"
-                  class="size-3.5 shrink-0 mt-1 text-muted"
-                />
-                <span class="text-xs text-muted shrink-0 mt-0.5">{{ relativeTime(note.updatedAt) }}</span>
-              </div>
-              <p
-                v-if="smartSnippet(note.content)"
-                class="text-sm text-muted line-clamp-3 leading-relaxed"
-                v-html="highlight(smartSnippet(note.content))"
+              <UIcon
+                :name="note.isTask ? 'i-lucide-square-check-big' : 'i-lucide-file-text'"
+                class="mt-0.5 size-4 shrink-0"
+                :class="i === highlighted ? 'text-primary-500' : 'text-dimmed'"
               />
-              <div
-                v-if="note.tags.length"
-                class="flex flex-wrap gap-1.5 mt-0.5"
-              >
-                <span
-                  v-for="tag in note.tags.slice(0, 5)"
-                  :key="tag"
-                  class="text-xs transition-colors"
-                  :class="selectedTags.includes(tag)
-                    ? 'text-primary-600 dark:text-primary-400 font-semibold'
-                    : 'text-primary-500/70 dark:text-primary-500/70'"
-                >#{{ tag }}</span>
+              <div class="flex min-w-0 flex-1 flex-col gap-1">
+                <div class="flex items-baseline gap-3">
+                  <span
+                    class="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-default"
+                    v-html="highlight(note.title || 'Untitled')"
+                  />
+                  <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(note.updatedAt) }}</span>
+                </div>
+                <p
+                  v-if="smartSnippet(note.content)"
+                  class="line-clamp-2 text-sm leading-relaxed text-muted"
+                  v-html="highlight(smartSnippet(note.content))"
+                />
+                <div
+                  v-if="note.tags.length"
+                  class="mt-0.5 flex flex-wrap gap-1.5"
+                >
+                  <span
+                    v-for="tag in note.tags.slice(0, 5)"
+                    :key="tag"
+                    class="text-xs transition-colors"
+                    :class="selectedTags.includes(tag)
+                      ? 'text-primary-600 dark:text-primary-400 font-semibold'
+                      : 'text-primary-500/70 dark:text-primary-500/70'"
+                  >#{{ tag }}</span>
+                </div>
               </div>
             </button>
 
             <!-- Create note from query -->
             <button
               v-if="hasQuery"
-              class="flex items-center gap-3 w-full px-5 py-3 text-sm border-t border-default/40 transition-colors"
-              :class="highlighted === results.length ? 'bg-elevated text-default' : 'text-muted hover:bg-elevated/60'"
+              class="flex w-full items-center gap-3 border-l-2 px-5 py-3 text-sm transition-colors"
+              :class="highlighted === results.length
+                ? 'border-l-primary-500 bg-elevated text-default'
+                : 'border-l-transparent text-muted hover:bg-elevated/60'"
               @click="handleCreateNote"
               @mouseenter="highlighted = results.length"
             >
@@ -369,8 +394,8 @@ function smartSnippet(html: string): string {
         <div class="flex items-center gap-4 px-5 py-2 border-t border-default bg-muted/30 text-xs text-muted">
           <span class="flex items-center gap-1.5"><UKbd size="sm">↑↓</UKbd> navigate</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">↵</UKbd> open</span>
-          <span class="flex items-center gap-1.5"><UKbd size="sm">Tab</UKbd> complete #tag</span>
-          <span class="flex items-center gap-1.5"><UKbd size="sm">Esc</UKbd> close</span>
+          <span class="hidden items-center gap-1.5 sm:flex"><UKbd size="sm">Tab</UKbd> complete #tag</span>
+          <span class="hidden items-center gap-1.5 sm:flex"><UKbd size="sm">Esc</UKbd> close</span>
           <span class="ml-auto flex items-center gap-1"><UKbd size="sm">⌘</UKbd><UKbd size="sm">K</UKbd></span>
         </div>
       </div>
