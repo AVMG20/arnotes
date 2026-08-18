@@ -4,7 +4,7 @@ import type { NewNote } from '../db/schema'
 import { getUserActiveTeamId } from '../utils/auth-helpers'
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody<Pick<NewNote, 'title' | 'content' | 'tags' | 'isTask' | 'dueAt' | 'taskProps'>>(event)
+  const body = await readBody<Pick<NewNote, 'title' | 'content' | 'tags'>>(event)
   const userId = event.context.session.user.id
   const activeTeamId = await getUserActiveTeamId(event)
   const now = Date.now()
@@ -17,9 +17,6 @@ export default defineEventHandler(async (event) => {
     content: body.content ?? '',
     tags: body.tags ?? [],
     attachments: [],
-    isTask: body.isTask ?? false,
-    ...(body.dueAt !== undefined && body.dueAt !== null && { dueAt: body.dueAt }),
-    ...(body.taskProps && { taskProps: body.taskProps }),
     createdAt: now,
     updatedAt: now
   }).returning()

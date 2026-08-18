@@ -70,18 +70,17 @@ function useSuggestion(text: string) {
 // ─── Rendering ───────────────────────────────────────────────
 
 const toolIcon: Record<string, string> = {
-  search_items: 'i-lucide-search',
-  get_item: 'i-lucide-file-text',
-  create_task: 'i-lucide-square-check-big',
+  search_notes: 'i-lucide-search',
+  get_note: 'i-lucide-file-text',
   create_note: 'i-lucide-notebook-pen',
-  update_item: 'i-lucide-pencil-line',
-  delete_item: 'i-lucide-trash-2'
+  update_note: 'i-lucide-pencil-line',
+  delete_note: 'i-lucide-trash-2'
 }
 
 const SUGGESTIONS = [
-  { icon: 'i-lucide-list-checks', label: 'What\'s on my plate this week?' },
   { icon: 'i-lucide-search', label: 'Find notes about ' },
-  { icon: 'i-lucide-square-check-big', label: 'Create a task to ' }
+  { icon: 'i-lucide-notebook-pen', label: 'Write a note about ' },
+  { icon: 'i-lucide-list-checks', label: 'Summarize my notes tagged ' }
 ]
 
 const hasContent = computed(() => messages.value.some(m => m.role === 'user' || m.content))
@@ -115,7 +114,7 @@ watch([open, expanded], ([isOpen]) => {
 
 function openTarget(m: ChatMessage) {
   if (!m.targetId) return
-  router.push(m.targetKind === 'task' ? `/tasks?id=${m.targetId}` : `/note/${m.targetId}`)
+  router.push(`/note/${m.targetId}`)
   if (window.innerWidth < 640) open.value = false
 }
 </script>
@@ -223,7 +222,7 @@ function openTarget(m: ChatMessage) {
           Hi, I'm Arnai
         </p>
         <p class="text-xs text-muted">
-          Search your notes &amp; tasks, or paste tasks from another tool and I'll create them for you.
+          Search your notes, or paste something in and I'll turn it into a note for you.
         </p>
 
         <div
@@ -386,7 +385,7 @@ function openTarget(m: ChatMessage) {
           ref="inputEl"
           v-model="input"
           rows="1"
-          placeholder="Ask about your tasks & notes…"
+          placeholder="Ask about your notes…"
           aria-label="Message Arnai"
           class="max-h-40 min-h-[1.5rem] flex-1 resize-none bg-transparent text-sm text-default outline-none placeholder:text-muted"
           @keydown="onInputKeydown"
@@ -411,7 +410,7 @@ function openTarget(m: ChatMessage) {
         />
       </div>
       <p class="mt-1.5 px-1 text-[10px] text-muted">
-        Arnai can search, create and edit your tasks &amp; notes.
+        Arnai can search, create and edit your notes.
       </p>
     </div>
   </div>

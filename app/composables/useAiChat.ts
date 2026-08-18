@@ -1,5 +1,5 @@
 import { reactive, ref, watch } from 'vue'
-import type { TaskProp, Note } from '~/composables/useNotes'
+import type { Note } from '~/composables/useNotes'
 import { markdownToHtml, htmlToMarkdown } from '~/utils/markdown'
 import { toWireMessages } from '~/utils/chatHistory'
 
@@ -23,7 +23,6 @@ export interface ChatMessage {
   name?: string
   label?: string
   targetId?: string
-  targetKind?: 'task' | 'note'
   pending?: boolean
   error?: boolean
 }
@@ -74,31 +73,13 @@ if (import.meta.client) {
 
 // ─── Tool execution (client owns the notes store) ────────────
 
-function endOfDay(dateStr: string): number | null {
-  if (!dateStr) return null
-  const ts = new Date(`${dateStr}T23:59:59.999`).getTime()
-  return Number.isNaN(ts) ? null : ts
-}
-
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : []
 }
 
-function toTaskProps(props: unknown): TaskProp[] {
-  if (!Array.isArray(props)) return []
-  return props
-    .filter((p): p is { name: string, type?: string, value?: string } => !!p && typeof p === 'object' && 'name' in p)
-    .map(p => ({
-      id: uid(),
-      name: String(p.name),
-      type: (['text', 'link', 'note'].includes(String(p.type)) ? String(p.type) : 'text') as TaskProp['type'],
-      value: String(p.value ?? '')
-    }))
-}
-
 // Stored HTML content is "<h1>title</h1><p>#tag</p>…body", so the body is
 // everything after the heading and the tag paragraphs.
-function descriptionOf(note: Note): string {
+function bodyOf(note: Note): string {
   const lines = htmlToMarkdown(note.content).split('\n')
   const body = lines
     .slice(lines[0]?.startsWith('# ') ? 1 : 0)
@@ -116,47 +97,31 @@ function buildContent(title: string, tags: string[], bodyMd: string): string {
 function noteToResult(n: Note) {
   return {
     id: n.id,
-    kind: n.isTask ? 'task' : 'note',
     title: n.title,
-    status: n.taskStatus,
-    dueAt: n.dueAt,
     tags: n.tags,
-    updatedAt: new Date(n.updatedAt).toISOString(),
-    taskProps: n.taskProps
+    updatedAt: new Date(n.updatedAt).toISOString()
   }
 }
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<{ result: unknown, label: string }> {
-  const { getNote, searchNotes, createTask, createNote, updateNote, updateTaskMeta, deleteNote } = useNotes()
+  const { getNote, searchNotes, createNote, updateNote, deleteNote } = useNotes()
 
-  const notFound = { result: { error: 'Item not found' }, label: 'Item not found' }
+  const notFound = { result: { error: 'Note not found' }, label: 'Note not found' }
 
   switch (name) {
-    case 'search_items': {
+    case 'search_notes': {
       const query = String(args.query ?? '')
-      const kind = (['task', 'note', 'both'].includes(String(args.kind)) ? args.kind : 'both') as 'task' | 'note' | 'both'
-      let pool = searchNotes(query, toStringArray(args.tags))
-      if (kind !== 'both') pool = pool.filter(n => n.isTask === (kind === 'task'))
+      const pool = searchNotes(query, toStringArray(args.tags))
       const results = pool.slice(0, 25).map(noteToResult)
       return { result: { count: results.length, results }, label: `Searched "${query || 'all'}"` }
     }
-    case 'get_item': {
+    case 'get_note': {
       const n = getNote(String(args.id ?? ''))
       if (!n || n.deletedAt) return notFound
       return {
-        result: { ...noteToResult(n), description: descriptionOf(n) },
+        result: { ...noteToResult(n), content: bodyOf(n) },
         label: `Read "${n.title}"`
       }
-    }
-    case 'create_task': {
-      const task = await createTask({
-        title: String(args.title ?? 'Untitled'),
-        description: String(args.description ?? ''),
-        tags: toStringArray(args.tags),
-        dueAt: endOfDay(String(args.due_date ?? '')),
-        taskProps: toTaskProps(args.custom_properties)
-      })
-      return { result: noteToResult(task), label: `Created task "${task.title}"` }
     }
     case 'create_note': {
       // `select: false` — a background creation must not move the user's cursor
@@ -169,40 +134,26 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       })
       return { result: noteToResult(note), label: `Created note "${note.title}"` }
     }
-    case 'update_item': {
+    case 'update_note': {
       const id = String(args.id ?? '')
       const n = getNote(id)
       if (!n || n.deletedAt) return notFound
 
-      const willBeTask = args.is_task === undefined ? n.isTask : args.is_task === true
-      const meta: Parameters<typeof updateTaskMeta>[1] = {}
-      if (args.is_task !== undefined && willBeTask !== n.isTask) meta.isTask = willBeTask
-      if (willBeTask) {
-        if (args.status === 'open' || args.status === 'done') meta.taskStatus = args.status
-        if (args.due_date !== undefined) meta.dueAt = endOfDay(String(args.due_date ?? ''))
-        if (args.custom_properties !== undefined) meta.taskProps = toTaskProps(args.custom_properties)
-      }
-      if (Object.keys(meta).length > 0) await updateTaskMeta(id, meta)
-
-      if (args.title !== undefined || args.description !== undefined || args.tags !== undefined) {
+      if (args.title !== undefined || args.content !== undefined || args.tags !== undefined) {
         const title = args.title !== undefined ? String(args.title) : n.title
         const tags = args.tags !== undefined ? toStringArray(args.tags) : n.tags
-        const description = args.description !== undefined ? String(args.description) : descriptionOf(n)
-        await updateNote(id, buildContent(title, tags, description))
+        const content = args.content !== undefined ? String(args.content) : bodyOf(n)
+        await updateNote(id, buildContent(title, tags, content))
       }
 
       const updated = getNote(id)
       if (!updated) return { result: { error: 'Update failed' }, label: `Could not update "${n.title}"` }
       return {
-        result: { ...noteToResult(updated), description: descriptionOf(updated) },
-        label: meta.isTask === true
-          ? `Converted "${updated.title}" to task`
-          : meta.isTask === false
-            ? `Converted "${updated.title}" to note`
-            : `Updated "${updated.title}"`
+        result: { ...noteToResult(updated), content: bodyOf(updated) },
+        label: `Updated "${updated.title}"`
       }
     }
-    case 'delete_item': {
+    case 'delete_note': {
       const id = String(args.id ?? '')
       const n = getNote(id)
       if (!n || n.deletedAt) return notFound
@@ -240,8 +191,8 @@ export function useAiChat() {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // The model needs the user's local date to resolve "today", "this week"
-      // and relative due dates — the server clock may be in another timezone.
+      // The model needs the user's local date to resolve "today" and "this
+      // week" — the server clock may be in another timezone.
       body: JSON.stringify({
         messages: toWireMessages(_messages.value),
         thinking: _thinking.value,
@@ -312,11 +263,8 @@ export function useAiChat() {
         const { result, label } = await executeTool(call.function.name, args)
         toolMsg.content = JSON.stringify(result)
         toolMsg.label = label
-        const target = result as { id?: string, kind?: 'task' | 'note', error?: string }
-        if (target?.id && !target.error && (target.kind === 'task' || target.kind === 'note')) {
-          toolMsg.targetId = target.id
-          toolMsg.targetKind = target.kind
-        }
+        const target = result as { id?: string, error?: string }
+        if (target?.id && !target.error) toolMsg.targetId = target.id
       } catch (error) {
         toolMsg.content = JSON.stringify({ error: (error as Error).message })
         toolMsg.label = `${call.function.name} failed`

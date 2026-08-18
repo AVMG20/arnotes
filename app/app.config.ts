@@ -9,10 +9,10 @@ export default defineAppConfig({
         root: 'scrollbar-hidden'
       }
     },
-    // App stacking order (see also TaskDrawer and AiChatWidget):
-    //   40 drawer backdrop · 50 task drawer · 60 AI chat · 70 floating content
+    // App stacking order (see also AiChatWidget):
+    //   60 AI chat · 70 floating content
     // Reka portals render with position:fixed and z-index:auto, so without an
-    // explicit z-index the drawer covers their menus and swallows clicks.
+    // explicit z-index the chat panel covers their menus and swallows clicks.
     dropdownMenu: {
       slots: {
         content: 'z-70'

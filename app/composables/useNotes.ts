@@ -2,15 +2,6 @@ import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
 import { markdownToHtml } from '~/utils/markdown'
 
-export interface TaskProp {
-  id: string
-  name: string
-  type: 'text' | 'link' | 'note'
-  value: string
-}
-
-export type TaskStatus = 'open' | 'done'
-
 export interface Note {
   id: string
   title: string
@@ -19,21 +10,9 @@ export interface Note {
   attachments: string[]
   isPublic: boolean
   publicUntil: number | null
-  isTask: boolean
-  taskStatus: TaskStatus
-  dueAt: number | null
-  taskProps: TaskProp[]
   createdAt: number
   updatedAt: number
   deletedAt: number | null
-}
-
-// Fields the API accepts on a task-metadata patch.
-export interface TaskMetaPatch {
-  taskStatus?: TaskStatus
-  dueAt?: number | null
-  taskProps?: TaskProp[]
-  isTask?: boolean
 }
 
 type SearchDoc = Note & { tagsText: string, contentText: string }
@@ -133,19 +112,14 @@ export function initNotesStore(notes: Note[], search: MiniSearch<SearchDoc>) {
   _search = search
   _notes.value = notes
   _search.addAll(notes.map(toSearchDoc))
-  // Prefer a plain note for the initial selection — tasks live in their own view.
-  _activeNoteId.value = notes.find(n => !n.deletedAt && !n.isTask)?.id
-    ?? notes.find(n => !n.deletedAt)?.id
-    ?? null
+  _activeNoteId.value = notes.find(n => !n.deletedAt)?.id ?? null
   _ready.value = true
 }
 
 // ─── composable ─────────────────────────────────────────────
 
 export function useNotes() {
-  // Tasks share the same store but render in their own view, so the notes
-  // sidebar only lists plain notes.
-  const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt && !n.isTask))
+  const activeNotes = computed(() => _notes.value.filter(n => !n.deletedAt))
   const trashedNotes = computed(() => _notes.value.filter(n => n.deletedAt !== null))
   const sharedNotes = computed(() => activeNotes.value.filter(note =>
     note.isPublic && (note.publicUntil === null || note.publicUntil > Date.now())
@@ -170,7 +144,7 @@ export function useNotes() {
       const hits = _search.search(_searchQuery.value)
       return hits
         .map(h => notesById.value.get(String(h.id)))
-        .filter((n): n is Note => !!n && !n.isTask && !n.deletedAt)
+        .filter((n): n is Note => !!n && !n.deletedAt)
     }
     const pool = _showTrash.value
       ? trashedNotes.value
@@ -237,52 +211,6 @@ export function useNotes() {
     return updateNote(id, setTitleInContent(note.content, trimmed))
   }
 
-  async function createTask(options?: {
-    title?: string
-    description?: string
-    tags?: string[]
-    dueAt?: number | null
-    taskProps?: TaskProp[]
-  }) {
-    const titleText = options?.title?.trim() || 'Untitled'
-    const tags = options?.tags ?? []
-    // Tags are embedded as hashtags so later description edits (which re-derive
-    // tags from content) keep them.
-    let content = `<h1>${escapeHtmlText(titleText)}</h1>`
-    for (const tag of tags) content += `<p>#${tag}</p>`
-    if (options?.description) content += markdownToHtml(options.description)
-    const task = await $fetch<Note>('/api/notes', {
-      method: 'POST',
-      body: {
-        title: titleText,
-        content,
-        tags,
-        isTask: true,
-        dueAt: options?.dueAt ?? null,
-        taskProps: options?.taskProps ?? []
-      }
-    })
-    upsertNote(task)
-    return task
-  }
-
-  // Partial task metadata update — status, due date, custom props, or the
-  // isTask flag itself (used to convert between task and note). Applied
-  // optimistically so checkboxes and pickers feel instant, rolled back on error.
-  async function updateTaskMeta(id: string, patch: TaskMetaPatch) {
-    const previous = getNote(id)
-    if (!previous) return
-    upsertNote({ ...previous, ...patch, updatedAt: Date.now() })
-    try {
-      const updated = await $fetch<Note>(`/api/notes/${id}`, { method: 'PUT', body: patch })
-      upsertNote(updated)
-      return updated
-    } catch (error) {
-      upsertNote(previous)
-      throw error
-    }
-  }
-
   function searchNotes(query: string, filterTags: string[] = []): Note[] {
     let pool: Note[]
     if (query.trim() && _search) {
@@ -292,7 +220,6 @@ export function useNotes() {
       })
       pool = hits.map(h => notesById.value.get(String(h.id))).filter((n): n is Note => !!n)
     } else {
-      // Includes tasks — the search modal covers both views.
       pool = _notes.value.filter(n => !n.deletedAt)
       if (filterTags.length > 0) {
         pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
@@ -349,9 +276,7 @@ export function useNotes() {
       _search.removeAll()
       _search.addAll(freshNotes.map(toSearchDoc))
     }
-    _activeNoteId.value = freshNotes.find(n => !n.deletedAt && !n.isTask)?.id
-      ?? freshNotes.find(n => !n.deletedAt)?.id
-      ?? null
+    _activeNoteId.value = freshNotes.find(n => !n.deletedAt)?.id ?? null
     _activeTag.value = null
     _searchQuery.value = ''
     _showTrash.value = false
@@ -377,8 +302,6 @@ export function useNotes() {
     autoFocus: _autoFocus,
     getNote,
     createNote,
-    createTask,
-    updateTaskMeta,
     updateNote,
     renameNote,
     updateSharing,

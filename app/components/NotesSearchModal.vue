@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote, notes } = useNotes()
+const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
 
 const open = useSearchModal()
 const query = ref('')
@@ -74,13 +74,6 @@ function toggleTag(tag: string) {
 // ─── Actions ─────────────────────────────────────────────────
 
 function selectNote(id: string) {
-  const note = notes.value.find(n => n.id === id)
-  // Tasks open in their own view with the drawer pre-selected.
-  if (note?.isTask) {
-    open.value = false
-    navigateTo({ path: '/tasks', query: { id } })
-    return
-  }
   activeNoteId.value = id
   activeTag.value = null
   searchQuery.value = ''
@@ -124,9 +117,9 @@ function handleListKey(e: KeyboardEvent) {
 
 // ─── Global shortcut ─────────────────────────────────────────
 // The modal is mounted once by the app layout, so owning ⌘K here keeps it
-// working on every view — including ones that run their own key handling, such
-// as the tasks list with an open task drawer. Capture phase, so an editor or a
-// dialog further down cannot swallow the combo first.
+// working on every view — including ones that run their own key handling.
+// Capture phase, so an editor or a dialog further down cannot swallow the
+// combo first.
 
 function onGlobalKeydown(e: KeyboardEvent) {
   if (!(e.metaKey || e.ctrlKey) || e.altKey) return
@@ -270,7 +263,7 @@ function smartSnippet(html: string): string {
               @click="selectNote(note.id)"
             >
               <UIcon
-                :name="note.isTask ? 'i-lucide-square-check-big' : 'i-lucide-file-text'"
+                name="i-lucide-file-text"
                 class="size-4 shrink-0 text-dimmed group-hover:text-muted"
               />
               <span class="min-w-0 flex-1 truncate text-sm font-medium text-default">{{ note.title || 'Untitled' }}</span>
@@ -337,7 +330,7 @@ function smartSnippet(html: string): string {
               @mouseenter="highlighted = i"
             >
               <UIcon
-                :name="note.isTask ? 'i-lucide-square-check-big' : 'i-lucide-file-text'"
+                name="i-lucide-file-text"
                 class="mt-0.5 size-4 shrink-0"
                 :class="i === highlighted ? 'text-primary-500' : 'text-dimmed'"
               />

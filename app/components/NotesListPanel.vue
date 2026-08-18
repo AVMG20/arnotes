@@ -5,8 +5,6 @@ import { relativeTime } from '~/composables/useRelativeTime'
 const { ready, filteredNotes, activeNoteId, showTrash, showShared, deleteNote, restoreNote } = useNotes()
 const route = useRoute()
 
-// Selecting a note always lands on the notes view, even when the click comes
-// from the tasks view and the note is already the active one.
 function openNote(id: string) {
   activeNoteId.value = id
   if (route.path !== `/note/${id}`) navigateTo(`/note/${id}`)

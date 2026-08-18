@@ -19,16 +19,11 @@ import { DateMention } from '~/composables/useDateMention'
 import { ResizableImage } from '~/utils/resizable-image'
 import TableGridPicker from '~/components/TableGridPicker.vue'
 
-// Without `noteId` the editor follows the globally selected note (notes view).
-// Passing one binds it to that note instead, so embedded editors (the task
-// drawer) no longer have to hijack the global selection.
-const props = defineProps<{ noteId?: string | null }>()
-
 const { activeNoteId, autoFocus, getNote, createNote, updateNote, updateSharing } = useNotes()
 const toast = useToast()
 const { openrouterApiKey } = useUserSettings()
 
-const noteId = computed(() => props.noteId !== undefined ? props.noteId : activeNoteId.value)
+const noteId = computed(() => activeNoteId.value)
 const note = computed(() => getNote(noteId.value))
 
 // ─── AI helpers ───────────────────────────────────────────────
@@ -869,9 +864,9 @@ watch(noteId, async (newId, oldId) => {
   }
 }, { immediate: true })
 
-// Pull in changes made to this note elsewhere (renaming from the task drawer,
-// edits by the AI chat). Skipped while the user has unsaved keystrokes so a
-// background write can never clobber what is being typed.
+// Pull in changes made to this note elsewhere (edits by the AI chat). Skipped
+// while the user has unsaved keystrokes so a background write can never
+// clobber what is being typed.
 watch(() => note.value?.content, (content) => {
   if (content === undefined || isDirty.value || saveTimer) return
   if (content === editorContent.value) return
