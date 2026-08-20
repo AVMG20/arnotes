@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-34d399.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-34d399.svg)](https://github.com/AVMG20/arnotes/releases)
 
-Arnotes is a fast, self-hosted note-taking app organized around inline tags. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, and optional AI writing tools through OpenRouter.
+Arnotes is a fast, self-hosted note-taking app organized around inline tags. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, optional AI writing tools through OpenRouter, and an MCP server for connecting AI agents.
 
 ![Arnotes editor](public/screenshot.png)
 
@@ -20,6 +20,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags. It 
 - Private notes with optional expiring public links
 - Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
+- Built-in MCP server so Claude Code and other AI agents can read and write your notes, using API keys you scope yourself
 - Installable Progressive Web App
 - Docker-based self-hosting with persistent PostgreSQL and attachment storage
 
@@ -158,6 +159,52 @@ docker image prune -f
 
 Take a backup first. Watch startup with `docker compose logs -f app` and verify `http://localhost:3000/api/health` returns a healthy response.
 
+## Connect An AI Agent
+
+Arnotes ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Claude Desktop, and any other MCP client can search, read, and write your notes.
+
+Open **Settings → API keys & MCP** to create a key, then follow the in-app setup guide at `/mcp`, which shows the endpoint for your install along with ready-made configuration snippets.
+
+### API Keys
+
+Keys are created per workspace: a key made inside a team reaches that team's notes, and a key made in your personal workspace reaches only your own. Each key carries the permissions you give it.
+
+| Permission | Tools it unlocks |
+| --- | --- |
+| Read | `list_notes`, `search_notes`, `get_note`, `list_tags` |
+| Write | `create_note`, `update_note`, `delete_note`, `restore_note` |
+
+A key is displayed once, at creation. Only its SHA-256 hash is stored, so it can never be shown again — copy it then, or create a new one. Keys can be given an expiry date and can be revoked at any time, which disconnects anything using them immediately.
+
+A read-only key does not merely refuse to write: the writing tools are never advertised to it.
+
+### Connecting
+
+The endpoint is `https://notes.example.com/api/mcp`, spoken over streamable HTTP and authenticated with an `Authorization: Bearer` header.
+
+```bash
+claude mcp add --transport http arnotes https://notes.example.com/api/mcp \
+  --header "Authorization: Bearer arn_your_key_here"
+```
+
+For clients configured with JSON:
+
+```json
+{
+  "mcpServers": {
+    "arnotes": {
+      "type": "http",
+      "url": "https://notes.example.com/api/mcp",
+      "headers": { "Authorization": "Bearer arn_your_key_here" }
+    }
+  }
+}
+```
+
+Agents work with notes as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently.
+
+The setup guide also offers a copyable skill file that teaches an agent the conventions of the app, such as matching your existing tags and reading a note before editing it.
+
 ## Development
 
 Requirements:
@@ -203,6 +250,7 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 - Drizzle ORM and PostgreSQL store application data.
 - Uploaded files are stored under `data/attachments` and mounted as a Docker volume.
 - OpenRouter powers optional user-configured AI actions.
+- An MCP server at `/api/mcp` exposes notes to AI agents, authenticated with scoped API keys.
 
 ## Marketing Site
 

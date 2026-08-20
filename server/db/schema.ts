@@ -157,3 +157,33 @@ export const POPULAR_OPENROUTER_MODELS = [
   'mistralai/mistral-large',
   'deepseek/deepseek-chat'
 ] as const
+
+// ─── API keys (MCP + programmatic access) ─────────────────────────────────────
+
+// Permissions a key can carry. Read covers listing, searching and reading notes;
+// write covers creating, updating, trashing and restoring them.
+export const API_KEY_SCOPES = ['notes:read', 'notes:write'] as const
+export type ApiKeyScope = typeof API_KEY_SCOPES[number]
+
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    // The workspace this key can reach. NULL means the owner's personal workspace;
+    // otherwise the key is pinned to one team and never follows the owner around.
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    // Only the SHA-256 digest is stored — the key itself is shown once, at creation.
+    keyHash: text('key_hash').notNull().unique(),
+    // Leading characters of the key, kept so the UI can identify it after the fact.
+    keyPrefix: text('key_prefix').notNull(),
+    scopes: json('scopes').$type<ApiKeyScope[]>().notNull().default([]),
+    lastUsedAt: bigint('last_used_at', { mode: 'number' }),
+    expiresAt: bigint('expires_at', { mode: 'number' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('api_keys_user_idx').on(table.userId)]
+)
+
+export type ApiKey = typeof apiKeys.$inferSelect

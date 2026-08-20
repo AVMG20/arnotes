@@ -51,16 +51,22 @@ export async function isTeamMember(userId: string, organizationId: string): Prom
 }
 
 /**
+ * Scopes a note query to one workspace: every note of the given team, or only the
+ * user's own team-less notes when there is no team.
+ */
+export function noteAccessFilter(userId: string, teamId: string | null) {
+  return teamId
+    ? eq(notes.teamId, teamId)
+    : and(eq(notes.userId, userId), isNull(notes.teamId))
+}
+
+/**
  * Scopes a note query to the caller's current workspace: every note of the active
  * team, or only the caller's own team-less notes when in the personal workspace.
  */
 export async function getNoteAccessFilter(event: H3Event) {
   const userId = event.context.session.user.id
-  const activeTeamId = await getUserActiveTeamId(event)
-
-  return activeTeamId
-    ? eq(notes.teamId, activeTeamId)
-    : and(eq(notes.userId, userId), isNull(notes.teamId))
+  return noteAccessFilter(userId, await getUserActiveTeamId(event))
 }
 
 const JOIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no I/L/O/0/1 — avoids visual ambiguity

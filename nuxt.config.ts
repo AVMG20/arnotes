@@ -25,7 +25,17 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-01-15',
 
   nitro: {
-    preset: 'bun'
+    preset: 'bun',
+    typescript: {
+      tsConfig: {
+        compilerOptions: {
+          // Notes are stored as editor HTML, so the API parses and rewrites it
+          // through a server-side DOM implementation. That code needs the DOM
+          // interface types, which Nitro leaves out by default.
+          lib: ['esnext', 'webworker', 'dom', 'dom.iterable']
+        }
+      }
+    }
   },
 
   vite: {
