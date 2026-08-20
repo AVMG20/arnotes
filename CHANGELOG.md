@@ -7,6 +7,7 @@ All notable changes to Arnotes are documented in this file.
 - Projects: kanban boards beside the notes, with columns, drag-and-drop tasks, labels, rich-text descriptions written in the notes editor, and a running log of updates per task
 - MCP server at `/api/mcp` letting Claude Code and other AI agents search, read, create, and edit notes
 - Full board control over MCP: read boards and tasks, create and rename boards and columns, create, edit, move and delete tasks, and post task updates
+- Live updates over a WebSocket at `/_ws`: a change made by an agent, a teammate or another tab appears without a reload, including in an open task panel
 - API keys scoped per workspace and per permission — notes and boards, read and write — managed under Settings, stored only as hashes and revocable at any time
 - In-app setup guide at `/mcp` with the endpoint for your install, client configuration snippets, and a copyable agent skill
 

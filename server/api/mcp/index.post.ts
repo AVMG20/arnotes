@@ -8,6 +8,8 @@ import { toolsForScopes } from '../../utils/mcpTools'
 import { McpToolError } from '../../utils/mcpToolKit'
 import { API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
+import { publish, workspaceTopic } from '../../utils/realtime'
+import type { RealtimeEvent } from '../../utils/realtime'
 
 const SERVER_NAME = 'arnotes'
 const SERVER_VERSION = '0.1.0'
@@ -57,6 +59,32 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 const ALL_SCOPES: ApiKeyScope[] = [...API_KEY_SCOPES]
+
+/**
+ * Tells the workspace's open browsers that an agent changed something, so a
+ * board or note list on screen refreshes instead of going stale. Board results
+ * carry the board they touched; anything else falls back to the coarse signal.
+ */
+function announceWrite(tool: { scope: ApiKeyScope }, value: unknown, context: ApiKeyContext) {
+  const topic = workspaceTopic(context.userId, context.teamId)
+  if (tool.scope === 'notes:write') {
+    publish(topic, { type: 'notes' })
+    return
+  }
+  if (tool.scope !== 'boards:write') return
+
+  const board = asRecord(value).board
+  const projectId = typeof board === 'object' && board !== null
+    ? (board as Record<string, unknown>).id
+    : undefined
+
+  const event: RealtimeEvent = typeof projectId === 'string'
+    ? { type: 'board', projectId }
+    // Creating, renaming or deleting a board changes the list itself, and the
+    // client reloads the open board along with it.
+    : { type: 'projects' }
+  publish(topic, event)
+}
 
 /** Tool failures are reported inside the result so the model can read and retry them. */
 function toolFailure(id: JsonRpcId, message: string) {
@@ -128,6 +156,7 @@ async function handleMessage(message: JsonRpcMessage, context: ApiKeyContext) {
 
       try {
         const value = await tool.handler(asRecord(params.arguments), context)
+        if (!tool.readOnly) announceWrite(tool, value, context)
         return result(id, { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] })
       } catch (error) {
         if (error instanceof McpToolError) return toolFailure(id, error.message)

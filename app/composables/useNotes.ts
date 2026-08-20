@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
 import { markdownToHtml } from '~/utils/markdown'
+import { realtimeHeaders } from '~/composables/useRealtime'
 
 export interface Note {
   id: string
@@ -177,7 +178,7 @@ export function useNotes() {
     if (options?.content) content += markdownToHtml(options.content)
 
     const note = await $fetch<Note>('/api/notes', {
-      method: 'POST',
+      method: 'POST', headers: realtimeHeaders(),
       body: { title: titleText || 'Untitled', content, tags }
     })
     upsertNote(note)
@@ -193,7 +194,7 @@ export function useNotes() {
   async function updateNote(id: string, content: string) {
     if (!notesById.value.has(id)) return
     const updated = await $fetch<Note>(`/api/notes/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { content, tags: extractTags(content), title: extractTitle(content) }
     })
     upsertNote(updated)
@@ -231,7 +232,7 @@ export function useNotes() {
   async function updateSharing(id: string, isPublic: boolean, publicUntil: number | null): Promise<Note> {
     if (!notesById.value.has(id)) throw new Error('Note not found')
     const updated = await $fetch<Note>(`/api/notes/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { isPublic, publicUntil }
     })
     upsertNote(updated)
@@ -241,7 +242,7 @@ export function useNotes() {
   async function deleteNote(id: string) {
     const res = await $fetch<{ ok: boolean, permanent: boolean, note?: Note }>(
       `/api/notes/${id}`,
-      { method: 'DELETE' }
+      { method: 'DELETE', headers: realtimeHeaders() }
     )
 
     if (!res.permanent && res.note) {
@@ -256,7 +257,7 @@ export function useNotes() {
   }
 
   async function restoreNote(id: string) {
-    const restored = await $fetch<Note>(`/api/notes/${id}/restore`, { method: 'POST' })
+    const restored = await $fetch<Note>(`/api/notes/${id}/restore`, { method: 'POST', headers: realtimeHeaders() })
     upsertNote(restored)
     return restored
   }
@@ -281,6 +282,19 @@ export function useNotes() {
     _searchQuery.value = ''
     _showTrash.value = false
     _showShared.value = false
+  }
+
+  // Pulls the server's copy of the list in without moving the user: the open
+  // note, the tag filter and the trash view all stay put. This is what the
+  // realtime feed calls when someone else — an agent over MCP, a teammate,
+  // another tab — writes to this workspace.
+  async function syncNotes() {
+    const fresh = await $fetch<Note[]>('/api/notes')
+    _notes.value = fresh
+    if (_search) {
+      _search.removeAll()
+      _search.addAll(fresh.map(toSearchDoc))
+    }
   }
 
   return {
@@ -308,6 +322,7 @@ export function useNotes() {
     deleteNote,
     restoreNote,
     searchNotes,
-    refreshNotes
+    refreshNotes,
+    syncNotes
   }
 }

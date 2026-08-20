@@ -21,6 +21,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags, wit
 - Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
 - Kanban boards for projects: columns, drag-and-drop tasks, labels, rich-text descriptions, and a log of updates per task
+- Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload
 - Built-in MCP server so Claude Code and other AI agents can read and write your notes and run your boards, using API keys you scope yourself
 - Installable Progressive Web App
 - Docker-based self-hosting with persistent PostgreSQL and attachment storage
@@ -203,6 +204,8 @@ For clients configured with JSON:
   }
 }
 ```
+
+Anything an agent writes shows up in an open browser immediately — the app listens on a WebSocket at `/_ws` and refetches what changed, so a board or note list never sits there stale. Behind a reverse proxy, that path needs the usual `Upgrade`/`Connection` headers forwarded; a single app instance holds the connections in memory, so running several would need a shared bus between them.
 
 Agents work with notes and task descriptions as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently. Boards have no trash, so `delete_board`, `delete_column` and `delete_task` are permanent; they are advertised to clients as destructive so an agent can ask before using them.
 

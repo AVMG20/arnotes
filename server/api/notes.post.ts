@@ -2,6 +2,7 @@ import { db } from '../db'
 import { notes } from '../db/schema'
 import type { NewNote } from '../db/schema'
 import { getUserActiveTeamId } from '../utils/auth-helpers'
+import { publishFromEvent } from '../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<Pick<NewNote, 'title' | 'content' | 'tags'>>(event)
@@ -21,5 +22,6 @@ export default defineEventHandler(async (event) => {
     updatedAt: now
   }).returning()
 
+  await publishFromEvent(event, { type: 'notes' })
   return note
 })

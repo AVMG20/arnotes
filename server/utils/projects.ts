@@ -76,36 +76,52 @@ export async function positionBetween(
   list: { id: string, position: number }[],
   beforeId: string | null,
   afterId: string | null,
-  renumber: (ids: string[]) => Promise<void>
+  renumber: (ids: string[]) => Promise<void>,
+  retried = false
 ): Promise<number> {
   const byId = new Map(list.map(i => [i.id, i]))
-  // undefined = the neighbor id no longer exists (stale client state); null = no
-  // neighbor on that side.
-  const before: number | null | undefined = beforeId ? byId.get(beforeId)?.position : null
-  const after: number | null | undefined = afterId ? byId.get(afterId)?.position : null
+  const ordered = [...list].sort((a, b) => a.position - b.position)
 
-  const normalized = async () => {
-    const ids = [...list].sort((a, b) => a.position - b.position).map(i => i.id)
-    await renumber(ids)
-    return ids.map((id, idx) => ({ id, position: idx * 1000 }))
-  }
+  // A neighbour the caller named but the list does not hold means its view raced
+  // with a delete. That side is treated as open rather than retried: rebuilding
+  // the list cannot conjure up an id that is gone, so retrying would never end.
+  const before = beforeId ? byId.get(beforeId)?.position ?? null : null
+  const after = afterId ? byId.get(afterId)?.position ?? null : null
 
-  // Stale neighbor ids (list raced with a delete) → renumber, then recompute.
-  if (before === undefined || after === undefined) {
-    return positionBetween(await normalized(), beforeId, afterId, renumber)
-  }
-
-  // No neighbors on either side means "append": an empty column lands at 0, a
-  // programmatic move (AI tools) goes after the last card instead of colliding
-  // with position 0.
   if (before === null && after === null) {
-    const last = [...list].sort((a, b) => a.position - b.position).at(-1)
+    // Nothing left to anchor to. A drop aimed above a card that has since been
+    // deleted still belongs at the top; everything else appends — an empty
+    // column lands at 0, and a programmatic move (the AI tools) goes after the
+    // last card instead of colliding with position 0.
+    if (afterId && !beforeId) {
+      const first = ordered[0]
+      return first ? first.position - 1000 : 0
+    }
+    const last = ordered.at(-1)
     return last ? last.position + 1000 : 0
   }
   if (before === null) return (after as number) - 1000
   if (after === null) return before + 1000
+
+  // The gap has collapsed, or two rows share a position: spread the column out
+  // and compute once more against the normalised copy. One retry is enough —
+  // after a renumber every gap is 1000 — and capping it keeps a surprise (an
+  // inverted pair, a failed renumber) from looping instead of answering.
   if (after - before <= 1) {
-    return positionBetween(await normalized(), beforeId, afterId, renumber)
+    if (retried) return before + 1
+    const ids = ordered.map(i => i.id)
+    await renumber(ids)
+    const spread = ids.map((id, idx) => ({ id, position: idx * 1000 }))
+    return positionBetween(spread, beforeId, afterId, renumber, true)
   }
   return Math.floor((before + after) / 2)
+}
+
+/** Rewrites a column's task positions to an even 1000-apart spread. */
+export async function renumberColumnTasks(columnId: string) {
+  const tasks = await columnTasksOrdered(columnId)
+  for (const [index, task] of tasks.entries()) {
+    if (task.position === index * 1000) continue
+    await db.update(projectTasks).set({ position: index * 1000 }).where(eq(projectTasks.id, task.id))
+  }
 }

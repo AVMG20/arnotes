@@ -2,6 +2,7 @@ import { db } from '../../../db'
 import { taskComments, user } from '../../../db/schema'
 import { eq, asc } from 'drizzle-orm'
 import { requireTask, genId } from '../../../utils/projects'
+import { publishFromEvent } from '../../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -23,6 +24,10 @@ export default defineEventHandler(async (event) => {
       .orderBy(asc(taskComments.createdAt))
   }
 
+  if (event.method !== 'POST') {
+    throw createError({ statusCode: 405, message: 'Method not allowed' })
+  }
+
   const payload = await readBody<{ body?: string }>(event)
   const body = payload.body?.trim()
   if (!body) throw createError({ statusCode: 400, message: 'Comment body is required' })
@@ -35,5 +40,6 @@ export default defineEventHandler(async (event) => {
     createdAt: Date.now()
   }).returning()
 
+  await publishFromEvent(event, { type: 'board', projectId: _task.projectId })
   return { ...comment, userName: event.context.session.user.name }
 })

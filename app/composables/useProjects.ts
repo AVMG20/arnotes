@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
+import { realtimeHeaders } from '~/composables/useRealtime'
 
 export interface Project {
   id: string
@@ -185,6 +186,18 @@ export function useProjects() {
     _ready.value = true
   }
 
+  // Same idea as the notes sync: refresh the board list and the flat task index
+  // without dropping the open board or its label filter.
+  async function syncProjects() {
+    const [projects, tasks] = await Promise.all([
+      $fetch<Project[]>('/api/projects'),
+      $fetch<TaskSearchRow[]>('/api/tasks')
+    ])
+    _projects.value = projects
+    _allTasks.value = tasks
+    reindexSearch()
+  }
+
   async function refresh() {
     // Team switch: drop per-project board state, filters do not carry over.
     _board.value = null
@@ -196,7 +209,7 @@ export function useProjects() {
 
   async function createProject(name: string) {
     const project = await $fetch<Project>('/api/projects', {
-      method: 'POST',
+      method: 'POST', headers: realtimeHeaders(),
       body: { name }
     })
     upsertProject(project)
@@ -205,7 +218,7 @@ export function useProjects() {
 
   async function renameProject(id: string, name: string) {
     const updated = await $fetch<Project>(`/api/projects/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { name }
     })
     upsertProject(updated)
@@ -213,7 +226,7 @@ export function useProjects() {
   }
 
   async function deleteProject(id: string) {
-    await $fetch(`/api/projects/${id}`, { method: 'DELETE' })
+    await $fetch(`/api/projects/${id}`, { method: 'DELETE', headers: realtimeHeaders() })
     _projects.value = _projects.value.filter(p => p.id !== id)
     _allTasks.value = _allTasks.value.filter(t => t.projectId !== id)
     reindexSearch()
@@ -287,7 +300,7 @@ export function useProjects() {
 
   async function addColumn(projectId: string, name: string) {
     const column = await $fetch<ProjectColumn>(`/api/projects/${projectId}/columns`, {
-      method: 'POST',
+      method: 'POST', headers: realtimeHeaders(),
       body: { name }
     })
     if (_board.value && _activeProjectId.value === projectId) {
@@ -299,7 +312,7 @@ export function useProjects() {
 
   async function renameColumn(id: string, name: string) {
     const updated = await $fetch<ProjectColumn>(`/api/columns/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { name }
     })
     patchBoardColumn(updated)
@@ -308,7 +321,7 @@ export function useProjects() {
 
   async function moveColumn(id: string, beforeId: string | null, afterId: string | null) {
     const updated = await $fetch<ProjectColumn>(`/api/columns/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { beforeId, afterId }
     })
     patchBoardColumn(updated)
@@ -319,18 +332,29 @@ export function useProjects() {
 
   async function deleteColumn(id: string) {
     const res = await $fetch<{ ok: boolean, movedToColumnId: string | null }>(`/api/columns/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE', headers: realtimeHeaders()
     })
+    const orphaned = (_board.value?.tasks ?? []).filter(t => t.columnId === id).map(t => t.id)
+
     if (_board.value && res.movedToColumnId) {
       _board.value = {
         columns: _board.value.columns.filter(c => c.id !== id),
         tasks: _board.value.tasks.map(t => t.columnId === id ? { ...t, columnId: res.movedToColumnId! } : t)
       }
+      // Keep the search index's column ids honest so a hit still opens the
+      // right place on the board.
+      _allTasks.value = _allTasks.value.map(t =>
+        t.columnId === id ? { ...t, columnId: res.movedToColumnId! } : t
+      )
+      reindexSearch()
     } else if (_board.value) {
       _board.value = {
         columns: _board.value.columns.filter(c => c.id !== id),
         tasks: _board.value.tasks.filter(t => t.columnId !== id)
       }
+      // The board's last column took its tasks with it; they are gone server-side.
+      _allTasks.value = _allTasks.value.filter(t => !orphaned.includes(t.id))
+      reindexSearch()
     }
   }
 
@@ -340,6 +364,13 @@ export function useProjects() {
     const idx = columns.findIndex(c => c.id === column.id)
     if (idx >= 0) columns[idx] = column
     _board.value = { ..._board.value, columns }
+  }
+
+  // Reads a board without making it the open one. The AI chat inspects boards
+  // the user is not looking at, and loadBoard would swap the board under them
+  // while the route still points at the old one.
+  function fetchBoard(projectId: string) {
+    return $fetch<BoardPayload>(`/api/projects/${projectId}/board`)
   }
 
   async function reloadBoardQuiet(projectId: string) {
@@ -354,7 +385,7 @@ export function useProjects() {
 
   async function createTask(projectId: string, columnId: string, title: string, description = '', tags: string[] = []) {
     const task = await $fetch<ProjectTask>(`/api/projects/${projectId}/tasks`, {
-      method: 'POST',
+      method: 'POST', headers: realtimeHeaders(),
       body: { columnId, title, description, tags }
     })
     upsertBoardTask(task)
@@ -364,7 +395,7 @@ export function useProjects() {
   }
 
   async function updateTask(id: string, patch: { title?: string, description?: string, tags?: string[] }) {
-    const task = await $fetch<ProjectTask>(`/api/tasks/${id}`, { method: 'PUT', body: patch })
+    const task = await $fetch<ProjectTask>(`/api/tasks/${id}`, { method: 'PUT', headers: realtimeHeaders(), body: patch })
     upsertBoardTask(task)
     upsertSearchRow(task)
     touchProject(task.projectId)
@@ -373,16 +404,20 @@ export function useProjects() {
 
   async function moveTask(id: string, columnId: string, beforeId: string | null, afterId: string | null) {
     const task = await $fetch<ProjectTask>(`/api/tasks/${id}`, {
-      method: 'PUT',
+      method: 'PUT', headers: realtimeHeaders(),
       body: { columnId, beforeId, afterId }
     })
     upsertBoardTask(task)
     upsertSearchRow(task)
+    touchProject(task.projectId)
+    // The server may have spread the column's positions to make room, which
+    // moves siblings this response says nothing about.
+    await reloadBoardQuiet(task.projectId)
     return task
   }
 
   async function deleteTask(id: string) {
-    await $fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+    await $fetch(`/api/tasks/${id}`, { method: 'DELETE', headers: realtimeHeaders() })
     removeBoardTask(id)
     removeSearchRow(id)
     const { [id]: _dropped, ...rest } = _commentCounts.value
@@ -401,7 +436,7 @@ export function useProjects() {
 
   async function addComment(taskId: string, body: string) {
     const comment = await $fetch<TaskComment>(`/api/tasks/${taskId}/comments`, {
-      method: 'POST',
+      method: 'POST', headers: realtimeHeaders(),
       body: { body }
     })
     _comments.value = [..._comments.value, comment]
@@ -447,12 +482,16 @@ export function useProjects() {
     boardColumns,
     boardLoading: _boardLoading,
     comments: _comments,
+    commentsTaskId: _commentsTaskId,
     load,
     refresh,
+    syncProjects,
+    reloadBoardQuiet,
     createProject,
     renameProject,
     deleteProject,
     loadBoard,
+    fetchBoard,
     columnTasks,
     visibleColumnTasks,
     commentCount,

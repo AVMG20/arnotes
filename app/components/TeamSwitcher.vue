@@ -9,10 +9,15 @@ const showManageModal = ref(false)
 const showCreateModal = ref(false)
 const showJoinModal = ref(false)
 
+const route = useRoute()
+
 async function handleSelectTeam(id: string | null) {
   await setActiveTeam(id)
   await refreshNotes()
   await refreshProjects()
+  // The board that was open belongs to the workspace we just left; its route
+  // would keep pointing at an id the new workspace does not have.
+  if (route.path.startsWith('/projects/')) navigateTo('/projects', { replace: true })
 }
 
 const dropdownItems = computed<DropdownMenuItem[]>(() => {

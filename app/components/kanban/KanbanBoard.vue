@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Sortable from 'sortablejs'
-import type { ProjectColumn } from '~/composables/useProjects'
+import type { ProjectColumn, ProjectTask } from '~/composables/useProjects'
 import { columnDotClass } from '~/utils/tagColors'
 
 const props = defineProps<{ projectId: string }>()
@@ -110,9 +110,16 @@ function handleColumnDrop(evt: Sortable.SortableEvent) {
   moveColumn(columnId, beforeEl?.dataset.columnId ?? null, afterEl?.dataset.columnId ?? null)
 }
 
-// Column-level Sortable instances must follow board loads; task lists mount per
-// column so their Sortable is wired in the same watcher.
-watch(boardColumns, async (cols) => {
+// Sortable instances follow the *set* of columns, not the board object. Watching
+// the board itself would rebuild them on every task write — including one that
+// lands mid-drag from an autosave, an agent or a teammate, which would destroy
+// the instance holding the drag and drop the card on the floor.
+const columnSignature = computed(() =>
+  boardColumns.value.map(column => `${column.id}:${column.position}`).join(',')
+)
+
+watch(columnSignature, async () => {
+  const cols = boardColumns.value
   await nextTick()
   destroySortables()
 
@@ -264,6 +271,18 @@ async function submitColumn() {
 }
 
 const isFiltering = computed(() => activeTags.value.length > 0)
+
+// Filtered once per render instead of three times per column (header count,
+// list and empty state each asked for the same list).
+const tasksByColumn = computed(() => {
+  const map = new Map<string, ProjectTask[]>()
+  for (const column of boardColumns.value) map.set(column.id, visibleColumnTasks(column.id))
+  return map
+})
+
+function tasksOf(columnId: string): ProjectTask[] {
+  return tasksByColumn.value.get(columnId) ?? []
+}
 </script>
 
 <template>
@@ -305,7 +324,7 @@ const isFiltering = computed(() => activeTags.value.length > 0)
         </button>
 
         <span class="mr-auto shrink-0 text-xs tabular-nums text-dimmed">
-          {{ visibleColumnTasks(column.id).length }}
+          {{ tasksOf(column.id).length }}
         </span>
 
         <!-- Actions keep their slot at all times: fading them in instead of
@@ -339,7 +358,7 @@ const isFiltering = computed(() => activeTags.value.length > 0)
         class="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 scrollbar-hidden"
       >
         <div
-          v-for="task in visibleColumnTasks(column.id)"
+          v-for="task in tasksOf(column.id)"
           :key="task.id"
           class="kanban-card-wrap"
           :data-id="task.id"
@@ -352,7 +371,7 @@ const isFiltering = computed(() => activeTags.value.length > 0)
         </div>
 
         <p
-          v-if="isFiltering && visibleColumnTasks(column.id).length === 0"
+          v-if="isFiltering && tasksOf(column.id).length === 0"
           class="px-1 py-2 text-xs text-dimmed"
         >
           Nothing matches the filter

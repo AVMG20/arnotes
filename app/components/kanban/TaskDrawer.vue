@@ -104,22 +104,24 @@ const titleDraft = ref('')
 let titleTimer: ReturnType<typeof setTimeout> | null = null
 let titleDirty = false
 
-function flushTitle() {
+// The id is passed in rather than read off props: by the time the task-switch
+// watcher runs, props.task is already the task being opened, so flushing
+// against it would write this task's draft onto the next one.
+function flushTitle(taskId = props.task?.id) {
   if (titleTimer) {
     clearTimeout(titleTimer)
     titleTimer = null
   }
-  if (titleDirty && props.task) {
-    titleDirty = false
-    updateTask(props.task.id, { title: titleDraft.value })
-  }
+  if (!titleDirty) return
+  titleDirty = false
+  if (taskId) updateTask(taskId, { title: titleDraft.value })
 }
 
 watch(titleDraft, (v) => {
   if (!props.task || v === props.task.title) return
   titleDirty = true
   if (titleTimer) clearTimeout(titleTimer)
-  titleTimer = setTimeout(flushTitle, 600)
+  titleTimer = setTimeout(() => flushTitle(), 600)
 })
 
 // ─── Description (auto-save, same editor as notes) ─────────
@@ -129,28 +131,28 @@ let descTimer: ReturnType<typeof setTimeout> | null = null
 let descDirty = false
 let suppressSave = false
 
-function flushDescription() {
+function flushDescription(taskId = props.task?.id) {
   if (descTimer) {
     clearTimeout(descTimer)
     descTimer = null
   }
-  if (descDirty && props.task) {
-    descDirty = false
-    updateTask(props.task.id, { description: editorContent.value })
-  }
+  if (!descDirty) return
+  descDirty = false
+  if (taskId) updateTask(taskId, { description: editorContent.value })
 }
 
 watch(editorContent, () => {
   if (suppressSave) return
   descDirty = true
   if (descTimer) clearTimeout(descTimer)
-  descTimer = setTimeout(flushDescription, 600)
+  descTimer = setTimeout(() => flushDescription(), 600)
 })
 
-// Switching task flushes whatever is pending, then reloads every draft.
-watch(() => props.task?.id, (id) => {
-  flushTitle()
-  flushDescription()
+// Switching task saves whatever the previous one had pending — against that
+// task's id — and then reloads every draft.
+watch(() => props.task?.id, (id, previousId) => {
+  flushTitle(previousId)
+  flushDescription(previousId)
 
   titleDraft.value = props.task?.title ?? ''
   suppressSave = true
@@ -163,6 +165,23 @@ watch(() => props.task?.id, (id) => {
   if (id) loadComments(id).then(scrollUpdatesToEnd)
   else clearComments()
 }, { immediate: true })
+
+// Changes made elsewhere — an agent over MCP, a teammate, the AI chat — land in
+// the open panel, but never on top of what the user is in the middle of typing.
+watch(() => props.task?.title, (title) => {
+  if (title === undefined || titleDirty || titleTimer) return
+  if (title !== titleDraft.value) titleDraft.value = title
+})
+
+watch(() => props.task?.description, (description) => {
+  if (description === undefined || descDirty || descTimer) return
+  if (description === editorContent.value) return
+  suppressSave = true
+  editorContent.value = description
+  nextTick(() => {
+    suppressSave = false
+  })
+})
 
 onBeforeUnmount(() => {
   flushTitle()

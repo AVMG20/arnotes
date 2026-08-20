@@ -23,8 +23,18 @@ const {
 
 const projectId = computed(() => route.params.id as string)
 
-watch(projectId, (id) => {
-  if (id && /^[a-z0-9]+$/i.test(id)) loadBoard(id)
+const loadFailed = ref(false)
+
+watch(projectId, async (id) => {
+  if (!id || !/^[a-z0-9]+$/i.test(id)) return
+  loadFailed.value = false
+  try {
+    await loadBoard(id)
+  } catch {
+    // Deleted in another tab, or a board from a workspace this session no longer
+    // has: an endless spinner is the one thing that must not happen.
+    loadFailed.value = true
+  }
 }, { immediate: true })
 
 // ─── Task panel ────────────────────────────────────────────
@@ -216,8 +226,27 @@ useSeoMeta({
 
     <!-- Board -->
     <div class="min-h-0 flex-1">
+      <div
+        v-if="loadFailed"
+        class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+      >
+        <UIcon
+          name="i-lucide-unlink"
+          class="size-6 text-dimmed"
+        />
+        <p class="text-sm text-muted">
+          This board is not available in this workspace.
+        </p>
+        <UButton
+          label="Back to projects"
+          size="sm"
+          color="neutral"
+          variant="soft"
+          @click="navigateTo('/projects')"
+        />
+      </div>
       <KanbanBoard
-        v-if="projectId"
+        v-else-if="projectId"
         :project-id="projectId"
         @open-task="drawerTaskId = $event"
       />

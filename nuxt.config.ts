@@ -26,6 +26,11 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'bun',
+    // Live updates: the browser listens on /_ws for changes made elsewhere —
+    // an AI agent over MCP, a teammate, another tab.
+    experimental: {
+      websocket: true
+    },
     typescript: {
       tsConfig: {
         compilerOptions: {

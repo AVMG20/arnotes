@@ -154,12 +154,13 @@ function resolveBoard(ref: string) {
 }
 
 async function loadBoardByRef(ref: string) {
-  const { loadBoard, board, boardColumns, activeProjectId } = useProjects()
+  const { fetchBoard } = useProjects()
   const project = resolveBoard(ref)
   if (!project) return null
-  if (activeProjectId.value !== project.id || !board.value) await loadBoard(project.id)
-  if (!board.value || activeProjectId.value !== project.id) return null
-  return { project, board: board.value, columns: boardColumns.value }
+
+  const board = await fetchBoard(project.id)
+  const columns = [...board.columns].sort((a, b) => a.position - b.position)
+  return { project, board, columns }
 }
 
 function boardToResult(project: { id: string, name: string }, columns: Array<{ id: string, name: string }>, tasks: Array<{ id: string, title: string, columnId: string, tags: string[], description: string, updatedAt: number }>) {

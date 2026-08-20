@@ -2,6 +2,7 @@ import { db } from '../../db'
 import { projects, projectTasks } from '../../db/schema'
 import { eq } from 'drizzle-orm'
 import { requireTask, requireColumn, columnTasksOrdered, positionBetween } from '../../utils/projects'
+import { publishFromEvent } from '../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -10,7 +11,13 @@ export default defineEventHandler(async (event) => {
   if (event.method === 'DELETE') {
     await db.delete(projectTasks).where(eq(projectTasks.id, id))
     await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, project.id))
+
+    await publishFromEvent(event, { type: 'board', projectId: project.id })
     return { ok: true }
+  }
+
+  if (event.method !== 'PUT') {
+    throw createError({ statusCode: 405, message: 'Method not allowed' })
   }
 
   // PUT — edit fields and/or move (columnId + beforeId/afterId neighbors).
@@ -32,7 +39,13 @@ export default defineEventHandler(async (event) => {
 
   let targetColumnId = task.columnId
   if (body.columnId && body.columnId !== task.columnId) {
-    await requireColumn(event, body.columnId)
+    // The column must belong to this task's board. Without the check a task
+    // could be parked in another board's column while its projectId stayed
+    // behind, leaving it invisible on one board and orphaned on the other.
+    const { column } = await requireColumn(event, body.columnId)
+    if (column.projectId !== task.projectId) {
+      throw createError({ statusCode: 400, message: 'That column belongs to another project' })
+    }
     patch.columnId = body.columnId
     targetColumnId = body.columnId
   }
@@ -55,5 +68,7 @@ export default defineEventHandler(async (event) => {
 
   const [updated] = await db.update(projectTasks).set(patch).where(eq(projectTasks.id, id)).returning()
   await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, project.id))
+
+  await publishFromEvent(event, { type: 'board', projectId: project.id })
   return updated
 })

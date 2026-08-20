@@ -2,9 +2,13 @@ import { db } from '../../../db'
 import { projects, projectTasks } from '../../../db/schema'
 import { eq } from 'drizzle-orm'
 import { requireColumn, columnTasksOrdered, genId } from '../../../utils/projects'
+import { publishFromEvent } from '../../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody<{ columnId: string, title?: string, description?: string, tags?: string[] }>(event)
+  const body = await readBody<{ columnId?: string, title?: string, description?: string, tags?: string[] }>(event)
+  if (typeof body.columnId !== 'string' || !body.columnId) {
+    throw createError({ statusCode: 400, message: 'columnId is required' })
+  }
 
   const { column, project } = await requireColumn(event, body.columnId)
 
@@ -26,5 +30,6 @@ export default defineEventHandler(async (event) => {
 
   await db.update(projects).set({ updatedAt: now }).where(eq(projects.id, project.id))
 
+  await publishFromEvent(event, { type: 'board', projectId: project.id })
   return task
 })

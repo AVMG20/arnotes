@@ -10,7 +10,7 @@ import type { Project, ProjectColumn, ProjectTask } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { projectAccessFilter } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
-import { columnTasksOrdered, positionBetween, projectColumnsOrdered } from './projects'
+import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks } from './projects'
 import { McpToolError, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 
@@ -548,7 +548,12 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
 
       await touchBoard(board.id)
       const columns = await projectColumnsOrdered(board.id)
-      return { created: true, column: { id: column!.id, name: column!.name }, columnOrder: columns.map(c => c.name) }
+      return {
+        created: true,
+        board: { id: board.id, name: board.name },
+        column: { id: column!.id, name: column!.name },
+        columnOrder: columns.map(c => c.name)
+      }
     }
   },
   {
@@ -594,6 +599,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const columns = await projectColumnsOrdered(board.id)
       return {
         updated: true,
+        board: { id: board.id, name: board.name },
         column: { id: updated!.id, name: updated!.name },
         columnOrder: columns.map(c => c.name)
       }
@@ -625,12 +631,16 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
 
       if (target) {
         await db.update(projectTasks).set({ columnId: target.id }).where(eq(projectTasks.columnId, column.id))
+        // The moved tasks carry the old column's positions, which collide with
+        // the ones already there; a renumber gives the merged column one order.
+        await renumberColumnTasks(target.id)
       }
       await db.delete(projectColumns).where(eq(projectColumns.id, column.id))
       await touchBoard(board.id)
 
       return {
         deleted: true,
+        board: { id: board.id, name: board.name },
         column: column.name,
         // Without a column left to hold them, the tasks go with it.
         ...(target ? { tasksMovedTo: target.name, tasksMoved: affected } : { tasksDeleted: affected })
@@ -774,7 +784,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const { task, board } = await findTask(requireString(args, 'id'), context)
       await db.delete(projectTasks).where(eq(projectTasks.id, task.id))
       await touchBoard(board.id)
-      return { deleted: true, id: task.id, title: task.title, board: board.name }
+      return { deleted: true, id: task.id, title: task.title, board: { id: board.id, name: board.name } }
     }
   },
   {
@@ -804,7 +814,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       })
 
       await touchBoard(board.id)
-      return { posted: true, task: task.title, update: body }
+      return { posted: true, board: { id: board.id, name: board.name }, task: task.title, update: body }
     }
   }
 ]

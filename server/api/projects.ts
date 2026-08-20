@@ -3,6 +3,7 @@ import { projects, projectColumns } from '../db/schema'
 import { desc } from 'drizzle-orm'
 import { getProjectAccessFilter, genId } from '../utils/projects'
 import { getUserActiveTeamId } from '../utils/auth-helpers'
+import { publishFromEvent } from '../utils/realtime'
 
 export const DEFAULT_COLUMNS = ['Backlog', 'To do', 'Verify', 'Done'] as const
 
@@ -10,6 +11,10 @@ export default defineEventHandler(async (event) => {
   if (event.method === 'GET') {
     const filter = await getProjectAccessFilter(event)
     return db.select().from(projects).where(filter).orderBy(desc(projects.updatedAt))
+  }
+
+  if (event.method !== 'POST') {
+    throw createError({ statusCode: 405, message: 'Method not allowed' })
   }
 
   // POST — create project with the default kanban columns seeded.
@@ -38,5 +43,6 @@ export default defineEventHandler(async (event) => {
     }))
   )
 
+  await publishFromEvent(event, { type: 'projects' })
   return project
 })

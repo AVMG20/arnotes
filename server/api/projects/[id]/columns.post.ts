@@ -2,6 +2,7 @@ import { db } from '../../../db'
 import { projects, projectColumns } from '../../../db/schema'
 import { eq } from 'drizzle-orm'
 import { requireProject, projectColumnsOrdered, positionBetween, genId } from '../../../utils/projects'
+import { publishFromEvent } from '../../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -32,5 +33,6 @@ export default defineEventHandler(async (event) => {
 
   await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, id))
 
+  await publishFromEvent(event, { type: 'board', projectId: id })
   return column
 })
