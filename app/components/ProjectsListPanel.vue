@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { relativeTime } from '~/composables/useRelativeTime'
+
 const { ready, projects, allTasks, deleteProject, renameProject } = useProjects()
 const route = useRoute()
 
@@ -106,21 +108,23 @@ function menuItems(project: { id: string, name: string }) {
       >
       <div
         v-else
-        class="group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors"
+        class="group flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-1.5 transition-colors"
         :class="activeId === project.id ? 'bg-elevated' : 'hover:bg-elevated/60'"
         @click="openProject(project.id)"
       >
         <UIcon
           name="i-lucide-kanban"
-          class="size-4 shrink-0"
+          class="mt-0.5 size-4 shrink-0"
           :class="activeId === project.id ? 'text-primary' : 'text-dimmed group-hover:text-muted'"
         />
-        <span class="min-w-0 flex-1 truncate text-sm font-medium text-default">
-          {{ project.name }}
-        </span>
-        <span class="shrink-0 text-xs tabular-nums text-dimmed">
-          {{ taskCounts.get(project.id) ?? 0 }}
-        </span>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm font-medium leading-snug text-default">
+            {{ project.name }}
+          </p>
+          <p class="truncate text-xs text-muted">
+            {{ relativeTime(project.updatedAt) }} · {{ taskCounts.get(project.id) ?? 0 }} {{ (taskCounts.get(project.id) ?? 0) === 1 ? 'task' : 'tasks' }}
+          </p>
+        </div>
         <!-- The menu keeps its slot even when invisible, so rows never jump on hover. -->
         <UDropdownMenu
           :items="menuItems(project)"
@@ -131,7 +135,7 @@ function menuItems(project: { id: string, name: string }) {
             size="xs"
             color="neutral"
             variant="ghost"
-            class="shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+            class="mt-0.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
             aria-label="Project options"
             @click.stop
           />

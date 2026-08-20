@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { tagChipClass, columnDotClass } from '~/utils/tagColors'
+import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
 
 const props = defineProps<{
@@ -28,6 +29,10 @@ const {
   addComment,
   clearComments
 } = useProjects()
+
+function fullDate(ts: number) {
+  return format(new Date(ts), 'PPp')
+}
 
 const open = computed({
   get: () => props.task !== null,
@@ -320,16 +325,14 @@ const menuItems = computed(() => [[
             </template>
           </UDropdownMenu>
 
+          <!-- Board and last-edited time, kept to one quiet line; the exact
+               timestamps live in the tooltip. -->
           <span
-            v-if="activeProject"
             class="min-w-0 flex-1 truncate text-xs text-dimmed"
+            :title="`Created ${fullDate(task.createdAt)}\nUpdated ${fullDate(task.updatedAt)}`"
           >
-            {{ activeProject.name }}
+            <template v-if="activeProject">{{ activeProject.name }} · </template>edited {{ relativeTime(task.updatedAt) }}
           </span>
-          <span
-            v-else
-            class="flex-1"
-          />
 
           <UDropdownMenu :items="menuItems">
             <UButton
