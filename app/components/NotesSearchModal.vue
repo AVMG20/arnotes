@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
+import { tagChipClass } from '~/utils/tagColors'
 
 const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
+const { searchBoards, allTasks } = useProjects()
 
 const open = useSearchModal()
 const query = ref('')
@@ -25,7 +27,11 @@ const effectiveTags = computed(() => [...new Set([...selectedTags.value, ...pars
 
 const hasQuery = computed(() => parsed.value.text.trim().length > 0)
 const isFiltered = computed(() => hasQuery.value || effectiveTags.value.length > 0)
-const results = computed(() => searchNotes(parsed.value.text, effectiveTags.value).slice(0, 8))
+
+// Board hits ride along with note hits — one modal, whole workspace.
+const noteResults = computed(() => searchNotes(parsed.value.text, effectiveTags.value).slice(0, 8))
+const boardResults = computed(() => hasQuery.value ? searchBoards(parsed.value.text) : { tasks: [], projects: [] })
+const recentTasks = computed(() => allTasks.value.slice(0, 3))
 
 // Autocomplete for the trailing "#par" token.
 const tagSuggestions = computed(() => {
@@ -81,6 +87,16 @@ function selectNote(id: string) {
   navigateTo(`/note/${id}`)
 }
 
+function openTask(projectId: string, taskId: string) {
+  open.value = false
+  navigateTo(`/projects/${projectId}?task=${taskId}`)
+}
+
+function openProject(projectId: string) {
+  open.value = false
+  navigateTo(`/projects/${projectId}`)
+}
+
 async function handleCreateNote() {
   const note = await createNote({ title: hasQuery.value ? parsed.value.text.trim() : undefined })
   open.value = false
@@ -96,7 +112,28 @@ function onInputKeydown(e: KeyboardEvent) {
   }
 }
 
-const itemCount = computed(() => results.value.length + (hasQuery.value ? 1 : 0))
+const itemCount = computed(() =>
+  noteResults.value.length
+  + boardResults.value.tasks.length
+  + boardResults.value.projects.length
+  + (hasQuery.value ? 1 : 0)
+)
+
+// Flat cursor over [notes, tasks, projects, create] so arrows/Enter work across
+// every section.
+function itemAt(i: number): { kind: 'note', id: string } | { kind: 'task', projectId: string, taskId: string } | { kind: 'project', projectId: string } | { kind: 'create' } | null {
+  const n = noteResults.value.length
+  const t = boardResults.value.tasks.length
+  const p = boardResults.value.projects.length
+  if (i < n) return { kind: 'note', id: noteResults.value[i]!.id }
+  if (i < n + t) {
+    const row = boardResults.value.tasks[i - n]!
+    return { kind: 'task', projectId: row.projectId, taskId: row.id }
+  }
+  if (i < n + t + p) return { kind: 'project', projectId: boardResults.value.projects[i - n - t]!.id }
+  if (i === n + t + p && hasQuery.value) return { kind: 'create' }
+  return null
+}
 
 function handleListKey(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') {
@@ -106,12 +143,11 @@ function handleListKey(e: KeyboardEvent) {
     e.preventDefault()
     highlighted.value = (highlighted.value - 1 + Math.max(itemCount.value, 1)) % Math.max(itemCount.value, 1)
   } else if (e.key === 'Enter') {
-    if (hasQuery.value && highlighted.value === results.value.length) {
-      handleCreateNote()
-    } else {
-      const note = results.value[highlighted.value]
-      if (note) selectNote(note.id)
-    }
+    const item = itemAt(highlighted.value)
+    if (item?.kind === 'note') selectNote(item.id)
+    else if (item?.kind === 'task') openTask(item.projectId, item.taskId)
+    else if (item?.kind === 'project') openProject(item.projectId)
+    else if (item?.kind === 'create' || item === null) handleCreateNote()
   }
 }
 
@@ -191,7 +227,7 @@ function smartSnippet(html: string): string {
           <input
             v-model="query"
             autofocus
-            placeholder="Search or create a note… (# for tags)"
+            placeholder="Search notes, tasks, projects… (# for tags)"
             class="flex-1 bg-transparent outline-none text-base text-default placeholder:text-muted"
             @keydown="onInputKeydown"
           >
@@ -280,6 +316,29 @@ function smartSnippet(html: string): string {
               <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(note.updatedAt) }}</span>
             </button>
 
+            <!-- Recent tasks (top 3) -->
+            <template v-if="recentTasks.length > 0">
+              <div class="px-5 pt-3 pb-1">
+                <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Recent Tasks
+                </p>
+              </div>
+              <button
+                v-for="task in recentTasks"
+                :key="task.id"
+                class="group flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-elevated/70"
+                @click="openTask(task.projectId, task.id)"
+              >
+                <UIcon
+                  name="i-lucide-square-kanban"
+                  class="size-4 shrink-0 text-dimmed group-hover:text-muted"
+                />
+                <span class="min-w-0 flex-1 truncate text-sm font-medium text-default">{{ task.title }}</span>
+                <span class="shrink-0 truncate text-xs text-dimmed max-w-32">{{ task.projectName }}</span>
+                <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(task.updatedAt) }}</span>
+              </button>
+            </template>
+
             <!-- Create new note (no query) -->
             <div class="border-t border-default/50 mt-1">
               <button
@@ -307,7 +366,7 @@ function smartSnippet(html: string): string {
           <div class="overflow-y-auto max-h-[34rem]">
             <!-- No results -->
             <div
-              v-if="results.length === 0"
+              v-if="noteResults.length === 0 && boardResults.tasks.length === 0 && boardResults.projects.length === 0"
               class="flex flex-col items-center justify-center py-10 gap-2"
             >
               <UIcon
@@ -315,12 +374,21 @@ function smartSnippet(html: string): string {
                 class="size-7 text-muted"
               />
               <p class="text-sm text-muted">
-                No notes found
+                Nothing found
               </p>
             </div>
 
+            <!-- Notes -->
+            <div
+              v-if="noteResults.length > 0"
+              class="px-5 pt-3 pb-1"
+            >
+              <p class="text-xs font-semibold text-muted uppercase tracking-wider">
+                Notes
+              </p>
+            </div>
             <button
-              v-for="(note, i) in results"
+              v-for="(note, i) in noteResults"
               :key="note.id"
               class="flex w-full gap-3 border-b border-l-2 border-b-default/40 px-5 py-3 text-left transition-colors"
               :class="i === highlighted
@@ -363,15 +431,101 @@ function smartSnippet(html: string): string {
               </div>
             </button>
 
+            <!-- Tasks -->
+            <template v-if="boardResults.tasks.length > 0">
+              <div class="px-5 pt-3 pb-1">
+                <p class="text-xs font-semibold text-muted uppercase tracking-wider">
+                  Tasks
+                </p>
+              </div>
+              <button
+                v-for="(task, i) in boardResults.tasks"
+                :key="task.id"
+                class="flex w-full gap-3 border-b border-l-2 border-b-default/40 px-5 py-3 text-left transition-colors"
+                :class="noteResults.length + i === highlighted
+                  ? 'border-l-primary-500 bg-elevated'
+                  : 'border-l-transparent hover:bg-elevated/60'"
+                @click="openTask(task.projectId, task.id)"
+                @mouseenter="highlighted = noteResults.length + i"
+              >
+                <UIcon
+                  name="i-lucide-square-kanban"
+                  class="mt-0.5 size-4 shrink-0"
+                  :class="noteResults.length + i === highlighted ? 'text-primary-500' : 'text-dimmed'"
+                />
+                <div class="flex min-w-0 flex-1 flex-col gap-1">
+                  <div class="flex items-baseline gap-3">
+                    <span
+                      class="min-w-0 flex-1 truncate text-sm font-medium leading-snug text-default"
+                      v-html="highlight(task.title)"
+                    />
+                    <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(task.updatedAt) }}</span>
+                  </div>
+                  <p
+                    v-if="smartSnippet(task.description)"
+                    class="line-clamp-2 text-sm leading-relaxed text-muted"
+                    v-html="highlight(smartSnippet(task.description))"
+                  />
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-dimmed">
+                      <UIcon
+                        name="i-lucide-kanban"
+                        class="mr-0.5 size-3 align-[-1px]"
+                      />{{ task.projectName }}
+                    </span>
+                    <span
+                      v-for="tag in task.tags.slice(0, 4)"
+                      :key="tag"
+                      class="rounded px-1.5 py-0.5 text-[0.6875rem] font-medium ring-1 ring-inset"
+                      :class="tagChipClass(tag)"
+                    >{{ tag }}</span>
+                  </div>
+                </div>
+              </button>
+            </template>
+
+            <!-- Projects -->
+            <template v-if="boardResults.projects.length > 0">
+              <div class="px-5 pt-3 pb-1">
+                <p class="text-xs font-semibold text-muted uppercase tracking-wider">
+                  Projects
+                </p>
+              </div>
+              <button
+                v-for="(project, i) in boardResults.projects"
+                :key="project.id"
+                class="flex w-full items-center gap-3 border-b border-l-2 border-b-default/40 px-5 py-2.5 text-left transition-colors"
+                :class="noteResults.length + boardResults.tasks.length + i === highlighted
+                  ? 'border-l-primary-500 bg-elevated'
+                  : 'border-l-transparent hover:bg-elevated/60'"
+                @click="openProject(project.id)"
+                @mouseenter="highlighted = noteResults.length + boardResults.tasks.length + i"
+              >
+                <UIcon
+                  name="i-lucide-kanban"
+                  class="size-4 shrink-0"
+                  :class="noteResults.length + boardResults.tasks.length + i === highlighted ? 'text-primary-500' : 'text-dimmed'"
+                />
+                <span
+                  class="min-w-0 flex-1 truncate text-sm font-medium text-default"
+                  v-html="highlight(project.name)"
+                />
+                <UIcon
+                  name="i-lucide-arrow-right"
+                  class="size-3.5 shrink-0 text-dimmed"
+                />
+              </button>
+            </template>
+
             <!-- Create note from query -->
             <button
               v-if="hasQuery"
               class="flex w-full items-center gap-3 border-l-2 px-5 py-3 text-sm transition-colors"
-              :class="highlighted === results.length
+              :class="highlighted === noteResults.length + boardResults.tasks.length + boardResults.projects.length
                 ? 'border-l-primary-500 bg-elevated text-default'
                 : 'border-l-transparent text-muted hover:bg-elevated/60'"
               @click="handleCreateNote"
-              @mouseenter="highlighted = results.length"
+              @mouseenter="highlighted = noteResults.length + boardResults.tasks.length + boardResults.projects.length"
             >
               <UIcon
                 name="i-lucide-plus"

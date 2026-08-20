@@ -1,0 +1,510 @@
+<script setup lang="ts">
+import { tagChipClass, columnDotClass } from '~/utils/tagColors'
+import { relativeTime } from '~/composables/useRelativeTime'
+
+const props = defineProps<{
+  task: {
+    id: string
+    columnId: string
+    title: string
+    description: string
+    tags: string[]
+    createdAt: number
+    updatedAt: number
+  } | null
+}>()
+
+const emit = defineEmits<{ close: [] }>()
+
+const { session } = useAuth()
+const {
+  activeProject,
+  boardColumns,
+  updateTask,
+  moveTask,
+  deleteTask,
+  comments,
+  loadComments,
+  addComment,
+  clearComments
+} = useProjects()
+
+const open = computed({
+  get: () => props.task !== null,
+  set: (v: boolean) => { if (!v) emit('close') }
+})
+
+const column = computed(() =>
+  boardColumns.value.find(c => c.id === props.task?.columnId) ?? null
+)
+
+// ─── Panel width: cookie-persisted, drag-resize, reset ──────
+
+const DEFAULT_WIDTH = 620
+const MIN_WIDTH = 400
+
+const storedWidth = useCookie<number | null>('kanban-drawer-width', { default: () => null })
+
+const width = ref(DEFAULT_WIDTH)
+const maxWidth = ref(DEFAULT_WIDTH)
+
+function measure() {
+  maxWidth.value = Math.max(MIN_WIDTH, window.innerWidth - 24)
+  width.value = Math.min(storedWidth.value ?? DEFAULT_WIDTH, maxWidth.value)
+}
+
+onMounted(() => {
+  measure()
+  window.addEventListener('resize', measure)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', measure)
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeEnd)
+})
+
+let resizing = false
+
+function onResizeStart(e: PointerEvent) {
+  resizing = true
+  e.preventDefault()
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeEnd)
+}
+
+function onResizeMove(e: PointerEvent) {
+  if (!resizing) return
+  width.value = Math.min(Math.max(window.innerWidth - e.clientX, MIN_WIDTH), maxWidth.value)
+}
+
+function onResizeEnd() {
+  resizing = false
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeEnd)
+  storedWidth.value = width.value === DEFAULT_WIDTH ? null : width.value
+}
+
+function resetWidth() {
+  width.value = DEFAULT_WIDTH
+  storedWidth.value = null
+}
+
+// Declared up here because the task-switch watcher below resets it.
+const commentDraft = ref('')
+
+// ─── Title (auto-save) ─────────────────────────────────────
+
+const titleDraft = ref('')
+let titleTimer: ReturnType<typeof setTimeout> | null = null
+let titleDirty = false
+
+function flushTitle() {
+  if (titleTimer) {
+    clearTimeout(titleTimer)
+    titleTimer = null
+  }
+  if (titleDirty && props.task) {
+    titleDirty = false
+    updateTask(props.task.id, { title: titleDraft.value })
+  }
+}
+
+watch(titleDraft, (v) => {
+  if (!props.task || v === props.task.title) return
+  titleDirty = true
+  if (titleTimer) clearTimeout(titleTimer)
+  titleTimer = setTimeout(flushTitle, 600)
+})
+
+// ─── Description (auto-save, same editor as notes) ─────────
+
+const editorContent = ref('')
+let descTimer: ReturnType<typeof setTimeout> | null = null
+let descDirty = false
+let suppressSave = false
+
+function flushDescription() {
+  if (descTimer) {
+    clearTimeout(descTimer)
+    descTimer = null
+  }
+  if (descDirty && props.task) {
+    descDirty = false
+    updateTask(props.task.id, { description: editorContent.value })
+  }
+}
+
+watch(editorContent, () => {
+  if (suppressSave) return
+  descDirty = true
+  if (descTimer) clearTimeout(descTimer)
+  descTimer = setTimeout(flushDescription, 600)
+})
+
+// Switching task flushes whatever is pending, then reloads every draft.
+watch(() => props.task?.id, (id) => {
+  flushTitle()
+  flushDescription()
+
+  titleDraft.value = props.task?.title ?? ''
+  suppressSave = true
+  editorContent.value = props.task?.description ?? ''
+  nextTick(() => {
+    suppressSave = false
+  })
+
+  commentDraft.value = ''
+  if (id) loadComments(id).then(scrollUpdatesToEnd)
+  else clearComments()
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  flushTitle()
+  flushDescription()
+})
+
+// ─── Labels ────────────────────────────────────────────────
+
+const tagDraft = ref('')
+
+function addTag() {
+  const raw = tagDraft.value.trim().toLowerCase()
+  tagDraft.value = ''
+  if (!raw || !props.task || props.task.tags.includes(raw)) return
+  updateTask(props.task.id, { tags: [...props.task.tags, raw] })
+}
+
+function removeTag(tag: string) {
+  if (!props.task) return
+  updateTask(props.task.id, { tags: props.task.tags.filter(t => t !== tag) })
+}
+
+function onTagKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault()
+    addTag()
+  } else if (e.key === 'Backspace' && !tagDraft.value && props.task?.tags.length) {
+    removeTag(props.task.tags[props.task.tags.length - 1]!)
+  }
+}
+
+// ─── Updates (comments) ────────────────────────────────────
+
+const updatesOpen = useCookie<boolean>('kanban-updates-open', { default: () => true })
+const updatesEl = ref<HTMLElement | null>(null)
+
+function initials(name: string | null | undefined) {
+  if (!name) return '?'
+  return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
+}
+
+const userInitials = computed(() => initials(session.value?.user?.name))
+
+async function scrollUpdatesToEnd() {
+  await nextTick()
+  const el = updatesEl.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+async function sendComment() {
+  const body = commentDraft.value.trim()
+  if (!body || !props.task) return
+  commentDraft.value = ''
+  await addComment(props.task.id, body)
+  scrollUpdatesToEnd()
+}
+
+function onCommentKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    sendComment()
+  }
+}
+
+watch(updatesOpen, (isOpen) => {
+  if (isOpen) scrollUpdatesToEnd()
+})
+
+// ─── Move / delete ─────────────────────────────────────────
+
+async function moveToColumn(columnId: string) {
+  if (!props.task || props.task.columnId === columnId) return
+  await moveTask(props.task.id, columnId, null, null)
+}
+
+const stateItems = computed(() =>
+  [boardColumns.value.map(c => ({
+    label: c.name,
+    // Rendered by the #item slot below: the same dot as the board column, so
+    // state reads the same in both places.
+    dotClass: columnDotClass(c.name),
+    active: c.id === props.task?.columnId,
+    onSelect: () => moveToColumn(c.id)
+  }))]
+)
+
+const deleteOpen = ref(false)
+
+async function confirmDelete() {
+  if (!props.task) return
+  deleteOpen.value = false
+  const id = props.task.id
+  // Drop pending autosaves: the row is about to be gone.
+  descDirty = false
+  titleDirty = false
+  emit('close')
+  await deleteTask(id)
+}
+
+const menuItems = computed(() => [[
+  { label: 'Reset panel width', icon: 'i-lucide-rotate-ccw', onSelect: resetWidth }
+], [
+  {
+    label: 'Delete task',
+    icon: 'i-lucide-trash-2',
+    color: 'error' as const,
+    onSelect: () => { deleteOpen.value = true }
+  }
+]])
+</script>
+
+<template>
+  <UDrawer
+    v-model:open="open"
+    direction="right"
+    :handle="false"
+    :ui="{ content: 'inset-y-0 right-0 rounded-none' }"
+  >
+    <template #content>
+      <div
+        v-if="task"
+        class="relative flex h-full flex-col bg-default focus:outline-none"
+        :style="{ width: `${width}px`, maxWidth: '100%' }"
+      >
+        <!-- Resize edge -->
+        <div
+          class="group absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize"
+          @pointerdown="onResizeStart"
+        >
+          <div class="absolute inset-y-0 left-0 w-px bg-default transition-colors group-hover:bg-primary" />
+        </div>
+
+        <!-- Header: state, breadcrumb, actions -->
+        <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
+          <UDropdownMenu :items="stateItems">
+            <UButton
+              color="neutral"
+              variant="soft"
+              size="xs"
+              trailing-icon="i-lucide-chevron-down"
+            >
+              <span
+                class="size-2 rounded-full"
+                :class="columnDotClass(column?.name ?? '')"
+              />
+              {{ column?.name ?? 'No column' }}
+            </UButton>
+
+            <template #item="{ item }">
+              <span
+                class="size-2 shrink-0 rounded-full"
+                :class="item.dotClass"
+              />
+              <span class="flex-1 truncate text-left">{{ item.label }}</span>
+              <UIcon
+                v-if="item.active"
+                name="i-lucide-check"
+                class="size-3.5 text-primary"
+              />
+            </template>
+          </UDropdownMenu>
+
+          <span
+            v-if="activeProject"
+            class="min-w-0 flex-1 truncate text-xs text-dimmed"
+          >
+            {{ activeProject.name }}
+          </span>
+          <span
+            v-else
+            class="flex-1"
+          />
+
+          <UDropdownMenu :items="menuItems">
+            <UButton
+              icon="i-lucide-ellipsis"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              aria-label="Task options"
+            />
+          </UDropdownMenu>
+          <UButton
+            icon="i-lucide-x"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            aria-label="Close"
+            @click="emit('close')"
+          />
+        </header>
+
+        <!-- Title + labels + description -->
+        <div class="flex min-h-0 flex-1 flex-col">
+          <div class="shrink-0 px-5 pb-3 pt-4">
+            <UTextarea
+              v-model="titleDraft"
+              :rows="1"
+              autoresize
+              variant="none"
+              placeholder="Task title"
+              class="w-full"
+              :ui="{ base: 'px-0 py-0 text-lg font-semibold leading-snug resize-none' }"
+              @keydown.enter.prevent="($event.target as HTMLTextAreaElement).blur()"
+            />
+
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <span
+                v-for="tag in task.tags"
+                :key="tag"
+                class="group flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+                :class="tagChipClass(tag)"
+                @click="removeTag(tag)"
+              >
+                {{ tag }}
+                <UIcon
+                  name="i-lucide-x"
+                  class="size-3 opacity-40 transition-opacity group-hover:opacity-100"
+                />
+              </span>
+              <input
+                v-model="tagDraft"
+                :placeholder="task.tags.length ? 'Add label…' : 'Add a label…'"
+                class="min-w-24 flex-1 bg-transparent py-0.5 text-xs text-default outline-none placeholder:text-dimmed"
+                @keydown="onTagKeydown"
+                @blur="addTag"
+              >
+            </div>
+          </div>
+
+          <!-- Description: the notes editor, bounded so it keeps its own scroll -->
+          <div class="flex min-h-0 flex-1 flex-col border-t border-default">
+            <RichEditor
+              v-model="editorContent"
+              placeholder="Add a description… (@ for dates, / for commands)"
+              class="min-h-0 flex-1"
+            />
+          </div>
+        </div>
+
+        <!-- Updates: a short running log of what happened -->
+        <section
+          class="flex shrink-0 flex-col border-t border-default"
+          :class="updatesOpen ? 'h-72' : ''"
+        >
+          <button
+            class="flex shrink-0 items-center gap-2 px-5 py-2.5 text-left transition-colors hover:bg-elevated/50"
+            @click="updatesOpen = !updatesOpen"
+          >
+            <UIcon
+              name="i-lucide-message-square"
+              class="size-3.5 text-muted"
+            />
+            <span class="text-xs font-semibold text-muted">Updates</span>
+            <span
+              v-if="comments.length"
+              class="text-xs text-dimmed"
+            >{{ comments.length }}</span>
+            <UIcon
+              :name="updatesOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'"
+              class="ml-auto size-3.5 text-dimmed"
+            />
+          </button>
+
+          <template v-if="updatesOpen">
+            <div
+              ref="updatesEl"
+              class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3"
+            >
+              <p
+                v-if="comments.length === 0"
+                class="py-6 text-center text-xs text-dimmed"
+              >
+                No updates yet. Note progress, blockers or decisions below.
+              </p>
+
+              <div
+                v-for="comment in comments"
+                :key="comment.id"
+                class="flex gap-2.5"
+              >
+                <UAvatar
+                  :alt="initials(comment.userName)"
+                  size="2xs"
+                  class="mt-0.5 shrink-0"
+                />
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-baseline gap-2">
+                    <span class="truncate text-xs font-medium text-default">
+                      {{ comment.userName ?? 'Unknown' }}
+                    </span>
+                    <span class="shrink-0 text-xs text-dimmed">
+                      {{ relativeTime(comment.createdAt) }}
+                    </span>
+                  </div>
+                  <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-default">
+                    {{ comment.body }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 items-center gap-2 border-t border-default px-4 py-2.5">
+              <UAvatar
+                :alt="userInitials"
+                size="2xs"
+                class="shrink-0"
+              />
+              <input
+                v-model="commentDraft"
+                placeholder="Add an update…"
+                class="min-w-0 flex-1 bg-transparent text-sm text-default outline-none placeholder:text-dimmed"
+                @keydown="onCommentKeydown"
+              >
+              <UButton
+                icon="i-lucide-arrow-up"
+                size="xs"
+                color="primary"
+                :disabled="!commentDraft.trim()"
+                aria-label="Add update"
+                @click="sendComment"
+              />
+            </div>
+          </template>
+        </section>
+      </div>
+    </template>
+  </UDrawer>
+
+  <UModal
+    v-model:open="deleteOpen"
+    title="Delete task?"
+    description="The task and its updates are deleted permanently."
+    :ui="{ footer: 'justify-end' }"
+  >
+    <template #footer>
+      <UButton
+        label="Cancel"
+        color="neutral"
+        variant="ghost"
+        @click="deleteOpen = false"
+      />
+      <UButton
+        label="Delete task"
+        color="error"
+        @click="confirmDelete"
+      />
+    </template>
+  </UModal>
+</template>

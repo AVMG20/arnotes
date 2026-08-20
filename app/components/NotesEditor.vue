@@ -1,294 +1,15 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { differenceInCalendarDays } from 'date-fns'
-import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
-import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
-import { DOMSerializer } from '@tiptap/pm/model'
-import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
-import { closeHistory } from '@tiptap/pm/history'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import CodeBlockView from '~/components/CodeBlockView.vue'
-import Highlight from '@tiptap/extension-highlight'
-import TaskList from '@tiptap/extension-task-list'
-import TaskItem from '@tiptap/extension-task-item'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { CellSelection } from '@tiptap/pm/tables'
-import { createLowlight, common } from 'lowlight'
-import { DateMention } from '~/composables/useDateMention'
-import { ResizableImage } from '~/utils/resizable-image'
-import TableGridPicker from '~/components/TableGridPicker.vue'
+import { htmlToMarkdown } from '~/utils/markdown'
 
 const { activeNoteId, autoFocus, getNote, createNote, updateNote, updateSharing } = useNotes()
 const toast = useToast()
-const { openrouterApiKey } = useUserSettings()
 
 const noteId = computed(() => activeNoteId.value)
 const note = computed(() => getNote(noteId.value))
 
-// ─── AI helpers ───────────────────────────────────────────────
-const aiLoading = ref(false)
-const aiPromptOpen = ref(false)
-const aiPrompt = ref('')
-const aiPromptPosition = ref<number | null>(null)
-const aiPromptIncludeContext = ref(true)
-
-// ─── Table creation picker ───────────────────────────────────
-
-const tablePickerOpen = ref(false)
-const tablePicker = reactive({ open: false, x: 0, y: 0 })
-let tablePickerEditor: Editor | null = null
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function insertTableOfSize(editor: any, size: { rows: number, cols: number }) {
-  editor.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: true }).run()
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function onToolbarTablePick(editor: any, size: { rows: number, cols: number }) {
-  tablePickerOpen.value = false
-  insertTableOfSize(editor, size)
-}
-
-function onSlashTablePick(size: { rows: number, cols: number }) {
-  const editor = tablePickerEditor
-  tablePickerEditor = null
-  tablePicker.open = false
-  if (editor && !editor.isDestroyed) insertTableOfSize(editor, size)
-}
-
-function closeSlashTablePicker() {
-  tablePickerEditor = null
-  tablePicker.open = false
-}
-
-function onTablePickerKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') closeSlashTablePicker()
-}
-
-watch(() => tablePicker.open, (open) => {
-  if (open) window.addEventListener('keydown', onTablePickerKeydown, true)
-  else window.removeEventListener('keydown', onTablePickerKeydown, true)
-})
-
-type AiPending = {
-  kind: 'generate' | 'transform'
-  from: number
-  to: number
-}
-
-const aiPendingKey = new PluginKey<AiPending | null>('aiPending')
-
-const AiPendingDecoration = Extension.create({
-  name: 'aiPendingDecoration',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin<AiPending | null>({
-        key: aiPendingKey,
-        state: {
-          init: () => null,
-          apply(transaction, pending) {
-            const meta = transaction.getMeta(aiPendingKey) as { pending?: AiPending, clear?: boolean } | undefined
-            if (meta?.clear) return null
-            if (meta?.pending) return meta.pending
-            if (!pending || !transaction.docChanged) return pending
-
-            return {
-              ...pending,
-              from: transaction.mapping.map(pending.from, 1),
-              to: transaction.mapping.map(pending.to, pending.kind === 'transform' ? -1 : 1)
-            }
-          }
-        },
-        props: {
-          decorations(state) {
-            const pending = aiPendingKey.getState(state)
-            if (!pending) return null
-
-            if (pending.kind === 'transform' && pending.from < pending.to) {
-              return DecorationSet.create(state.doc, [
-                Decoration.inline(pending.from, pending.to, { class: 'ai-processing-selection' })
-              ])
-            }
-
-            const widget = Decoration.widget(pending.from, () => {
-              const indicator = document.createElement('span')
-              indicator.className = 'ai-writing-indicator'
-              indicator.contentEditable = 'false'
-              indicator.setAttribute('aria-label', 'AI is writing')
-
-              const label = document.createElement('span')
-              label.textContent = 'AI is writing'
-              indicator.append(label)
-              for (let index = 0; index < 3; index++) {
-                const dot = document.createElement('i')
-                dot.style.setProperty('--ai-dot-index', String(index))
-                indicator.append(dot)
-              }
-              return indicator
-            }, { key: 'ai-writing-indicator', side: 1 })
-            return DecorationSet.create(state.doc, [widget])
-          }
-        }
-      })
-    ]
-  }
-})
-
-function setAiPending(editor: Editor, pending: AiPending | null) {
-  editor.view.dispatch(editor.state.tr.setMeta(aiPendingKey, pending ? { pending } : { clear: true }))
-}
-
-function getSelectionHtml(editor: Editor): string {
-  const { from, to } = editor.state.selection
-  if (from === to) return ''
-  const slice = editor.state.doc.slice(from, to)
-  const serializer = DOMSerializer.fromSchema(editor.state.schema)
-  const fragment = serializer.serializeFragment(slice.content)
-  const div = document.createElement('div')
-  div.appendChild(fragment)
-  return div.innerHTML
-}
-
-async function streamAiIntoEditor(
-  editor: Editor,
-  pending: AiPending,
-  request: (onChunk: (result: string) => void) => Promise<string>,
-  rollbackHtml = ''
-) {
-  const range = { from: pending.from, to: pending.to }
-  let rendered = ''
-
-  editor.view.dispatch(closeHistory(editor.state.tr))
-
-  const replaceRange = (output: string, addToHistory: boolean) => {
-    if (!output || output === rendered) return
-
-    const previousSize = editor.state.doc.content.size
-    editor.chain()
-      .setMeta('addToHistory', addToHistory)
-      .insertContentAt(range, markdownToHtml(output))
-      .run()
-    range.to += editor.state.doc.content.size - previousSize
-    rendered = output
-    setAiPending(editor, pending.kind === 'generate'
-      ? { kind: 'generate', from: range.to, to: range.to }
-      : { kind: 'transform', ...range })
-  }
-
-  const renderChunk = (markdown: string) => {
-    try {
-      replaceRange(markdown, false)
-    } catch {
-      // Partial markdown such as "- " can briefly produce an invalid empty node.
-    }
-  }
-
-  const restoreOriginal = () => {
-    const previousSize = editor.state.doc.content.size
-    const chain = editor.chain().setMeta('addToHistory', false)
-    if (rollbackHtml) chain.insertContentAt(range, rollbackHtml)
-    else if (range.from < range.to) chain.deleteRange(range)
-    chain.run()
-    range.to += editor.state.doc.content.size - previousSize
-    rendered = ''
-  }
-
-  try {
-    const result = await request(renderChunk)
-    restoreOriginal()
-    editor.view.dispatch(closeHistory(editor.state.tr))
-    replaceRange(normalizeAiOutput(result), true)
-    editor.commands.focus(range.to)
-  } catch (error) {
-    restoreOriginal()
-    throw error
-  }
-}
-
-async function runTransform(action: string) {
-  const editor = editorRef.value?.editor
-  if (!editor || aiLoading.value) return
-  if (!openrouterApiKey.value) {
-    toast.add({
-      title: 'No OpenRouter API key',
-      description: 'Add your key in Settings → AI to use AI features.',
-      icon: 'i-lucide-key-round',
-      color: 'error',
-      duration: 4000
-    })
-    return
-  }
-  const { from, to } = editor.state.selection
-  if (from === to) return
-  const selectionHtml = getSelectionHtml(editor)
-  if (!selectionHtml.trim()) return
-  const text = htmlToMarkdown(selectionHtml)
-
-  aiLoading.value = true
-  const pending: AiPending = { kind: 'transform', from, to }
-  setAiPending(editor, pending)
-  try {
-    await streamAiIntoEditor(editor, pending, onChunk => runAi(action, text, '', onChunk), selectionHtml)
-  } catch (e) {
-    const err = e as { data?: { message?: string }, message?: string }
-    toast.add({
-      title: 'AI request failed',
-      description: err?.data?.message ?? err?.message ?? 'Unknown error',
-      icon: 'i-lucide-alert-triangle',
-      color: 'error',
-      duration: 5000
-    })
-  } finally {
-    setAiPending(editor, null)
-    aiLoading.value = false
-  }
-}
-
-function openAiPrompt(editor: Editor) {
-  aiPromptPosition.value = editor.state.selection.from
-  aiPromptOpen.value = true
-}
-
-async function runCustomPrompt() {
-  const editor = editorRef.value?.editor as Editor | undefined
-  const instruction = aiPrompt.value.trim()
-  if (!editor || !instruction || aiLoading.value) return
-  if (!openrouterApiKey.value) {
-    toast.add({
-      title: 'No OpenRouter API key',
-      description: 'Add your key in Settings → AI to use AI features.',
-      icon: 'i-lucide-key-round',
-      color: 'error',
-      duration: 4000
-    })
-    return
-  }
-
-  const position = aiPromptPosition.value ?? editor.state.selection.from
-  const context = aiPromptIncludeContext.value ? htmlToMarkdown(editor.getHTML()).trim() : ''
-  aiPromptOpen.value = false
-  aiLoading.value = true
-  const pending: AiPending = { kind: 'generate', from: position, to: position }
-  setAiPending(editor, pending)
-  try {
-    await streamAiIntoEditor(editor, pending, onChunk => runCustomAi(instruction, context, onChunk))
-    aiPrompt.value = ''
-    aiPromptPosition.value = null
-  } catch (e) {
-    const err = e as { data?: { message?: string }, message?: string }
-    toast.add({
-      title: 'AI request failed',
-      description: err?.data?.message ?? err?.message ?? 'Unknown error',
-      icon: 'i-lucide-alert-triangle',
-      color: 'error',
-      duration: 5000
-    })
-  } finally {
-    setAiPending(editor, null)
-    aiLoading.value = false
-  }
-}
+const editorRef = ref()
 
 const shareOpen = ref(false)
 const shareEndDate = ref('')
@@ -352,7 +73,6 @@ async function saveSharing(isPublic: boolean) {
     sharing.value = false
   }
 }
-const editorRef = ref()
 
 // ─── Image upload ────────────────────────────────────────────
 
@@ -369,448 +89,6 @@ async function uploadImage(file: File): Promise<string | null> {
     return null
   }
 }
-
-// ─── Custom extensions ───────────────────────────────────────
-
-const lowlight = createLowlight(common)
-
-const ImagePaste = Extension.create({
-  name: 'imagePaste',
-  addProseMirrorPlugins() {
-    const editor = this.editor
-    return [
-      new Plugin({
-        key: new PluginKey('imagePaste'),
-        props: {
-          handlePaste(_view, event) {
-            const items = Array.from(event.clipboardData?.items ?? [])
-            const imageItem = items.find(i => i.kind === 'file' && i.type.startsWith('image/'))
-            if (!imageItem) return false
-            const file = imageItem.getAsFile()
-            if (!file) return false
-            event.preventDefault()
-            uploadImage(file).then((url) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              if (url) (editor.chain().focus() as any).setImage({ src: url }).run()
-            })
-            return true
-          }
-        }
-      })
-    ]
-  }
-})
-
-// File drops are handled on the wrapper div to avoid the drag handle intercepting them.
-async function onFileDrop(event: DragEvent) {
-  const files = Array.from(event.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'))
-  if (!files.length) return
-  editorRef.value?.editor?.commands.focus()
-  const urls = await Promise.all(files.map(uploadImage))
-  urls.forEach((url) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (url) (editorRef.value?.editor?.chain().focus() as any)?.setImage({ src: url }).run()
-  })
-}
-
-const HashtagHighlight = Extension.create({
-  name: 'hashtagHighlight',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        key: new PluginKey('hashtagHighlight'),
-        props: {
-          decorations(state) {
-            const decorations: Decoration[] = []
-            const re = /#[a-zA-Z][a-zA-Z0-9_]*/g
-            state.doc.descendants((node, pos) => {
-              if (!node.isText || !node.text) return
-              re.lastIndex = 0
-              let m
-              while ((m = re.exec(node.text)) !== null) {
-                decorations.push(
-                  Decoration.inline(pos + m.index, pos + m.index + m[0].length, {
-                    class: 'hashtag-highlight'
-                  })
-                )
-              }
-            })
-            return DecorationSet.create(state.doc, decorations)
-          }
-        }
-      })
-    ]
-  }
-})
-
-const MarkdownPaste = Extension.create({
-  name: 'markdownPaste',
-  addProseMirrorPlugins() {
-    const editor = this.editor
-    return [
-      new Plugin({
-        key: new PluginKey('markdownPaste'),
-        props: {
-          handlePaste(_view, event) {
-            const text = event.clipboardData?.getData('text/plain') ?? ''
-            if (!text.trim()) return false
-
-            const html = markdownToHtml(text)
-            // Clipboard sources often provide Markdown tables as an HTML code block.
-            // Prefer the plain-text table when Marked recognizes one.
-            if (/<table(?:\s|>)/.test(html)) {
-              event.preventDefault()
-              editor.commands.insertContent(html)
-              return true
-            }
-
-            if (event.clipboardData?.getData('text/html')) return false
-            editor.commands.insertContent(html)
-            return true
-          }
-        }
-      })
-    ]
-  }
-})
-
-// Hover-revealed "+" buttons to append a row/column at the end of the table.
-// Destructive row/column operations live in the table bubble toolbar instead,
-// where they act on the cell the cursor is in.
-const InlineTableControls = Extension.create({
-  name: 'inlineTableControls',
-  addProseMirrorPlugins() {
-    const editor = this.editor
-
-    function getTableContext() {
-      const { $from } = editor.state.selection
-      for (let depth = $from.depth; depth > 0; depth--) {
-        if ($from.node(depth).type.name === 'table') {
-          return { node: $from.node(depth), pos: $from.before(depth), start: $from.start(depth) }
-        }
-      }
-      return null
-    }
-
-    function appendToTable(axis: 'row' | 'column') {
-      const table = getTableContext()
-      const lastRow = table?.node.lastChild
-      const lastCell = lastRow?.lastChild
-      if (!table || !lastRow || !lastCell) return
-
-      const rowPos = table.start + table.node.content.size - lastRow.nodeSize
-      const cellPos = rowPos + 1 + lastRow.content.size - lastCell.nodeSize
-      const selection = Selection.near(editor.state.doc.resolve(cellPos + 1))
-      editor.view.dispatch(editor.state.tr.setSelection(selection))
-
-      if (axis === 'row') editor.chain().focus().addRowAfter().run()
-      else editor.chain().focus().addColumnAfter().run()
-    }
-
-    return [
-      new Plugin({
-        key: new PluginKey('inlineTableControls'),
-        view(view) {
-          const controls = document.createElement('div')
-          controls.className = 'table-edge-controls'
-          controls.contentEditable = 'false'
-
-          const makeButton = (axis: 'row' | 'column') => {
-            const button = document.createElement('button')
-            button.type = 'button'
-            button.className = 'table-edge-controls__button'
-            button.dataset.axis = axis
-            button.textContent = '+'
-            button.title = axis === 'row' ? 'Add row at the end' : 'Add column at the end'
-            button.setAttribute('aria-label', button.title)
-            button.addEventListener('pointerdown', (event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              appendToTable(axis)
-            })
-            return button
-          }
-
-          controls.append(makeButton('row'), makeButton('column'))
-
-          let wrapper: HTMLElement | null = null
-          const update = () => {
-            const table = getTableContext()
-            const tableDom = table ? view.nodeDOM(table.pos) as HTMLElement | null : null
-            const nextWrapper = tableDom?.matches('.tableWrapper')
-              ? tableDom
-              : tableDom?.closest<HTMLElement>('.tableWrapper')
-
-            if (nextWrapper === wrapper) return
-            wrapper?.classList.remove('table-controls-active')
-            controls.remove()
-            wrapper = nextWrapper ?? null
-            if (wrapper) {
-              wrapper.classList.add('table-controls-active')
-              wrapper.append(controls)
-            }
-          }
-
-          update()
-          return {
-            update,
-            destroy() {
-              wrapper?.classList.remove('table-controls-active')
-              controls.remove()
-            }
-          }
-        }
-      })
-    ]
-  }
-})
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const extensions: any[] = [
-  CodeBlockLowlight.configure({ lowlight }).extend({
-    addNodeView: () => VueNodeViewRenderer(CodeBlockView)
-  }),
-  Highlight.configure({ multicolor: false }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: true }),
-  TableRow,
-  TableHeader,
-  TableCell,
-  DateMention,
-  ResizableImage,
-  ImagePaste,
-  AiPendingDecoration,
-  HashtagHighlight,
-  MarkdownPaste,
-  InlineTableControls
-]
-
-// ─── Handlers ────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const customHandlers: any = {
-  aiPrompt: {
-    canExecute: () => !aiLoading.value,
-    execute: (editor: Editor) => {
-      openAiPrompt(editor)
-      return editor.chain()
-    },
-    isActive: () => false
-  },
-  image: {
-    canExecute: () => true,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    execute: async (editor: any) => {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = 'image/*'
-      input.onchange = async () => {
-        const file = input.files?.[0]
-        if (!file) return
-        const url = await uploadImage(file)
-        if (url) editor.chain().focus().setImage({ src: url }).run()
-      }
-      input.click()
-    },
-    isActive: () => false
-  },
-  table: {
-    canExecute: () => true,
-    execute: (editor: Editor) => {
-      const { state, view } = editor
-      try {
-        const coords = view.coordsAtPos(state.selection.from)
-        tablePicker.x = Math.min(coords.left, Math.max(window.innerWidth - 260, 8))
-        tablePicker.y = Math.min(coords.bottom + 8, window.innerHeight - 220)
-      } catch {
-        tablePicker.x = window.innerWidth / 2 - 110
-        tablePicker.y = window.innerHeight / 2 - 100
-      }
-      tablePickerEditor = editor
-      tablePicker.open = true
-      return editor.chain()
-    },
-    isActive: () => false
-  },
-  addColumnBefore: {
-    canExecute: (editor: Editor) => editor.can().addColumnBefore(),
-    execute: (editor: Editor) => editor.chain().focus().addColumnBefore(),
-    isActive: () => false
-  },
-  addColumnAfter: {
-    canExecute: (editor: Editor) => editor.can().addColumnAfter(),
-    execute: (editor: Editor) => editor.chain().focus().addColumnAfter(),
-    isActive: () => false
-  },
-  deleteColumn: {
-    canExecute: (editor: Editor) => editor.can().deleteColumn(),
-    execute: (editor: Editor) => editor.chain().focus().deleteColumn(),
-    isActive: () => false
-  },
-  addRowBefore: {
-    canExecute: (editor: Editor) => editor.can().addRowBefore(),
-    execute: (editor: Editor) => editor.chain().focus().addRowBefore(),
-    isActive: () => false
-  },
-  addRowAfter: {
-    canExecute: (editor: Editor) => editor.can().addRowAfter(),
-    execute: (editor: Editor) => editor.chain().focus().addRowAfter(),
-    isActive: () => false
-  },
-  deleteRow: {
-    canExecute: (editor: Editor) => editor.can().deleteRow(),
-    execute: (editor: Editor) => editor.chain().focus().deleteRow(),
-    isActive: () => false
-  },
-  deleteTable: {
-    canExecute: (editor: Editor) => editor.can().deleteTable(),
-    execute: (editor: Editor) => editor.chain().focus().deleteTable(),
-    isActive: () => false
-  },
-  mergeCells: {
-    canExecute: (editor: Editor) => editor.can().mergeCells(),
-    execute: (editor: Editor) => editor.chain().focus().mergeCells(),
-    isActive: () => false
-  },
-  splitCell: {
-    canExecute: (editor: Editor) => editor.can().splitCell(),
-    execute: (editor: Editor) => editor.chain().focus().splitCell(),
-    isActive: () => false
-  },
-  toggleHeaderRow: {
-    canExecute: (editor: Editor) => editor.can().toggleHeaderRow(),
-    execute: (editor: Editor) => editor.chain().focus().toggleHeaderRow(),
-    isActive: () => false
-  },
-  toggleHeaderColumn: {
-    canExecute: (editor: Editor) => editor.can().toggleHeaderColumn(),
-    execute: (editor: Editor) => editor.chain().focus().toggleHeaderColumn(),
-    isActive: () => false
-  }
-}
-
-// ─── Toolbar & menu items ─────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fixedToolbarItems: any[][] = [[
-  { kind: 'heading', level: 1, icon: 'i-lucide-heading-1', tooltip: { text: 'Heading 1' } },
-  { kind: 'heading', level: 2, icon: 'i-lucide-heading-2', tooltip: { text: 'Heading 2' } },
-  { kind: 'heading', level: 3, icon: 'i-lucide-heading-3', tooltip: { text: 'Heading 3' } }
-], [
-  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
-  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
-  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
-  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
-  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } }
-], [
-  { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
-  { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Ordered list' } },
-  { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
-  { kind: 'table', slot: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
-  { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
-  { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } }
-]]
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const aiBubbleItems: any[] = transformActions.map(action => ({
-  label: action.label,
-  icon: action.icon,
-  onSelect: () => runTransform(action.id)
-}))
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const bubbleToolbarItems: any[][] = [[
-  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
-  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
-  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
-  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
-  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } },
-  {
-    icon: 'i-lucide-sparkles',
-    tooltip: { text: 'AI' },
-    color: 'primary',
-    items: aiBubbleItems
-  }
-]]
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const tableToolbarItems: any[][] = [[
-  {
-    label: 'Row',
-    icon: 'i-lucide-rows-3',
-    items: [[
-      { kind: 'addRowBefore', label: 'Add row above', icon: 'i-lucide-arrow-up-to-line' },
-      { kind: 'addRowAfter', label: 'Add row below', icon: 'i-lucide-arrow-down-to-line' }
-    ], [
-      { kind: 'deleteRow', label: 'Delete row', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  },
-  {
-    label: 'Column',
-    icon: 'i-lucide-columns-3',
-    items: [[
-      { kind: 'addColumnBefore', label: 'Add column left', icon: 'i-lucide-arrow-left-to-line' },
-      { kind: 'addColumnAfter', label: 'Add column right', icon: 'i-lucide-arrow-right-to-line' }
-    ], [
-      { kind: 'deleteColumn', label: 'Delete column', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  },
-  {
-    label: 'Options',
-    icon: 'i-lucide-table-properties',
-    items: [[
-      { kind: 'mergeCells', label: 'Merge selected cells', icon: 'i-lucide-table-cells-merge' },
-      { kind: 'splitCell', label: 'Split cell', icon: 'i-lucide-table-cells-split' },
-      { kind: 'toggleHeaderRow', label: 'Toggle header row', icon: 'i-lucide-rows-3' },
-      { kind: 'toggleHeaderColumn', label: 'Toggle header column', icon: 'i-lucide-columns-3' }
-    ], [
-      { kind: 'deleteTable', label: 'Delete table', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  }
-]]
-
-function shouldShowTableToolbar(editor: Pick<Editor, 'isActive'>, view: EditorView, state: EditorState) {
-  // Also show while multiple cells are selected, otherwise merge/split are unreachable.
-  const cellSelection = state.selection instanceof CellSelection
-  if (!cellSelection && !state.selection.empty) return false
-
-  if (!cellSelection) {
-    const domSelection = view.dom.ownerDocument.getSelection()
-    const hasDomTextSelection = Boolean(
-      domSelection
-      && !domSelection.isCollapsed
-      && domSelection.anchorNode
-      && domSelection.focusNode
-      && view.dom.contains(domSelection.anchorNode)
-      && view.dom.contains(domSelection.focusNode)
-    )
-    if (hasDomTextSelection) return false
-  }
-
-  return view.hasFocus() && editor.isActive('table')
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const suggestionItems: any[][] = [[
-  { kind: 'aiPrompt', label: 'Ask AI', description: 'Generate anything from a custom prompt', icon: 'i-lucide-sparkles' }
-], [
-  { type: 'label', label: 'Style' },
-  { kind: 'paragraph', label: 'Paragraph', icon: 'i-lucide-type' },
-  { kind: 'heading', level: 1, label: 'Heading 1', icon: 'i-lucide-heading-1' },
-  { kind: 'heading', level: 2, label: 'Heading 2', icon: 'i-lucide-heading-2' },
-  { kind: 'heading', level: 3, label: 'Heading 3', icon: 'i-lucide-heading-3' },
-  { kind: 'bulletList', label: 'Bullet list', icon: 'i-lucide-list' },
-  { kind: 'orderedList', label: 'Numbered list', icon: 'i-lucide-list-ordered' },
-  { kind: 'taskList', label: 'Task list', icon: 'i-lucide-list-checks' },
-  { kind: 'blockquote', label: 'Blockquote', icon: 'i-lucide-text-quote' },
-  { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
-  { kind: 'table', label: 'Table', description: 'Pick a size and insert a table', icon: 'i-lucide-table' },
-  { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
-], [
-  { type: 'label', label: 'Insert' },
-  { kind: 'image', label: 'Image', icon: 'i-lucide-image' }
-]]
 
 // ─── Content & auto-save ─────────────────────────────────────
 
@@ -850,8 +128,6 @@ watch(editorContent, (html) => {
 
 watch(noteId, async (newId, oldId) => {
   if (oldId) flushSave(oldId)
-  closeSlashTablePicker()
-  tablePickerOpen.value = false
   suppressSave = true
   editorContent.value = note.value?.content ?? ''
   await nextTick()
@@ -860,7 +136,7 @@ watch(noteId, async (newId, oldId) => {
   shareEndDate.value = formatShareEndDate(note.value?.publicUntil ?? null)
   if (newId && autoFocus.value) {
     autoFocus.value = false
-    editorRef.value?.editor?.commands.focus('start')
+    editorRef.value?.focusEditor()
   }
 }, { immediate: true })
 
@@ -879,7 +155,6 @@ watch(() => note.value?.content, (content) => {
 
 onBeforeUnmount(() => {
   flushSave()
-  window.removeEventListener('keydown', onTablePickerKeydown, true)
 })
 
 // ─── Copy to Markdown ────────────────────────────────────────
@@ -917,289 +192,134 @@ const tagCount = computed(() => note.value?.tags.length ?? 0)
     </template>
 
     <template v-else>
-      <div
-        class="flex-1 overflow-y-auto"
-        @dragover.prevent
-        @drop.prevent="onFileDrop"
+      <RichEditor
+        ref="editorRef"
+        v-model="editorContent"
+        :upload-image="uploadImage"
+        class="min-h-0 flex-1 pb-14 lg:pb-0"
       >
-        <UEditor
-          ref="editorRef"
-          v-slot="{ editor }"
-          v-model="editorContent"
-          content-type="html"
-          placeholder="Start writing… (@ for dates, # for tags)"
-          :starter-kit="{ codeBlock: false }"
-          :image="false"
-          :extensions="extensions"
-          :handlers="customHandlers"
-          class="min-h-full"
-        >
-          <!-- Fixed toolbar -->
-          <div class="flex items-center gap-2 px-3 py-2.5 pb-3 border-b border-default sticky top-0 bg-default z-10 overflow-x-auto">
-            <UEditorToolbar
-              :editor="editor"
-              :items="fixedToolbarItems"
-            >
-              <template #table>
-                <UPopover
-                  v-model:open="tablePickerOpen"
-                  :content="{ align: 'start', sideOffset: 8 }"
-                >
-                  <UTooltip text="Insert table">
-                    <UButton
-                      icon="i-lucide-table"
-                      size="sm"
-                      color="neutral"
-                      variant="ghost"
-                      aria-label="Insert table"
-                    />
-                  </UTooltip>
-
-                  <template #content>
-                    <TableGridPicker @select="size => onToolbarTablePick(editor, size)" />
-                  </template>
-                </UPopover>
-              </template>
-            </UEditorToolbar>
-            <div class="flex items-center gap-1 shrink-0 ml-auto">
-              <span
-                v-if="tagCount > 0"
-                class="flex items-center gap-1 text-xs text-muted"
-              >
-                <UIcon
-                  name="i-lucide-tag"
-                  class="size-3"
-                />
-                {{ tagCount }}
-              </span>
-              <div class="w-px h-4 bg-muted/40" />
-              <UPopover
-                v-model:open="shareOpen"
-                :content="{ align: 'end', sideOffset: 8 }"
-                @open-auto-focus.prevent
-              >
-                <UButton
-                  :icon="note?.isPublic ? 'i-lucide-globe' : 'i-lucide-share-2'"
-                  size="xs"
-                  :color="note?.isPublic ? 'primary' : 'neutral'"
-                  variant="ghost"
-                  aria-label="Share note"
-                >
-                  <span class="hidden sm:inline">Share</span>
-                </UButton>
-
-                <template #content>
-                  <div class="w-80 p-3 space-y-3">
-                    <div class="flex items-start gap-2">
-                      <div class="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary">
-                        <UIcon
-                          name="i-lucide-globe-2"
-                          class="size-4"
-                        />
-                      </div>
-                      <div>
-                        <p class="text-sm font-medium text-default">
-                          Share this note
-                        </p>
-                        <p class="text-xs text-muted">
-                          {{ note?.isPublic ? 'Anyone with the link can view it.' : 'Create a view-only public link.' }}
-                        </p>
-                      </div>
-                    </div>
-
-                    <UFormField
-                      label="End date"
-                      hint="Optional"
-                    >
-                      <UInput
-                        v-model="shareEndDate"
-                        type="date"
-                        :min="new Date().toISOString().slice(0, 10)"
-                        class="w-full"
-                      />
-                      <template #hint>
-                        <span class="text-xs text-muted">Leave empty to share indefinitely</span>
-                      </template>
-                    </UFormField>
-
-                    <div
-                      v-if="note?.isPublic"
-                      class="rounded-md bg-elevated px-2.5 py-2"
-                    >
-                      <p class="text-xs font-medium text-default">
-                        Link is active
-                      </p>
-                      <p class="mt-0.5 text-xs text-muted truncate">
-                        {{ publicLink() }}
-                      </p>
-                      <p class="mt-1 text-xs text-muted">
-                        {{ shareExpiryLabel(note?.publicUntil ?? null) }}
-                      </p>
-                    </div>
-
-                    <div class="flex gap-2">
-                      <UButton
-                        :label="note?.isPublic ? 'Save changes' : 'Share note'"
-                        icon="i-lucide-send"
-                        size="sm"
-                        class="flex-1 justify-center"
-                        :loading="sharing"
-                        @click="saveSharing(true)"
-                      />
-                      <UButton
-                        v-if="note?.isPublic"
-                        label="Copy link"
-                        icon="i-lucide-copy"
-                        size="sm"
-                        color="neutral"
-                        variant="soft"
-                        @click="copyPublicLink"
-                      />
-                    </div>
-
-                    <UButton
-                      v-if="note?.isPublic"
-                      label="Stop sharing"
-                      icon="i-lucide-lock"
-                      size="sm"
-                      color="error"
-                      variant="ghost"
-                      block
-                      :loading="sharing"
-                      @click="saveSharing(false)"
-                    />
-                  </div>
-                </template>
-              </UPopover>
-              <div class="w-px h-4 bg-muted/40" />
-              <UButton
-                icon="i-lucide-clipboard-copy"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                @click="copyToMarkdown"
-              >
-                <span class="hidden sm:inline">Copy</span>
-              </UButton>
-            </div>
-          </div>
-
-          <!-- Slash commands (type /) -->
-          <UEditorSuggestionMenu
-            :editor="editor"
-            :items="suggestionItems"
-          />
-
-          <!-- Bubble toolbar (appears on text selection) -->
-          <UEditorToolbar
-            :editor="editor"
-            :items="bubbleToolbarItems"
-            layout="bubble"
-            :ui="{ root: 'z-50' }"
-            :should-show="({ editor: e, view, state }) => {
-              const { selection } = state
-              return view.hasFocus() && !selection.empty && !(selection instanceof CellSelection) && !e.isActive('image')
-            }"
-          />
-
-          <!-- Table controls (appears when the cursor is in a table) -->
-          <UEditorToolbar
-            :editor="editor"
-            :items="tableToolbarItems"
-            layout="bubble"
-            plugin-key="table-toolbar"
-            :should-show="({ editor: e, view, state }) => shouldShowTableToolbar(e, view, state)"
-          />
-
-          <!-- Drag handle (hover any block) -->
-          <UEditorDragHandle
-            v-slot="{ ui }"
-            :editor="editor"
+        <template #toolbar-right>
+          <span
+            v-if="tagCount > 0"
+            class="flex items-center gap-1 text-xs text-muted"
+          >
+            <UIcon
+              name="i-lucide-tag"
+              class="size-3"
+            />
+            {{ tagCount }}
+          </span>
+          <div class="w-px h-4 bg-muted/40" />
+          <UPopover
+            v-model:open="shareOpen"
+            :content="{ align: 'end', sideOffset: 8 }"
+            @open-auto-focus.prevent
           >
             <UButton
-              color="neutral"
+              :icon="note?.isPublic ? 'i-lucide-globe' : 'i-lucide-share-2'"
+              size="xs"
+              :color="note?.isPublic ? 'primary' : 'neutral'"
               variant="ghost"
-              size="sm"
-              icon="i-lucide-grip-vertical"
-              :class="ui.handle()"
-            />
-          </UEditorDragHandle>
-        </UEditor>
-      </div>
-    </template>
+              aria-label="Share note"
+            >
+              <span class="hidden sm:inline">Share</span>
+            </UButton>
 
-    <UModal
-      v-model:open="aiPromptOpen"
-      title="Ask AI"
-      description="Describe what you want to add at the current cursor position. You can optionally include the current note as context."
-      :ui="{ footer: 'justify-between' }"
-    >
-      <template #body>
-        <form
-          id="ai-prompt-form"
-          class="space-y-3"
-          @submit.prevent="runCustomPrompt"
-        >
-          <UTextarea
-            v-model="aiPrompt"
-            autofocus
-            autoresize
-            :rows="4"
-            :maxrows="10"
-            placeholder="For example: Create a Drizzle schema for roles and permissions with a short usage example"
-            class="w-full"
-            @keydown.meta.enter.prevent="runCustomPrompt"
-            @keydown.ctrl.enter.prevent="runCustomPrompt"
-          />
-          <div class="flex items-center justify-between gap-4">
-            <UCheckbox
-              v-model="aiPromptIncludeContext"
-              label="Include current note as context"
-            />
-            <p class="text-xs text-muted text-right">
-              Markdown, tables, task lists, and code blocks are supported.
-            </p>
-          </div>
-        </form>
-      </template>
+            <template #content>
+              <div class="w-80 p-3 space-y-3">
+                <div class="flex items-start gap-2">
+                  <div class="mt-0.5 rounded-md bg-primary/10 p-1.5 text-primary">
+                    <UIcon
+                      name="i-lucide-globe-2"
+                      class="size-4"
+                    />
+                  </div>
+                  <div>
+                    <p class="text-sm font-medium text-default">
+                      Share this note
+                    </p>
+                    <p class="text-xs text-muted">
+                      {{ note?.isPublic ? 'Anyone with the link can view it.' : 'Create a view-only public link.' }}
+                    </p>
+                  </div>
+                </div>
 
-      <template #footer="{ close }">
-        <span class="text-xs text-muted">Cmd/Ctrl + Enter to generate</span>
-        <div class="flex items-center gap-2">
+                <UFormField
+                  label="End date"
+                  hint="Optional"
+                >
+                  <UInput
+                    v-model="shareEndDate"
+                    type="date"
+                    :min="new Date().toISOString().slice(0, 10)"
+                    class="w-full"
+                  />
+                  <template #hint>
+                    <span class="text-xs text-muted">Leave empty to share indefinitely</span>
+                  </template>
+                </UFormField>
+
+                <div
+                  v-if="note?.isPublic"
+                  class="rounded-md bg-elevated px-2.5 py-2"
+                >
+                  <p class="text-xs font-medium text-default">
+                    Link is active
+                  </p>
+                  <p class="mt-0.5 text-xs text-muted truncate">
+                    {{ publicLink() }}
+                  </p>
+                  <p class="mt-1 text-xs text-muted">
+                    {{ shareExpiryLabel(note?.publicUntil ?? null) }}
+                  </p>
+                </div>
+
+                <div class="flex gap-2">
+                  <UButton
+                    :label="note?.isPublic ? 'Save changes' : 'Share note'"
+                    icon="i-lucide-send"
+                    size="sm"
+                    class="flex-1 justify-center"
+                    :loading="sharing"
+                    @click="saveSharing(true)"
+                  />
+                  <UButton
+                    v-if="note?.isPublic"
+                    label="Copy link"
+                    icon="i-lucide-copy"
+                    size="sm"
+                    color="neutral"
+                    variant="soft"
+                    @click="copyPublicLink"
+                  />
+                </div>
+
+                <UButton
+                  v-if="note?.isPublic"
+                  label="Stop sharing"
+                  icon="i-lucide-lock"
+                  size="sm"
+                  color="error"
+                  variant="ghost"
+                  block
+                  :loading="sharing"
+                  @click="saveSharing(false)"
+                />
+              </div>
+            </template>
+          </UPopover>
+          <div class="w-px h-4 bg-muted/40" />
           <UButton
-            label="Cancel"
+            icon="i-lucide-clipboard-copy"
+            size="xs"
             color="neutral"
             variant="ghost"
-            @click="close"
-          />
-          <UButton
-            type="submit"
-            form="ai-prompt-form"
-            label="Generate"
-            icon="i-lucide-sparkles"
-            :disabled="!aiPrompt.trim()"
-          />
-        </div>
-      </template>
-    </UModal>
-
-    <!-- Table size picker (opened from the slash menu) -->
-    <Teleport to="body">
-      <div v-if="tablePicker.open">
-        <div
-          class="fixed inset-0 z-50"
-          data-editor-overlay
-          @click="closeSlashTablePicker"
-          @contextmenu.prevent="closeSlashTablePicker"
-        />
-        <div
-          class="fixed z-[60] rounded-lg border border-default bg-default shadow-lg"
-          data-editor-overlay
-          :style="{ left: `${tablePicker.x}px`, top: `${tablePicker.y}px` }"
-        >
-          <TableGridPicker @select="onSlashTablePick" />
-        </div>
-      </div>
-    </Teleport>
+            @click="copyToMarkdown"
+          >
+            <span class="hidden sm:inline">Copy</span>
+          </UButton>
+        </template>
+      </RichEditor>
+    </template>
   </div>
 </template>

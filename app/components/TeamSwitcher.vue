@@ -3,6 +3,7 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 
 const { teams, activeTeam, setActiveTeam } = useTeams()
 const { refreshNotes } = useNotes()
+const { refresh: refreshProjects } = useProjects()
 
 const showManageModal = ref(false)
 const showCreateModal = ref(false)
@@ -11,6 +12,7 @@ const showJoinModal = ref(false)
 async function handleSelectTeam(id: string | null) {
   await setActiveTeam(id)
   await refreshNotes()
+  await refreshProjects()
 }
 
 const dropdownItems = computed<DropdownMenuItem[]>(() => {

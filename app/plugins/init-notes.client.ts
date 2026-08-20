@@ -1,9 +1,12 @@
 import MiniSearch from 'minisearch'
 import { initNotesStore } from '~/composables/useNotes'
 import type { Note } from '~/composables/useNotes'
+import { initProjectsStore } from '~/composables/useProjects'
+import type { Project, TaskSearchRow } from '~/composables/useProjects'
 import { authClient } from '~/composables/useAuth'
 
 type SearchDoc = Note & { tagsText: string, contentText: string }
+type BoardSearchDoc = { id: string, type: 'project' | 'task', name: string, title: string, descriptionText: string }
 
 export default defineNuxtPlugin(async () => {
   const { data: session } = await authClient.getSession()
@@ -27,6 +30,18 @@ export default defineNuxtPlugin(async () => {
     }
   })
 
+  // Board index lives beside the notes index; both feed the global search.
+  const boardSearch = new MiniSearch<BoardSearchDoc>({
+    idField: 'id',
+    fields: ['name', 'title', 'descriptionText'],
+    storeFields: ['id'],
+    searchOptions: {
+      boost: { title: 2, name: 2 },
+      prefix: true,
+      fuzzy: 0.2
+    }
+  })
+
   // Seed a welcome note on first launch
   if (notes.length === 0) {
     const welcome = await $fetch<Note>('/api/notes', {
@@ -43,6 +58,17 @@ export default defineNuxtPlugin(async () => {
       }
     })
     notes.unshift(welcome)
+  }
+
+  // Projects/tasks are additive — a fetch failure must not block notes.
+  try {
+    const [projects, tasks] = await Promise.all([
+      $fetch<Project[]>('/api/projects'),
+      $fetch<TaskSearchRow[]>('/api/tasks')
+    ])
+    initProjectsStore(projects, tasks, boardSearch)
+  } catch {
+    initProjectsStore([], [], boardSearch)
   }
 
   initNotesStore(notes, search)

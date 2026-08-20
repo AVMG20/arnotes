@@ -109,6 +109,77 @@ export const notes = pgTable(
 export type Note = typeof notes.$inferSelect
 export type NewNote = typeof notes.$inferInsert
 
+// ─── Projects (kanban) ────────────────────────────────────────────────────────
+
+export const projects = pgTable(
+  'projects',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    // NULL = personal workspace, same scoping rule as notes.
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().default('Untitled project'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull()
+  },
+  table => [index('projects_team_id_idx').on(table.teamId)]
+)
+
+export type Project = typeof projects.$inferSelect
+export type NewProject = typeof projects.$inferInsert
+
+export const projectColumns = pgTable(
+  'project_columns',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    position: integer('position').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('project_columns_project_id_idx').on(table.projectId)]
+)
+
+export type ProjectColumn = typeof projectColumns.$inferSelect
+
+export const projectTasks = pgTable(
+  'project_tasks',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    columnId: text('column_id').notNull().references(() => projectColumns.id, { onDelete: 'cascade' }),
+    title: text('title').notNull().default('Untitled'),
+    // Rich text (tiptap HTML) — rendered with prose in cards and drawer.
+    description: text('description').notNull().default(''),
+    // Kanban labels: unlike note tags they do not group boards, they annotate
+    // tasks (priority, workstream, …) and filter the board view.
+    tags: json('tags').$type<string[]>().notNull().default([]),
+    position: integer('position').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull()
+  },
+  table => [
+    index('project_tasks_project_id_idx').on(table.projectId),
+    index('project_tasks_column_id_idx').on(table.columnId)
+  ]
+)
+
+export type ProjectTask = typeof projectTasks.$inferSelect
+
+export const taskComments = pgTable(
+  'task_comments',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id').notNull().references(() => projectTasks.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('task_comments_task_id_idx').on(table.taskId)]
+)
+
+export type TaskComment = typeof taskComments.$inferSelect
+
 // ─── User settings ────────────────────────────────────────────────────────────
 
 export const userSettings = pgTable('user_settings', {

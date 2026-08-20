@@ -144,6 +144,54 @@ function noteToResult(n: Note) {
   }
 }
 
+// ─── Kanban helpers ──────────────────────────────────────────
+
+// Board endpoints resolve by id or by (case-insensitive) name so the model can
+// use whichever it saw last.
+function resolveBoard(ref: string) {
+  const { projects } = useProjects()
+  return projects.value.find(p => p.id === ref || p.name.toLowerCase() === ref.toLowerCase()) ?? null
+}
+
+async function loadBoardByRef(ref: string) {
+  const { loadBoard, board, boardColumns, activeProjectId } = useProjects()
+  const project = resolveBoard(ref)
+  if (!project) return null
+  if (activeProjectId.value !== project.id || !board.value) await loadBoard(project.id)
+  if (!board.value || activeProjectId.value !== project.id) return null
+  return { project, board: board.value, columns: boardColumns.value }
+}
+
+function boardToResult(project: { id: string, name: string }, columns: Array<{ id: string, name: string }>, tasks: Array<{ id: string, title: string, columnId: string, tags: string[], description: string, updatedAt: number }>) {
+  return {
+    id: project.id,
+    name: project.name,
+    columns: columns.map(c => ({ id: c.id, name: c.name })),
+    tasks: tasks.map((t) => {
+      const column = columns.find(c => c.id === t.columnId)
+      return {
+        id: t.id,
+        column: column?.name ?? t.columnId,
+        title: t.title,
+        tags: t.tags ?? [],
+        description: t.description ? htmlToMarkdown(t.description) : '',
+        updatedAt: new Date(t.updatedAt).toISOString()
+      }
+    })
+  }
+}
+
+function taskToResult(t: { id: string, projectId: string, title: string, tags: string[], description: string, updatedAt: number }, projectName?: string) {
+  return {
+    id: t.id,
+    board: projectName ? { id: t.projectId, name: projectName } : t.projectId,
+    title: t.title,
+    tags: t.tags ?? [],
+    description: t.description ? htmlToMarkdown(t.description) : '',
+    updatedAt: new Date(t.updatedAt).toISOString()
+  }
+}
+
 async function executeTool(name: string, args: Record<string, unknown>): Promise<{ result: unknown, label: string }> {
   const { getNote, searchNotes, createNote, updateNote, deleteNote } = useNotes()
 
@@ -200,6 +248,110 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       if (!n || n.deletedAt) return notFound
       await deleteNote(id) // soft delete — restorable from trash
       return { result: { ok: true, id, deleted: true }, label: `Moved "${n.title}" to trash` }
+    }
+    case 'list_boards': {
+      const { projects } = useProjects()
+      const results = projects.value.map(p => ({ id: p.id, name: p.name, updatedAt: new Date(p.updatedAt).toISOString() }))
+      return { result: { count: results.length, boards: results }, label: `Listed ${results.length} boards` }
+    }
+    case 'get_board': {
+      const loaded = await loadBoardByRef(String(args.board ?? ''))
+      if (!loaded) return { result: { error: 'Board not found' }, label: 'Board not found' }
+      return {
+        result: boardToResult(loaded.project, loaded.columns, loaded.board.tasks),
+        label: `Read board "${loaded.project.name}"`
+      }
+    }
+    case 'create_board': {
+      const { createProject } = useProjects()
+      const project = await createProject(String(args.name ?? 'Untitled project'))
+      return { result: { id: project.id, name: project.name, columns: ['Backlog', 'To do', 'Verify', 'Done'] }, label: `Created board "${project.name}"` }
+    }
+    case 'search_tasks': {
+      const { allTasks, projects } = useProjects()
+      const query = String(args.query ?? '').toLowerCase()
+      const tags = toStringArray(args.tags).map(t => t.toLowerCase())
+      const results = allTasks.value
+        .filter((t) => {
+          if (tags.length && !tags.every(tag => (t.tags ?? []).includes(tag))) return false
+          if (!query) return true
+          return t.title.toLowerCase().includes(query)
+            || t.description.replace(/<[^>]+>/g, ' ').toLowerCase().includes(query)
+        })
+        .slice(0, 25)
+        .map(t => taskToResult(t, projects.value.find(p => p.id === t.projectId)?.name))
+      return { result: { count: results.length, results }, label: `Searched tasks "${query || 'all'}"` }
+    }
+    case 'create_task': {
+      const loaded = await loadBoardByRef(String(args.board ?? ''))
+      if (!loaded) return { result: { error: 'Board not found' }, label: 'Board not found' }
+      const columnName = String(args.column ?? '').toLowerCase()
+      const column = loaded.columns.find(c => c.name.toLowerCase() === columnName)
+      if (!column) {
+        return {
+          result: { error: `Column "${args.column}" not found. Available: ${loaded.columns.map(c => c.name).join(', ')}` },
+          label: `Column "${args.column}" not found`
+        }
+      }
+      const { createTask } = useProjects()
+      const task = await createTask(
+        loaded.project.id,
+        column.id,
+        String(args.title ?? 'Untitled'),
+        String(args.description ?? '') ? markdownToHtml(String(args.description)) : '',
+        toStringArray(args.tags).map(t => t.toLowerCase())
+      )
+      return { result: taskToResult(task, loaded.project.name), label: `Created task "${task.title}"` }
+    }
+    case 'update_task': {
+      const { allTasks, projects, updateTask } = useProjects()
+      const id = String(args.id ?? '')
+      const row = allTasks.value.find(t => t.id === id)
+      if (!row) return { result: { error: 'Task not found' }, label: 'Task not found' }
+
+      const patch: { title?: string, description?: string, tags?: string[] } = {}
+      if (args.title !== undefined) patch.title = String(args.title)
+      if (args.description !== undefined) patch.description = markdownToHtml(String(args.description))
+      if (args.tags !== undefined) patch.tags = toStringArray(args.tags).map(t => t.toLowerCase())
+
+      const updated = await updateTask(id, patch)
+      return {
+        result: taskToResult(updated, projects.value.find(p => p.id === updated.projectId)?.name),
+        label: `Updated task "${updated.title}"`
+      }
+    }
+    case 'move_task': {
+      const { allTasks, projects, moveTask } = useProjects()
+      const id = String(args.id ?? '')
+      const row = allTasks.value.find(t => t.id === id)
+      if (!row) return { result: { error: 'Task not found' }, label: 'Task not found' }
+
+      const loaded = await loadBoardByRef(row.projectId)
+      if (!loaded) return { result: { error: 'Board not found' }, label: 'Board not found' }
+      const columnName = String(args.column ?? '').toLowerCase()
+      const column = loaded.columns.find(c => c.name.toLowerCase() === columnName)
+      if (!column) {
+        return {
+          result: { error: `Column "${args.column}" not found. Available: ${loaded.columns.map(c => c.name).join(', ')}` },
+          label: `Column "${args.column}" not found`
+        }
+      }
+      if (column.id === row.columnId) {
+        return { result: { ok: true, id, moved: false, column: column.name }, label: `Task already in ${column.name}` }
+      }
+      const updated = await moveTask(id, column.id, null, null)
+      return {
+        result: { ...taskToResult(updated, projects.value.find(p => p.id === updated.projectId)?.name), moved: true },
+        label: `Moved "${updated.title}" to ${column.name}`
+      }
+    }
+    case 'delete_task': {
+      const { allTasks, deleteTask } = useProjects()
+      const id = String(args.id ?? '')
+      const row = allTasks.value.find(t => t.id === id)
+      if (!row) return { result: { error: 'Task not found' }, label: 'Task not found' }
+      await deleteTask(id)
+      return { result: { ok: true, id, deleted: true }, label: `Deleted task "${row.title}"` }
     }
     default:
       return { result: { error: `Unknown tool: ${name}` }, label: `Unknown tool ${name}` }
