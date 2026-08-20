@@ -5,6 +5,8 @@ import { realtimeHeaders } from '~/composables/useRealtime'
 export interface Project {
   id: string
   name: string
+  isPublic: boolean
+  publicUntil: number | null
   createdAt: number
   updatedAt: number
 }
@@ -220,6 +222,17 @@ export function useProjects() {
     const updated = await $fetch<Project>(`/api/projects/${id}`, {
       method: 'PUT', headers: realtimeHeaders(),
       body: { name }
+    })
+    upsertProject(updated)
+    return updated
+  }
+
+  // Sharing a board hands out a read-only link, optionally until a date, the
+  // same deal a shared note gets.
+  async function updateProjectSharing(id: string, isPublic: boolean, publicUntil: number | null) {
+    const updated = await $fetch<Project>(`/api/projects/${id}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { isPublic, publicUntil }
     })
     upsertProject(updated)
     return updated
@@ -489,6 +502,7 @@ export function useProjects() {
     reloadBoardQuiet,
     createProject,
     renameProject,
+    updateProjectSharing,
     deleteProject,
     loadBoard,
     fetchBoard,

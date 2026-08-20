@@ -4,7 +4,7 @@ import { eq, and } from 'drizzle-orm'
 import { join } from 'path'
 import { existsSync, rmSync } from 'fs'
 import { getNoteAccessFilter } from '../../utils/auth-helpers'
-import { publishFromEvent } from '../../utils/realtime'
+import { closeTopic, publicNoteTopic, publishFromEvent } from '../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -23,7 +23,8 @@ export default defineEventHandler(async (event) => {
     await db.delete(notes).where(accessCondition)
     const attachDir = join(process.cwd(), 'data', 'attachments', id)
     if (existsSync(attachDir)) rmSync(attachDir, { recursive: true })
-    await publishFromEvent(event, { type: 'notes' })
+    await publishFromEvent(event, { type: 'notes', noteId: id })
+    closeTopic(publicNoteTopic(id))
     return { ok: true, permanent: true }
   }
 
@@ -34,6 +35,8 @@ export default defineEventHandler(async (event) => {
     .where(accessCondition)
     .returning()
 
-  await publishFromEvent(event, { type: 'notes' })
+  await publishFromEvent(event, { type: 'notes', noteId: id })
+  // A trashed note is no longer readable over its public link either.
+  closeTopic(publicNoteTopic(id))
   return { ok: true, permanent: false, note: softDeleted }
 })

@@ -3,17 +3,17 @@ import { tagChipClass, columnDotClass } from '~/utils/tagColors'
 import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
 
-const props = defineProps<{
-  task: {
-    id: string
-    columnId: string
-    title: string
-    description: string
-    tags: string[]
-    createdAt: number
-    updatedAt: number
-  } | null
-}>()
+interface Task {
+  id: string
+  columnId: string
+  title: string
+  description: string
+  tags: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+const props = defineProps<{ task: Task | null }>()
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -39,8 +39,16 @@ const open = computed({
   set: (v: boolean) => { if (!v) emit('close') }
 })
 
+// The panel slides out over ~half a second. It renders the last task it was
+// given rather than the prop, so closing it doesn't empty it mid-animation.
+const shownTask = ref<Task | null>(props.task)
+
+watch(() => props.task, (task) => {
+  if (task) shownTask.value = task
+})
+
 const column = computed(() =>
-  boardColumns.value.find(c => c.id === props.task?.columnId) ?? null
+  boardColumns.value.find(c => c.id === shownTask.value?.columnId) ?? null
 )
 
 // ─── Panel width: cookie-persisted, drag-resize, reset ──────
@@ -150,9 +158,12 @@ watch(editorContent, () => {
 
 // Switching task saves whatever the previous one had pending — against that
 // task's id — and then reloads every draft.
+// Closing leaves every draft alone: the panel is still on screen animating out,
+// and the next open overwrites them anyway.
 watch(() => props.task?.id, (id, previousId) => {
   flushTitle(previousId)
   flushDescription(previousId)
+  if (!id) return
 
   titleDraft.value = props.task?.title ?? ''
   suppressSave = true
@@ -162,8 +173,8 @@ watch(() => props.task?.id, (id, previousId) => {
   })
 
   commentDraft.value = ''
-  if (id) loadComments(id).then(scrollUpdatesToEnd)
-  else clearComments()
+  clearComments()
+  loadComments(id).then(scrollUpdatesToEnd)
 }, { immediate: true })
 
 // Changes made elsewhere — an agent over MCP, a teammate, the AI chat — land in
@@ -302,7 +313,7 @@ const menuItems = computed(() => [[
   >
     <template #content>
       <div
-        v-if="task"
+        v-if="shownTask"
         class="relative flex h-full flex-col bg-default focus:outline-none"
         :style="{ width: `${width}px`, maxWidth: '100%' }"
       >
@@ -316,7 +327,10 @@ const menuItems = computed(() => [[
 
         <!-- Header: state, breadcrumb, actions -->
         <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
-          <UDropdownMenu :items="stateItems">
+          <UDropdownMenu
+            :items="stateItems"
+            :content="{ align: 'start', collisionPadding: 12 }"
+          >
             <UButton
               color="neutral"
               variant="soft"
@@ -348,12 +362,15 @@ const menuItems = computed(() => [[
                timestamps live in the tooltip. -->
           <span
             class="min-w-0 flex-1 truncate text-xs text-dimmed"
-            :title="`Created ${fullDate(task.createdAt)}\nUpdated ${fullDate(task.updatedAt)}`"
+            :title="`Created ${fullDate(shownTask.createdAt)}\nUpdated ${fullDate(shownTask.updatedAt)}`"
           >
-            <template v-if="activeProject">{{ activeProject.name }} · </template>edited {{ relativeTime(task.updatedAt) }}
+            <template v-if="activeProject">{{ activeProject.name }} · </template>edited {{ relativeTime(shownTask.updatedAt) }}
           </span>
 
-          <UDropdownMenu :items="menuItems">
+          <UDropdownMenu
+            :items="menuItems"
+            :content="{ align: 'end', collisionPadding: 12 }"
+          >
             <UButton
               icon="i-lucide-ellipsis"
               size="xs"
@@ -388,7 +405,7 @@ const menuItems = computed(() => [[
 
             <div class="mt-2 flex flex-wrap items-center gap-1.5">
               <span
-                v-for="tag in task.tags"
+                v-for="tag in shownTask.tags"
                 :key="tag"
                 class="group flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
                 :class="tagChipClass(tag)"
@@ -402,7 +419,7 @@ const menuItems = computed(() => [[
               </span>
               <input
                 v-model="tagDraft"
-                :placeholder="task.tags.length ? 'Add label…' : 'Add a label…'"
+                :placeholder="shownTask.tags.length ? 'Add label…' : 'Add a label…'"
                 class="min-w-24 flex-1 bg-transparent py-0.5 text-xs text-default outline-none placeholder:text-dimmed"
                 @keydown="onTagKeydown"
                 @blur="addTag"

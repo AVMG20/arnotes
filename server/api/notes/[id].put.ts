@@ -5,7 +5,7 @@ import { join } from 'path'
 import { unlinkSync } from 'fs'
 import type { NewNote } from '../../db/schema'
 import { getNoteAccessFilter } from '../../utils/auth-helpers'
-import { publishFromEvent } from '../../utils/realtime'
+import { closeTopic, publicNoteTopic, publishFromEvent } from '../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -50,6 +50,9 @@ export default defineEventHandler(async (event) => {
 
   if (!updated) throw createError({ statusCode: 404, message: 'Note not found' })
 
-  await publishFromEvent(event, { type: 'notes' })
+  await publishFromEvent(event, { type: 'notes', noteId: id })
+  // Readers refetch on the event above and find the note gone; the socket they
+  // are holding has to go with it.
+  if (body.isPublic === false) closeTopic(publicNoteTopic(id))
   return updated
 })

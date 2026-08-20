@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-34d399.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-34d399.svg)](https://github.com/AVMG20/arnotes/releases)
 
-Arnotes is a fast, self-hosted note-taking app organized around inline tags, with kanban boards for the work in flight. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, optional AI writing tools through OpenRouter, and an MCP server for connecting AI agents.
+Arnotes is a fast, self-hosted note-taking app organized around inline tags, with kanban boards for the work in flight. It includes a rich-text editor, full-text search, attachments, expiring public links to notes and boards, an installable PWA, optional AI writing tools through OpenRouter, and an MCP server for connecting AI agents.
 
 ![Arnotes editor](public/screenshot.png)
 
@@ -17,11 +17,11 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags, wit
 - Search across titles, content, and tags
 - Markdown import and export
 - Soft deletion and trash recovery
-- Private notes with optional expiring public links
+- Private notes and boards, each with an optional expiring public link
 - Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
 - Kanban boards for projects: columns, drag-and-drop tasks, labels, rich-text descriptions, and a log of updates per task
-- Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload
+- Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload — on shared links too
 - Built-in MCP server so Claude Code and other AI agents can read and write your notes and run your boards, using API keys you scope yourself
 - Installable Progressive Web App
 - Docker-based self-hosting with persistent PostgreSQL and attachment storage
@@ -205,7 +205,7 @@ For clients configured with JSON:
 }
 ```
 
-Anything an agent writes shows up in an open browser immediately — the app listens on a WebSocket at `/_ws` and refetches what changed, so a board or note list never sits there stale. Behind a reverse proxy, that path needs the usual `Upgrade`/`Connection` headers forwarded; a single app instance holds the connections in memory, so running several would need a shared bus between them.
+Anything an agent writes shows up in an open browser immediately — the app listens on a WebSocket at `/_ws` and refetches what changed, so a board or note list never sits there stale. Public pages listen on the same socket for the one note or board they were given a link to, so a shared board follows the work as it moves. Behind a reverse proxy, that path needs the usual `Upgrade`/`Connection` headers forwarded; a single app instance holds the connections in memory, so running several would need a shared bus between them.
 
 Agents work with notes and task descriptions as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently. Boards have no trash, so `delete_board`, `delete_column` and `delete_task` are permanent; they are advertised to clients as destructive so an agent can ask before using them.
 

@@ -1,18 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
-import { VueNodeViewRenderer } from '@tiptap/vue-3'
-import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import CodeBlockView from '~/components/CodeBlockView.vue'
-import Highlight from '@tiptap/extension-highlight'
-import TaskList from '@tiptap/extension-task-list'
-import TaskItem from '@tiptap/extension-task-item'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { createLowlight, common } from 'lowlight'
-import { DateMention } from '~/composables/useDateMention'
-import { ResizableImage } from '~/utils/resizable-image'
+import { computed, ref, onMounted } from 'vue'
+import { htmlToMarkdown } from '~/utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,55 +18,42 @@ const note = ref<PublicNote | null>(null)
 const error = ref(false)
 const isLoggedIn = ref(false)
 
+const noteId = computed(() => route.params.id as string)
+
 useSeoMeta({
   title: computed(() => note.value?.title || 'Shared note'),
-  description: computed(() => note.value ? `Read "${note.value.title}" on Arnotes` : undefined),
+  description: computed(() => note.value ? `Read "${note.value.title}" on Arnotes` : undefined)
 })
+
+async function loadNote() {
+  try {
+    note.value = await $fetch<PublicNote>(`/api/public/${noteId.value}`)
+    error.value = false
+  } catch {
+    note.value = null
+    error.value = true
+  }
+}
 
 onMounted(async () => {
   const { authClient } = await import('~/composables/useAuth')
   const { data: session } = await authClient.getSession()
   isLoggedIn.value = !!session
 
-  try {
-    note.value = await $fetch<PublicNote>(`/api/public/${route.params.id}`)
-  } catch {
-    error.value = true
-  }
+  await loadNote()
 })
+
+// The author can keep writing after sharing the link, so the page follows the
+// note instead of showing whatever it happened to load.
+usePublicLive(() => ({ kind: 'note', id: noteId.value }), loadNote)
 
 function goHome() {
   router.push(isLoggedIn.value ? '/note' : '/login')
 }
 
-// ─── Editor extensions (same as NotesEditor, without HashtagHighlight) ───
-
-const lowlight = createLowlight(common)
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const extensions: any[] = [
-  CodeBlockLowlight.configure({ lowlight }).extend({
-    addNodeView: () => VueNodeViewRenderer(CodeBlockView)
-  }),
-  Highlight.configure({ multicolor: false }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: false }),
-  TableRow,
-  TableHeader,
-  TableCell,
-  DateMention,
-  ResizableImage,
-]
-
-const editorContent = ref('')
-
-watch(note, (n) => {
-  if (n) editorContent.value = n.content
-})
-
 function copyToMarkdown() {
-  navigator.clipboard.writeText(htmlToMarkdown(editorContent.value)).then(() => {
+  if (!note.value) return
+  navigator.clipboard.writeText(htmlToMarkdown(note.value.content)).then(() => {
     toast.add({ title: 'Copied as Markdown', icon: 'i-lucide-clipboard-check', duration: 2000 })
   })
 }
@@ -135,13 +110,8 @@ function copyToMarkdown() {
     <template v-else>
       <div class="flex-1 overflow-y-auto">
         <UContainer>
-          <UEditor
-            v-model="editorContent"
-            content-type="html"
-            :editable="false"
-            :starter-kit="{ codeBlock: false }"
-            :image="false"
-            :extensions="extensions"
+          <ReadOnlyRichText
+            :content="note.content"
             class="min-h-full"
           />
         </UContainer>

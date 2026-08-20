@@ -6,11 +6,14 @@ import { ref } from 'vue'
 // somewhere this tab cannot see — an AI agent over MCP, a teammate, or the same
 // user in another tab.
 
+// The ids on `notes` and `projects` address one shared note or board and are
+// only read by the public pages (see usePublicLive); a workspace client
+// refetches the whole slice either way.
 type RealtimeMessage
   = | { type: 'ready' }
     | { type: 'pong' }
-    | { type: 'notes' }
-    | { type: 'projects' }
+    | { type: 'notes', noteId?: string }
+    | { type: 'projects', projectId?: string }
     | { type: 'board', projectId: string }
 
 // One id per tab, sent on connect and with every mutating request, so the server

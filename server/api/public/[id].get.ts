@@ -1,17 +1,10 @@
-import { db } from '../../db'
-import { notes } from '../../db/schema'
-import { and, eq, gt, isNull, or } from 'drizzle-orm'
+import { findPublicNote } from '../../utils/publicAccess'
 
+// A shared note, readable without a session. Only what the public page renders
+// is returned — the row's owner and workspace are nobody else's business.
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const [note] = await db
-    .select()
-    .from(notes)
-    .where(and(
-      eq(notes.id, id),
-      eq(notes.isPublic, true),
-      or(isNull(notes.publicUntil), gt(notes.publicUntil, Date.now()))
-    ))
+  const note = await findPublicNote(id)
   if (!note) throw createError({ statusCode: 404, message: 'Note not found' })
   return note
 })

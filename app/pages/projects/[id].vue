@@ -14,6 +14,7 @@ const {
   loadBoard,
   board,
   renameProject,
+  updateProjectSharing,
   deleteProject,
   activeTags,
   boardTagCounts,
@@ -98,6 +99,18 @@ const projectMenu = computed(() => [[
 ]])
 
 const taskCount = computed(() => board.value?.tasks.length ?? 0)
+
+// ─── Sharing ───────────────────────────────────────────────
+
+const publicLink = computed(() =>
+  activeProject.value && import.meta.client
+    ? `${window.location.origin}/public/project/${activeProject.value.id}`
+    : ''
+)
+
+function saveSharing(isPublic: boolean, publicUntil: number | null) {
+  return updateProjectSharing(projectId.value, isPublic, publicUntil)
+}
 
 useSeoMeta({
   title: computed(() => activeProject.value?.name || 'Projects')
@@ -190,6 +203,15 @@ useSeoMeta({
             </div>
           </template>
         </UPopover>
+
+        <SharePopover
+          v-if="activeProject"
+          subject="board"
+          :is-public="activeProject.isPublic"
+          :public-until="activeProject.publicUntil"
+          :link="publicLink"
+          :save="saveSharing"
+        />
 
         <UDropdownMenu :items="projectMenu">
           <UButton

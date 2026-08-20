@@ -15,6 +15,6 @@ export default defineEventHandler(async (event) => {
 
   if (!restored) throw createError({ statusCode: 404, message: 'Note not found' })
 
-  await publishFromEvent(event, { type: 'notes' })
+  await publishFromEvent(event, { type: 'notes', noteId: id })
   return restored
 })

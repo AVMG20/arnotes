@@ -119,6 +119,9 @@ export const projects = pgTable(
     // NULL = personal workspace, same scoping rule as notes.
     teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
     name: text('name').notNull().default('Untitled project'),
+    // Same share model as notes: a link anyone can open, optionally until a date.
+    isPublic: boolean('is_public').notNull().default(false),
+    publicUntil: bigint('public_until', { mode: 'number' }),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull()
   },

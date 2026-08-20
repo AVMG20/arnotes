@@ -8,7 +8,7 @@ import { toolsForScopes } from '../../utils/mcpTools'
 import { McpToolError } from '../../utils/mcpToolKit'
 import { API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
-import { publish, workspaceTopic } from '../../utils/realtime'
+import { closeTopic, publicNoteTopic, publicProjectTopic, publish, workspaceTopic } from '../../utils/realtime'
 import type { RealtimeEvent } from '../../utils/realtime'
 
 const SERVER_NAME = 'arnotes'
@@ -67,8 +67,15 @@ const ALL_SCOPES: ApiKeyScope[] = [...API_KEY_SCOPES]
  */
 function announceWrite(tool: { scope: ApiKeyScope }, value: unknown, context: ApiKeyContext) {
   const topic = workspaceTopic(context.userId, context.teamId)
+  const record = asRecord(value)
+
   if (tool.scope === 'notes:write') {
-    publish(topic, { type: 'notes' })
+    // The tools answer with the note they touched, either as the result itself
+    // or nested under `note`; naming it also reaches its public readers.
+    const noteId = record.id ?? asRecord(record.note).id
+    publish(topic, { type: 'notes', ...(typeof noteId === 'string' && { noteId }) })
+    // A trashed note stops being readable over its public link.
+    if (record.trashed === true && typeof noteId === 'string') closeTopic(publicNoteTopic(noteId))
     return
   }
   if (tool.scope !== 'boards:write') return
@@ -81,9 +88,12 @@ function announceWrite(tool: { scope: ApiKeyScope }, value: unknown, context: Ap
   const event: RealtimeEvent = typeof projectId === 'string'
     ? { type: 'board', projectId }
     // Creating, renaming or deleting a board changes the list itself, and the
-    // client reloads the open board along with it.
-    : { type: 'projects' }
+    // client reloads the open board along with it. The board-shaped results
+    // carry their own id, which a renamed or deleted board's readers need.
+    : { type: 'projects', ...(typeof record.id === 'string' && { projectId: record.id }) }
   publish(topic, event)
+
+  if (record.deleted === true && typeof record.id === 'string') closeTopic(publicProjectTopic(record.id))
 }
 
 /** Tool failures are reported inside the result so the model can read and retry them. */
