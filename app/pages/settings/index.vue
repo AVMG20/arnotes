@@ -442,6 +442,9 @@ function swatchStyle(color: string, selected: boolean) {
             </div>
           </div>
 
+          <!-- API keys and MCP -->
+          <ApiKeysPanel />
+
           <!-- AI -->
           <div class="rounded-xl border border-default bg-default overflow-hidden">
             <div class="px-5 py-3 border-b border-default bg-elevated/40 flex items-center gap-2">
