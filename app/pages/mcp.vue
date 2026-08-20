@@ -79,15 +79,25 @@ and a running log of short updates.
 
 ## Boards
 
-- \`list_boards\` then \`get_board\` gives you the whole board: columns in order and
-  every task in them. Do that before creating or moving anything, so board,
-  column and task names match what is really there.
+- \`list_boards\` then \`get_board\` gives you the board as it is drawn: columns in
+  order, and in each the tasks with their title, labels and the first line of the
+  description. Do that before creating or moving anything, so board, column and
+  task names match what is really there.
+- \`get_board\` stays small on purpose. Narrow it with \`columns\` when you only care
+  about one stage, pass \`detail: 'titles'\` for a cheap overview, and read the one
+  task you actually need with \`get_task\` — that is where the full description and
+  the update thread live. \`detail: 'full'\` returns every description at once and
+  is rarely what you want.
 - \`create_task\` needs a board, a column and a title. Put detail in the Markdown
   description, not the title, and pass \`labels\` rather than writing them into
   the text. \`list_task_labels\` shows which labels already exist.
 - \`move_task\` is how a task changes stage — moving it into Done is what
   "finished" means here. \`update_task\` replaces whole fields, so read the task
   first when editing part of a description.
+- Pointing at one exact thing is easiest with a link: paste the URL of a note,
+  a board, or a board with a task open (\`/projects/<id>?task=<id>\`) into
+  \`get_note\`, \`get_board\` or \`get_task\` and it resolves to that resource — no
+  title to describe, no id to retype.
 - \`add_task_update\` posts a line on the task's log. Use it for progress,
   blockers and decisions the user will want to read later; keep it to a sentence
   or two.

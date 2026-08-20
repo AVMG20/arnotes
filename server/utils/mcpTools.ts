@@ -12,7 +12,7 @@ import type { ApiKeyScope, Note } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { noteAccessFilter } from './auth-helpers'
 import { extractTags, extractTitle, htmlToMarkdown, htmlToPlainText, markdownToHtml, prependTitle, setNoteTags, setTitleInContent } from './markdown'
-import { McpToolError, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
+import { McpToolError, excerpt, idFromReference, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 import { MCP_BOARD_TOOLS } from './mcpBoardTools'
 
@@ -41,7 +41,9 @@ function detail(note: Note) {
   }
 }
 
-async function findNote(id: string, context: ApiKeyContext): Promise<Note> {
+async function findNote(reference: string, context: ApiKeyContext): Promise<Note> {
+  // Notes answer to their id or to a link copied out of the app.
+  const id = idFromReference(reference)
   const [note] = await db.select().from(notes).where(and(eq(notes.id, id), workspaceFilter(context)))
   if (!note) throw new McpToolError(`No note with id "${id}" exists in this workspace.`)
   return note
@@ -86,14 +88,6 @@ function composeNote(options: { html: string, title?: string, tags?: string[], t
   if (options.tags !== undefined) html = setNoteTags(html, options.tags)
 
   return { content: html, title: extractTitle(html), tags: extractTags(html) }
-}
-
-function snippetFor(text: string, terms: string[]): string {
-  const lowered = text.toLowerCase()
-  const firstHit = terms.map(term => lowered.indexOf(term)).filter(index => index >= 0).sort((a, b) => a - b)[0] ?? 0
-  const start = Math.max(0, firstHit - 60)
-  const snippet = text.slice(start, start + 200).trim()
-  return (start > 0 ? '…' : '') + snippet + (start + 200 < text.length ? '…' : '')
 }
 
 // ─── tools ────────────────────────────────────────────────────────────────────
@@ -174,14 +168,14 @@ const NOTE_TOOLS: McpToolDefinition[] = [
 
       return {
         total: matches.length,
-        notes: matches.slice(0, limit).map(({ note, text }) => summarize(note, snippetFor(text, terms)))
+        notes: matches.slice(0, limit).map(({ note, text }) => summarize(note, excerpt(text, terms)))
       }
     }
   },
   {
     name: 'get_note',
     title: 'Read a note',
-    description: 'Read one note in full, with its body as Markdown. Use ids returned by list_notes or search_notes.',
+    description: 'Read one note in full, with its body as Markdown. Use ids returned by list_notes or search_notes, or a link to the note copied from the app.',
     scope: 'notes:read',
     readOnly: true,
     inputSchema: {

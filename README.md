@@ -182,6 +182,14 @@ A key is displayed once, at creation. Only its SHA-256 hash is stored, so it can
 
 A read-only key does not merely refuse to write: the writing tools are never advertised to it.
 
+### What the tools return
+
+The list-shaped tools answer with what the screen shows, not with everything behind it. `get_board` returns each task the way its kanban card renders — title, labels, update count and the first 160 characters of the description — and `search_tasks` returns an excerpt around the match. The full description and the thread of updates come from `get_task`, one task at a time, so reading a busy board costs a board and not a stack of documents.
+
+A large board can be narrowed further: `columns` restricts the read to the stages you care about, `detail: "titles"` drops the excerpts, and `limit` caps the tasks per column, reporting the rest as `omitted`.
+
+Anything addressable in the app is also addressable by its link. Paste the URL of a note, a board, or a board with a task open (`/projects/<id>?task=<id>`) into `get_note`, `get_board` or `get_task` and it resolves to that one resource — there is no title to describe and no id to retype.
+
 ### Connecting
 
 The endpoint is `https://notes.example.com/api/mcp`, spoken over streamable HTTP and authenticated with an `Authorization: Bearer` header.

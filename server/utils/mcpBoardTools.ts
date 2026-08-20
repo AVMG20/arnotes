@@ -3,7 +3,7 @@
 // `boards:*` key. They run against the database here, scoped to the workspace of
 // the API key, and mirror the HTTP endpoints the browser uses so a board changed
 // by an agent is indistinguishable from one changed by hand.
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import { db } from '../db'
 import { projects, projectColumns, projectTasks, taskComments, user } from '../db/schema'
 import type { Project, ProjectColumn, ProjectTask } from '../db/schema'
@@ -11,11 +11,20 @@ import type { ApiKeyContext } from './api-keys'
 import { projectAccessFilter } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
 import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks } from './projects'
-import { McpToolError, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
+import { McpToolError, excerpt, idFromReference, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 
 const MAX_LABELS = 10
 const DEFAULT_COLUMN_NAMES = ['Backlog', 'To do', 'Verify', 'Done']
+
+// The kanban card shows one line of the description; board-shaped results carry
+// the same 160 characters so what an agent reads matches what the user sees.
+const SUMMARY_LENGTH = 160
+
+// A board is read column by column. The cap is per column rather than per board
+// so a long Backlog cannot crowd out the Done column an agent came to look at.
+const DEFAULT_COLUMN_TASKS = 50
+const MAX_COLUMN_TASKS = 200
 
 // ─── lookups ──────────────────────────────────────────────────────────────────
 
@@ -27,8 +36,12 @@ async function accessibleBoards(context: ApiKeyContext): Promise<Project[]> {
   return db.select().from(projects).where(workspaceFilter(context))
 }
 
-/** Boards are addressable by id or by name, so an agent can use whichever it saw last. */
-async function findBoard(ref: string, context: ApiKeyContext): Promise<Project> {
+/**
+ * Boards are addressable by id, by name, or by a link copied out of the app, so
+ * an agent can use whichever the user handed it.
+ */
+async function findBoard(reference: string, context: ApiKeyContext): Promise<Project> {
+  const ref = idFromReference(reference)
   const boards = await accessibleBoards(context)
   const match = boards.find(board => board.id === ref)
     ?? boards.find(board => board.name.toLowerCase() === ref.trim().toLowerCase())
@@ -57,7 +70,10 @@ async function findColumn(board: Project, ref: string): Promise<ProjectColumn> {
   return match
 }
 
-async function findTask(id: string, context: ApiKeyContext): Promise<{ task: ProjectTask, board: Project }> {
+async function findTask(reference: string, context: ApiKeyContext): Promise<{ task: ProjectTask, board: Project }> {
+  // A board link with a task open names that task, which is what a user copying
+  // out of the address bar will have in hand.
+  const id = idFromReference(reference, 'task')
   const [task] = await db.select().from(projectTasks).where(eq(projectTasks.id, id))
   if (!task) throw new McpToolError(`No task with id "${id}" exists.`)
 
@@ -83,13 +99,12 @@ function normalizeLabels(labels: string[]): string[] {
 async function commentCounts(taskIds: string[]): Promise<Map<string, number>> {
   if (!taskIds.length) return new Map()
   const rows = await db
-    .select({ taskId: taskComments.taskId })
+    .select({ taskId: taskComments.taskId, total: count() })
     .from(taskComments)
     .where(inArray(taskComments.taskId, taskIds))
+    .groupBy(taskComments.taskId)
 
-  const counts = new Map<string, number>()
-  for (const row of rows) counts.set(row.taskId, (counts.get(row.taskId) ?? 0) + 1)
-  return counts
+  return new Map(rows.map(row => [row.taskId, Number(row.total)]))
 }
 
 function boardSummary(board: Project, columns: number, tasks: number) {
@@ -103,14 +118,60 @@ function boardSummary(board: Project, columns: number, tasks: number) {
   }
 }
 
-function taskSummary(task: ProjectTask, columnName: string, updates?: number) {
+/**
+ * How much of a task a list-shaped result carries. Reading a board used to hand
+ * back every description in full, which on a real board is most of the payload
+ * and almost none of what the caller asked for.
+ *
+ * - `titles`: the card without its text — the cheapest way to see the shape of a board
+ * - `summary`: the card as it renders, with the opening of the description (default)
+ * - `full`: every description in Markdown, for the rare sweep that really needs them
+ */
+export type TaskDetail = 'titles' | 'summary' | 'full'
+
+function readDetail(args: Record<string, unknown>): TaskDetail {
+  const value = optionalString(args, 'detail')
+  if (value === undefined) return 'summary'
+  if (value !== 'titles' && value !== 'summary' && value !== 'full') {
+    throw new McpToolError('"detail" must be one of "titles", "summary" or "full".')
+  }
+  return value
+}
+
+/**
+ * A task as the board draws it: title, labels and a line of the description.
+ * The whole description and the thread of updates live behind get_task, so a
+ * board of 200 tasks reads as a board and not as 200 documents.
+ *
+ * `column` and `board` are named only where the nesting does not already say so
+ * — search results carry them, a board's own columns do not.
+ */
+function taskCard(task: ProjectTask, options: {
+  detail?: TaskDetail
+  updates?: number
+  terms?: string[]
+  column?: string
+  board?: string
+} = {}) {
+  const detail = options.detail ?? 'summary'
+  const terms = options.terms ?? []
+
   return {
     id: task.id,
-    column: columnName,
+    ...(options.board ? { board: options.board } : {}),
+    ...(options.column ? { column: options.column } : {}),
     title: task.title,
     labels: task.tags,
-    description: task.description ? htmlToMarkdown(task.description) : '',
-    ...(updates === undefined ? {} : { updates }),
+    ...(detail === 'titles'
+      ? {}
+      : detail === 'full'
+        ? { description: task.description ? htmlToMarkdown(task.description) : '' }
+        // An excerpt centred on the query when there is one, otherwise the
+        // opening of the text. A trailing ellipsis is the signal that get_task
+        // has more to give.
+        : { summary: excerpt(htmlToPlainText(task.description), terms, SUMMARY_LENGTH, terms.length ? 60 : 0) }),
+    // A task nobody has posted on says so by leaving the field out.
+    ...(options.updates ? { updates: options.updates } : {}),
     updatedAt: new Date(task.updatedAt).toISOString()
   }
 }
@@ -242,21 +303,23 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const boards = (await accessibleBoards(context)).sort((a, b) => b.updatedAt - a.updatedAt)
       if (!boards.length) return { total: 0, boards: [] }
 
-      const ids = boards.map(board => board.id)
-      const columns = await db
-        .select({ id: projectColumns.id, projectId: projectColumns.projectId })
-        .from(projectColumns)
-        .where(inArray(projectColumns.projectId, ids))
-      const tasks = await db
-        .select({ id: projectTasks.id, projectId: projectTasks.projectId })
-        .from(projectTasks)
-        .where(inArray(projectTasks.projectId, ids))
+      // Only the boards that are actually returned need counting.
+      const ids = boards.slice(0, limit).map(board => board.id)
+      const [columns, tasks] = await Promise.all([
+        db
+          .select({ projectId: projectColumns.projectId, total: count() })
+          .from(projectColumns)
+          .where(inArray(projectColumns.projectId, ids))
+          .groupBy(projectColumns.projectId),
+        db
+          .select({ projectId: projectTasks.projectId, total: count() })
+          .from(projectTasks)
+          .where(inArray(projectTasks.projectId, ids))
+          .groupBy(projectTasks.projectId)
+      ])
 
-      const countBy = (rows: { projectId: string }[]) => {
-        const counts = new Map<string, number>()
-        for (const row of rows) counts.set(row.projectId, (counts.get(row.projectId) ?? 0) + 1)
-        return counts
-      }
+      const countBy = (rows: { projectId: string, total: number }[]) =>
+        new Map(rows.map(row => [row.projectId, Number(row.total)]))
       const columnCounts = countBy(columns)
       const taskCounts = countBy(tasks)
 
@@ -271,19 +334,38 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_board',
     title: 'Read a board',
-    description: 'Read one board in full: its columns in order and every task in them, with each task\'s Markdown description, labels and update count. Call this before creating or moving tasks so board, column and task names match exactly.',
+    description: 'Read a board the way it is drawn: its columns in order, and in each the tasks with their title, labels and the opening line of the description. Call this before creating or moving tasks so board, column and task names match exactly, then get_task for the full description and updates of the one you care about. Narrow a big board with "columns", and pass detail:"titles" for the cheapest overview.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
       type: 'object',
       properties: {
-        board: { type: 'string', description: 'Board id or name.' }
+        board: { type: 'string', description: 'Board id, board name, or a link to the board copied from the app.' },
+        columns: { type: 'array', items: { type: 'string' }, description: 'Only read these columns (ids or names, e.g. ["To do", "Verify"]). Omit for the whole board.' },
+        detail: { type: 'string', description: '"titles" for titles and labels only, "summary" (default) to add the opening of each description, "full" for every description in Markdown — expensive on a large board.' },
+        limit: { type: 'number', description: `Maximum tasks per column (default ${DEFAULT_COLUMN_TASKS}, max ${MAX_COLUMN_TASKS}). Anything past it is reported as "omitted" on the column.` }
       },
       required: ['board']
     },
     async handler(args, context) {
       const board = await findBoard(requireString(args, 'board'), context)
-      const columns = await projectColumnsOrdered(board.id)
+      const detail = readDetail(args)
+      const perColumn = optionalLimit(args, 'limit', DEFAULT_COLUMN_TASKS, MAX_COLUMN_TASKS)
+      const requested = optionalStringArray(args, 'columns')
+        ?.map(ref => ref.trim().toLowerCase())
+        .filter(Boolean)
+
+      const allColumns = await projectColumnsOrdered(board.id)
+      const columns = requested?.length
+        ? allColumns.filter(column => requested.includes(column.id.toLowerCase()) || requested.includes(column.name.toLowerCase()))
+        : allColumns
+
+      if (requested?.length && !columns.length) {
+        throw new McpToolError(
+          `Board "${board.name}" has none of those columns. Its columns are: ${allColumns.map(column => column.name).join(', ')}.`
+        )
+      }
+
       const tasks = columns.length
         ? await db
             .select()
@@ -291,18 +373,38 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
             .where(inArray(projectTasks.columnId, columns.map(column => column.id)))
             .orderBy(asc(projectTasks.position))
         : []
-      const counts = await commentCounts(tasks.map(task => task.id))
+
+      // The board's real size, which `tasks` does not carry when the read was
+      // narrowed to a few columns.
+      const [total] = await db
+        .select({ tasks: count() })
+        .from(projectTasks)
+        .where(eq(projectTasks.projectId, board.id))
+
+      // Clip each column before counting updates: the counts are only needed for
+      // the tasks that make it into the answer.
+      const grouped = columns.map((column) => {
+        const all = tasks.filter(task => task.columnId === column.id)
+        return { column, total: all.length, shown: all.slice(0, perColumn) }
+      })
+      const counts = await commentCounts(grouped.flatMap(group => group.shown.map(task => task.id)))
 
       return {
         id: board.id,
         name: board.name,
         updatedAt: new Date(board.updatedAt).toISOString(),
-        columns: columns.map(column => ({
+        taskCount: Number(total?.tasks ?? 0),
+        // Say which columns were left out, so a narrowed read does not look like
+        // the whole board to whoever reads the result.
+        ...(columns.length < allColumns.length
+          ? { otherColumns: allColumns.filter(column => !columns.includes(column)).map(column => column.name) }
+          : {}),
+        columns: grouped.map(({ column, total, shown }) => ({
           id: column.id,
           name: column.name,
-          tasks: tasks
-            .filter(task => task.columnId === column.id)
-            .map(task => taskSummary(task, column.name, counts.get(task.id) ?? 0))
+          taskCount: total,
+          ...(total > shown.length ? { omitted: total - shown.length } : {}),
+          tasks: shown.map(task => taskCard(task, { detail, updates: counts.get(task.id) }))
         }))
       }
     }
@@ -310,13 +412,13 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_task',
     title: 'Read a task',
-    description: 'Read one task in full: its column, Markdown description, labels and the whole thread of updates posted on it.',
+    description: 'Read one task in full: its column, Markdown description, labels and the whole thread of updates posted on it. This is where the complete description lives — get_board and search_tasks only carry the opening of it.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The task id.' }
+        id: { type: 'string', description: 'The task id, or a link to the task copied from the app.' }
       },
       required: ['id']
     },
@@ -328,7 +430,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'search_tasks',
     title: 'Search tasks',
-    description: 'Search tasks across every board by text and labels. All words in the query must appear in the title or description. Narrow to one board or column when you know it.',
+    description: 'Search tasks across every board by text and labels. All words in the query must appear in the title or description. Results carry an excerpt around the match — follow up with get_task to read one in full. Narrow to one board or column when you know it.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
@@ -338,6 +440,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         labels: { type: 'array', items: { type: 'string' }, description: 'Only return tasks carrying all of these labels.' },
         board: { type: 'string', description: 'Restrict the search to one board (id or name).' },
         column: { type: 'string', description: 'Restrict the search to one column name, e.g. "Done". Requires "board".' },
+        detail: { type: 'string', description: '"titles", "summary" (default, an excerpt around the match) or "full" for whole descriptions.' },
         limit: { type: 'number', description: 'Maximum tasks to return (default 25, max 100).' }
       },
       required: ['query']
@@ -348,6 +451,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const boardRef = optionalString(args, 'board')
       const columnRef = optionalString(args, 'column')
       const limit = optionalLimit(args, 'limit', 25, 100)
+      const detail = readDetail(args)
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
 
       if (columnRef && !boardRef) {
@@ -384,9 +488,11 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
 
       return {
         total: matches.length,
-        tasks: matches.slice(0, limit).map(task => ({
-          ...taskSummary(task, columnsById.get(task.columnId)?.name ?? task.columnId),
-          board: boardsById.get(task.projectId)?.name ?? task.projectId
+        tasks: matches.slice(0, limit).map(task => taskCard(task, {
+          detail,
+          terms,
+          board: boardsById.get(task.projectId)?.name ?? task.projectId,
+          column: columnsById.get(task.columnId)?.name ?? task.columnId
         }))
       }
     }
@@ -687,7 +793,9 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       }).returning()
 
       await touchBoard(board.id)
-      return taskDetail(task!, board)
+      // The caller wrote the description; echoing it back with an empty update
+      // thread teaches it nothing. The ids and the card are the useful receipt.
+      return { created: true, board: { id: board.id, name: board.name }, task: taskCard(task!, { column: column.name }) }
     }
   },
   {
@@ -727,8 +835,9 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         .where(eq(projectTasks.id, task.id))
         .returning()
 
+      const column = await findColumn(board, task.columnId)
       await touchBoard(board.id)
-      return taskDetail(updated!, board)
+      return { updated: true, board: { id: board.id, name: board.name }, task: taskCard(updated!, { column: column.name }) }
     }
   },
   {
@@ -750,7 +859,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
     async handler(args, context) {
       const { task, board } = await findTask(requireString(args, 'id'), context)
       const columnRef = optionalString(args, 'column')
-      const column = columnRef ? await findColumn(board, columnRef) : await findColumn(board, task.columnId)
+      const from = await findColumn(board, task.columnId)
+      const column = columnRef ? await findColumn(board, columnRef) : from
 
       const [updated] = await db
         .update(projectTasks)
@@ -763,7 +873,16 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         .returning()
 
       await touchBoard(board.id)
-      return { moved: true, task: await taskDetail(updated!, board) }
+      // `board` sits at the top level because the MCP endpoint reads it to tell
+      // the open browsers which board changed — without it a move only raises
+      // the coarse signal, and the readers of a shared board see nothing at all.
+      return {
+        moved: true,
+        board: { id: board.id, name: board.name },
+        from: from.name,
+        to: column.name,
+        task: taskCard(updated!, { column: column.name })
+      }
     }
   },
   {
