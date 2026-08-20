@@ -1,22 +1,20 @@
 import type { H3Event } from 'h3'
 import { db } from '../db'
 import { projects, projectColumns, projectTasks } from '../db/schema'
-import { eq, and, isNull, asc } from 'drizzle-orm'
-import { getUserActiveTeamId } from './auth-helpers'
+import { eq, and, asc } from 'drizzle-orm'
+import { getUserActiveTeamId, projectAccessFilter } from './auth-helpers'
 
 export function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
 
 // Same scoping rule as notes: active team's projects, or own team-less projects
-// in the personal workspace.
+// in the personal workspace. The filter itself lives in auth-helpers so the MCP
+// server, which authenticates with an API key instead of a session, applies the
+// identical rule.
 export async function getProjectAccessFilter(event: H3Event) {
   const userId = event.context.session.user.id
-  const activeTeamId = await getUserActiveTeamId(event)
-
-  return activeTeamId
-    ? eq(projects.teamId, activeTeamId)
-    : and(eq(projects.userId, userId), isNull(projects.teamId))
+  return projectAccessFilter(userId, await getUserActiveTeamId(event))
 }
 
 // Resolves a project the caller may access, 404 otherwise. Column and task

@@ -15,6 +15,11 @@ interface McpTool {
 const { data: catalog } = useFetch<{ tools: McpTool[] }>('/api/settings/mcp-tools', { server: false, lazy: true })
 const tools = computed(() => catalog.value?.tools ?? [])
 
+function scopeLabel(scope: string): string {
+  const [feature, permission] = scope.split(':')
+  return `${feature} ${permission}`
+}
+
 // Everything the user has to paste elsewhere needs the real origin of this install.
 const origin = computed(() => (import.meta.client ? window.location.origin : ''))
 const endpoint = computed(() => `${origin.value}/api/mcp`)
@@ -42,13 +47,16 @@ const curlCheck = computed(() =>
 
 const skill = computed(() => `---
 name: arnotes
-description: Search, read and write the user's Arnotes notes through the Arnotes MCP server. Use whenever the user asks what they wrote down, refers to their notes or a #tag, or wants something saved as a note.
+description: Search, read and write the user's Arnotes notes and kanban boards through the Arnotes MCP server. Use whenever the user asks what they wrote down, refers to their notes or a #tag, or asks about their projects, boards or tasks.
 ---
 
 # Working with Arnotes
 
-Arnotes is the user's note-taking app. A note has a title, a Markdown body and
-tags, and tags are written inline in the body as \`#hashtags\`.
+Arnotes is the user's note-taking app, with kanban boards beside the notes. A
+note has a title, a Markdown body and tags, and tags are written inline in the
+body as \`#hashtags\`. A board has columns — kanban stages such as Backlog, To do,
+Verify, Done — holding tasks; a task has a title, a Markdown description, labels
+and a running log of short updates.
 
 ## Finding things
 
@@ -69,11 +77,29 @@ tags, and tags are written inline in the body as \`#hashtags\`.
   Nothing is ever permanently deleted, so prefer trashing over rewriting a note
   into oblivion.
 
+## Boards
+
+- \`list_boards\` then \`get_board\` gives you the whole board: columns in order and
+  every task in them. Do that before creating or moving anything, so board,
+  column and task names match what is really there.
+- \`create_task\` needs a board, a column and a title. Put detail in the Markdown
+  description, not the title, and pass \`labels\` rather than writing them into
+  the text. \`list_task_labels\` shows which labels already exist.
+- \`move_task\` is how a task changes stage — moving it into Done is what
+  "finished" means here. \`update_task\` replaces whole fields, so read the task
+  first when editing part of a description.
+- \`add_task_update\` posts a line on the task's log. Use it for progress,
+  blockers and decisions the user will want to read later; keep it to a sentence
+  or two.
+- Boards have no trash. \`delete_board\`, \`delete_column\` and \`delete_task\` are
+  permanent, so move a task to Done instead of deleting it, and ask first when a
+  delete really is what the user wants.
+
 ## Habits
 
-- Ground every answer about the notes in what the tools returned; never guess at
-  content you have not read.
-- Match the user's existing tags rather than inventing near-duplicates
+- Ground every answer about the notes or boards in what the tools returned;
+  never guess at content you have not read.
+- Match the user's existing tags and labels rather than inventing near-duplicates
   (\`#meeting\` vs \`#meetings\`).
 - Say briefly what you changed after a write. Do not paste raw tool JSON back.
 `)
@@ -283,11 +309,11 @@ async function copy(text: string, id: string) {
                 class="px-3 py-2.5 flex items-start gap-3"
               >
                 <UBadge
-                  :label="tool.scope === 'notes:write' ? 'Write' : 'Read'"
-                  :color="tool.scope === 'notes:write' ? 'warning' : 'neutral'"
+                  :label="scopeLabel(tool.scope)"
+                  :color="tool.scope.endsWith(':write') ? 'warning' : 'neutral'"
                   variant="subtle"
                   size="sm"
-                  class="mt-0.5 shrink-0"
+                  class="mt-0.5 w-24 shrink-0 justify-center"
                 />
                 <div class="min-w-0">
                   <code class="text-xs font-mono font-medium">{{ tool.name }}</code>

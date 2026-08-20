@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-34d399.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-34d399.svg)](https://github.com/AVMG20/arnotes/releases)
 
-Arnotes is a fast, self-hosted note-taking app organized around inline tags. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, optional AI writing tools through OpenRouter, and an MCP server for connecting AI agents.
+Arnotes is a fast, self-hosted note-taking app organized around inline tags, with kanban boards for the work in flight. It includes a rich-text editor, full-text search, attachments, expiring public links, an installable PWA, optional AI writing tools through OpenRouter, and an MCP server for connecting AI agents.
 
 ![Arnotes editor](public/screenshot.png)
 
@@ -20,7 +20,8 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags. It 
 - Private notes with optional expiring public links
 - Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
-- Built-in MCP server so Claude Code and other AI agents can read and write your notes, using API keys you scope yourself
+- Kanban boards for projects: columns, drag-and-drop tasks, labels, rich-text descriptions, and a log of updates per task
+- Built-in MCP server so Claude Code and other AI agents can read and write your notes and run your boards, using API keys you scope yourself
 - Installable Progressive Web App
 - Docker-based self-hosting with persistent PostgreSQL and attachment storage
 
@@ -161,18 +162,20 @@ Take a backup first. Watch startup with `docker compose logs -f app` and verify 
 
 ## Connect An AI Agent
 
-Arnotes ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Claude Desktop, and any other MCP client can search, read, and write your notes.
+Arnotes ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Claude Desktop, and any other MCP client can search, read, and write your notes, and run your kanban boards.
 
 Open **Settings → API keys & MCP** to create a key, then follow the in-app setup guide at `/mcp`, which shows the endpoint for your install along with ready-made configuration snippets.
 
 ### API Keys
 
-Keys are created per workspace: a key made inside a team reaches that team's notes, and a key made in your personal workspace reaches only your own. Each key carries the permissions you give it.
+Keys are created per workspace: a key made inside a team reaches that team's notes and boards, and a key made in your personal workspace reaches only your own. Each key carries the permissions you give it, and notes and boards are separate — an agent can be given the boards without the notes.
 
 | Permission | Tools it unlocks |
 | --- | --- |
-| Read | `list_notes`, `search_notes`, `get_note`, `list_tags` |
-| Write | `create_note`, `update_note`, `delete_note`, `restore_note` |
+| Read notes | `list_notes`, `search_notes`, `get_note`, `list_tags` |
+| Write notes | `create_note`, `update_note`, `delete_note`, `restore_note` |
+| Read boards | `list_boards`, `get_board`, `get_task`, `search_tasks`, `list_task_labels` |
+| Write boards | `create_board`, `update_board`, `delete_board`, `create_column`, `update_column`, `delete_column`, `create_task`, `update_task`, `move_task`, `delete_task`, `add_task_update` |
 
 A key is displayed once, at creation. Only its SHA-256 hash is stored, so it can never be shown again — copy it then, or create a new one. Keys can be given an expiry date and can be revoked at any time, which disconnects anything using them immediately.
 
@@ -201,7 +204,7 @@ For clients configured with JSON:
 }
 ```
 
-Agents work with notes as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently.
+Agents work with notes and task descriptions as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently. Boards have no trash, so `delete_board`, `delete_column` and `delete_task` are permanent; they are advertised to clients as destructive so an agent can ask before using them.
 
 The setup guide also offers a copyable skill file that teaches an agent the conventions of the app, such as matching your existing tags and reading a note before editing it.
 
@@ -250,7 +253,7 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 - Drizzle ORM and PostgreSQL store application data.
 - Uploaded files are stored under `data/attachments` and mounted as a Docker volume.
 - OpenRouter powers optional user-configured AI actions.
-- An MCP server at `/api/mcp` exposes notes to AI agents, authenticated with scoped API keys.
+- An MCP server at `/api/mcp` exposes notes and boards to AI agents, authenticated with scoped API keys.
 
 ## Marketing Site
 

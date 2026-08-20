@@ -231,9 +231,10 @@ export const POPULAR_OPENROUTER_MODELS = [
 
 // ─── API keys (MCP + programmatic access) ─────────────────────────────────────
 
-// Permissions a key can carry. Read covers listing, searching and reading notes;
-// write covers creating, updating, trashing and restoring them.
-export const API_KEY_SCOPES = ['notes:read', 'notes:write'] as const
+// Permissions a key can carry, one pair per feature. Read covers listing,
+// searching and reading; write covers everything that changes data. Notes and
+// boards are separate so a key can be given one without the other.
+export const API_KEY_SCOPES = ['notes:read', 'notes:write', 'boards:read', 'boards:write'] as const
 export type ApiKeyScope = typeof API_KEY_SCOPES[number]
 
 export const apiKeys = pgTable(

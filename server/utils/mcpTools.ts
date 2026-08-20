@@ -1,7 +1,8 @@
-// The tools Arnotes exposes over MCP. Unlike the in-app chat tools — which are
-// declared on the server but executed in the browser against the notes store —
-// these run here, against the database, scoped to the workspace and permissions
-// of the API key that authenticated the request.
+// The note tools Arnotes exposes over MCP. Unlike the in-app chat tools — which
+// are declared on the server but executed in the browser against the notes store
+// — these run here, against the database, scoped to the workspace and permissions
+// of the API key that authenticated the request. Board tools live beside them in
+// mcpBoardTools.ts and are folded into the registry at the bottom of this file.
 import { and, desc, eq, isNull, isNotNull } from 'drizzle-orm'
 import { join } from 'path'
 import { unlinkSync } from 'fs'
@@ -11,58 +12,9 @@ import type { ApiKeyScope, Note } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { noteAccessFilter } from './auth-helpers'
 import { extractTags, extractTitle, htmlToMarkdown, htmlToPlainText, markdownToHtml, prependTitle, setNoteTags, setTitleInContent } from './markdown'
-
-export interface McpToolDefinition {
-  name: string
-  title: string
-  description: string
-  scope: ApiKeyScope
-  /** Advertised to clients so they can surface which tools change data. */
-  readOnly: boolean
-  inputSchema: {
-    type: 'object'
-    properties: Record<string, unknown>
-    required?: string[]
-  }
-  handler: (args: Record<string, unknown>, context: ApiKeyContext) => Promise<unknown>
-}
-
-// ─── argument helpers ─────────────────────────────────────────────────────────
-
-export class McpToolError extends Error {}
-
-function requireString(args: Record<string, unknown>, key: string): string {
-  const value = args[key]
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new McpToolError(`"${key}" is required and must be a non-empty string.`)
-  }
-  return value
-}
-
-function optionalString(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key]
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== 'string') throw new McpToolError(`"${key}" must be a string.`)
-  return value
-}
-
-function optionalStringArray(args: Record<string, unknown>, key: string): string[] | undefined {
-  const value = args[key]
-  if (value === undefined || value === null) return undefined
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
-    throw new McpToolError(`"${key}" must be an array of strings.`)
-  }
-  return value as string[]
-}
-
-function optionalLimit(args: Record<string, unknown>, key: string, fallback: number, max: number): number {
-  const value = args[key]
-  if (value === undefined || value === null) return fallback
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) {
-    throw new McpToolError(`"${key}" must be a positive number.`)
-  }
-  return Math.min(Math.floor(value), max)
-}
+import { McpToolError, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
+import type { McpToolDefinition } from './mcpToolKit'
+import { MCP_BOARD_TOOLS } from './mcpBoardTools'
 
 // ─── shared shapes ────────────────────────────────────────────────────────────
 
@@ -115,10 +67,6 @@ function pruneAttachments(noteId: string, attachments: string[], content: string
   return kept
 }
 
-function newNoteId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2)
-}
-
 /**
  * Builds the stored HTML for a write. Titles and tags are both derived from the
  * body in Arnotes, so they are written into the content rather than kept beside
@@ -150,7 +98,7 @@ function snippetFor(text: string, terms: string[]): string {
 
 // ─── tools ────────────────────────────────────────────────────────────────────
 
-export const MCP_TOOLS: McpToolDefinition[] = [
+const NOTE_TOOLS: McpToolDefinition[] = [
   {
     name: 'list_notes',
     title: 'List notes',
@@ -296,7 +244,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       const composed = composeNote({ html: markdownToHtml(markdown), title, tags, titleMode: 'prepend' })
 
       const [created] = await db.insert(notes).values({
-        id: newNoteId(),
+        id: newId(),
         userId: context.userId,
         teamId: context.teamId,
         title: composed.title,
@@ -423,6 +371,8 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     }
   }
 ]
+
+export const MCP_TOOLS: McpToolDefinition[] = [...NOTE_TOOLS, ...MCP_BOARD_TOOLS]
 
 export function toolsForScopes(scopes: ApiKeyScope[]): McpToolDefinition[] {
   return MCP_TOOLS.filter(tool => scopes.includes(tool.scope))

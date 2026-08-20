@@ -100,8 +100,14 @@ export function createTurndownService(): TurndownService {
     replacement(_content, node) {
       const el = node as HTMLElement
       const checked = el.getAttribute('data-checked') === 'true'
-      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
-      return `- [${checked ? 'x' : ' '}] ${text}\n`
+      // Only the content block is converted — the label/checkbox pair around it
+      // would come out as noise — and it goes through Turndown again so bold,
+      // links and code inside a checklist item survive the copy.
+      const body = el.querySelector('div, p')
+      const inner = body
+        ? createTurndownService().turndown(body.innerHTML).replace(/\s*\n+\s*/g, ' ').trim()
+        : (el.textContent ?? '').trim()
+      return `- [${checked ? 'x' : ' '}] ${inner}\n`
     }
   })
   td.addRule('fencedCode', {

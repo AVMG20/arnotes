@@ -34,9 +34,18 @@ const EXPIRY_OPTIONS = [
   { label: '1 year', value: 365 }
 ]
 
+// One toggle per permission, in the order they are advertised to a client.
+const PERMISSIONS = [
+  { scope: 'notes:read', label: 'Read notes', description: 'Search, list and read' },
+  { scope: 'notes:write', label: 'Write notes', description: 'Create, edit and trash' },
+  { scope: 'boards:read', label: 'Read boards', description: 'Boards, tasks and updates' },
+  { scope: 'boards:write', label: 'Write boards', description: 'Create, edit, move and delete' }
+] as const
+
 const newName = ref('')
-const canRead = ref(true)
-const canWrite = ref(true)
+const granted = ref<Record<string, boolean>>(
+  Object.fromEntries(PERMISSIONS.map(permission => [permission.scope, true]))
+)
 const expiresInDays = ref(0)
 const creating = ref(false)
 
@@ -44,10 +53,7 @@ const creating = ref(false)
 const issuedToken = ref<string | null>(null)
 const copied = ref(false)
 
-const scopes = computed(() => [
-  ...(canRead.value ? ['notes:read'] : []),
-  ...(canWrite.value ? ['notes:write'] : [])
-])
+const scopes = computed(() => PERMISSIONS.filter(p => granted.value[p.scope]).map(p => p.scope))
 
 const canCreate = computed(() => newName.value.trim().length > 0 && scopes.value.length > 0)
 
@@ -104,8 +110,14 @@ async function revokeKey(key: ApiKeySummary) {
   }
 }
 
+// Badges read "notes: write", short enough to sit beside a key name.
 function scopeLabel(scope: string): string {
-  return scope === 'notes:write' ? 'Write' : 'Read'
+  const [feature, permission] = scope.split(':')
+  return `${feature} ${permission}`
+}
+
+function scopeColor(scope: string) {
+  return scope.endsWith(':write') ? 'warning' as const : 'neutral' as const
 }
 
 function formatDate(value: number): string {
@@ -230,14 +242,11 @@ function expiryLabel(key: ApiKeySummary): string {
 
           <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
             <UCheckbox
-              v-model="canRead"
-              label="Read notes"
-              description="Search, list and read"
-            />
-            <UCheckbox
-              v-model="canWrite"
-              label="Write notes"
-              description="Create, edit and trash"
+              v-for="permission in PERMISSIONS"
+              :key="permission.scope"
+              v-model="granted[permission.scope]"
+              :label="permission.label"
+              :description="permission.description"
             />
             <USelect
               v-model="expiresInDays"
@@ -322,7 +331,7 @@ function expiryLabel(key: ApiKeySummary): string {
                     v-for="scope in key.scopes"
                     :key="scope"
                     :label="scopeLabel(scope)"
-                    :color="scope === 'notes:write' ? 'warning' : 'neutral'"
+                    :color="scopeColor(scope)"
                     variant="subtle"
                     size="sm"
                   />

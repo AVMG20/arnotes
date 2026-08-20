@@ -55,8 +55,14 @@ function createTurndownService(): TurndownService {
     replacement(_content, node) {
       const el = node as HTMLElement
       const checked = el.getAttribute('data-checked') === 'true'
-      const text = (el.querySelector('div, p')?.textContent ?? '').trim()
-      return `- [${checked ? 'x' : ' '}] ${text}\n`
+      // The item wraps its text in a label/checkbox pair Turndown would render
+      // as noise, so only the content block is converted — through Turndown
+      // again, so bold, links and code inside a checklist item survive.
+      const body = el.querySelector('div, p')
+      const inner = body
+        ? createTurndownService().turndown(body.innerHTML).replace(/\s*\n+\s*/g, ' ').trim()
+        : (el.textContent ?? '').trim()
+      return `- [${checked ? 'x' : ' '}] ${inner}\n`
     }
   })
 

@@ -4,7 +4,9 @@
 // connect, and every request is authorised on its own.
 import { authenticateApiKey, hasScope } from '../../utils/api-keys'
 import type { ApiKeyContext } from '../../utils/api-keys'
-import { McpToolError, toolsForScopes } from '../../utils/mcpTools'
+import { toolsForScopes } from '../../utils/mcpTools'
+import { McpToolError } from '../../utils/mcpToolKit'
+import { API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
 
 const SERVER_NAME = 'arnotes'
@@ -15,9 +17,13 @@ const SERVER_VERSION = '0.1.0'
 const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]!
 
-const INSTRUCTIONS = `Arnotes is a tag-based note-taking app. A note has a title, a Markdown body and tags, and tags are written inline in the body as #hashtags.
+const INSTRUCTIONS = `Arnotes is a tag-based note-taking app with kanban boards beside the notes.
 
-Search or list before answering questions about the user's notes, and ground answers in what the tools return. When editing, send the complete replacement body rather than a fragment — read the note first if you are only changing part of it. delete_note only moves a note to the trash, where restore_note can bring it back.`
+A note has a title, a Markdown body and tags, and tags are written inline in the body as #hashtags. A board has columns (kanban stages such as Backlog, To do, Verify, Done) holding tasks; a task has a title, a Markdown description, labels, and a running log of short updates.
+
+Search or list before answering questions about the user's notes or boards, and ground answers in what the tools return. Read the board with get_board before creating or moving tasks so board, column and task names match. When editing, send the complete replacement body or description rather than a fragment — read the note or task first if you are only changing part of it.
+
+delete_note only moves a note to the trash, where restore_note can bring it back. Boards, columns and tasks have no trash: delete_board, delete_column and delete_task are permanent, so prefer move_task into a "Done" column over deleting, and confirm with the user before deleting anything.`
 
 const JSON_RPC_VERSION = '2.0'
 
@@ -50,7 +56,7 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
-const ALL_SCOPES: ApiKeyScope[] = ['notes:read', 'notes:write']
+const ALL_SCOPES: ApiKeyScope[] = [...API_KEY_SCOPES]
 
 /** Tool failures are reported inside the result so the model can read and retry them. */
 function toolFailure(id: JsonRpcId, message: string) {
@@ -98,7 +104,7 @@ async function handleMessage(message: JsonRpcMessage, context: ApiKeyContext) {
           annotations: {
             title: tool.title,
             readOnlyHint: tool.readOnly,
-            destructiveHint: false,
+            destructiveHint: tool.destructive === true,
             idempotentHint: tool.readOnly
           }
         }))
@@ -151,7 +157,7 @@ export default defineEventHandler(async (event) => {
     throw error
   }
 
-  if (!hasScope(context, 'notes:read') && !hasScope(context, 'notes:write')) {
+  if (!ALL_SCOPES.some(scope => hasScope(context, scope))) {
     throw createError({ statusCode: 403, message: 'This API key carries no permissions' })
   }
 

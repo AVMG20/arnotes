@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { randomInt } from 'crypto'
 import { db } from '../db'
-import { member, notes } from '../db/schema'
+import { member, notes, projects } from '../db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 
 export async function getUserActiveTeamId(event: H3Event): Promise<string | null> {
@@ -58,6 +58,16 @@ export function noteAccessFilter(userId: string, teamId: string | null) {
   return teamId
     ? eq(notes.teamId, teamId)
     : and(eq(notes.userId, userId), isNull(notes.teamId))
+}
+
+/**
+ * The same rule for project boards: every board of the given team, or only the
+ * user's own team-less boards when there is no team.
+ */
+export function projectAccessFilter(userId: string, teamId: string | null) {
+  return teamId
+    ? eq(projects.teamId, teamId)
+    : and(eq(projects.userId, userId), isNull(projects.teamId))
 }
 
 /**
