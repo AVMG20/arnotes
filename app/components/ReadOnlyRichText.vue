@@ -15,11 +15,11 @@ import { ResizableImage } from '~/utils/resizable-image'
 // pages use this: the content is parsed into the same schema the editor uses,
 // so what a reader sees matches the note or task exactly and nothing is
 // injected straight into the DOM.
-// `ui` is passed straight through: `base` is the prose itself, which the page
-// around it sometimes needs to space differently.
+// `flush` drops the editor's own padding and tightens the block spacing, for
+// containers that already provide both.
 const props = defineProps<{
   content: string
-  ui?: { root?: string, content?: string, base?: string }
+  flush?: boolean
 }>()
 
 const lowlight = createLowlight(common)
@@ -57,6 +57,6 @@ watch(() => props.content, (value) => {
     :starter-kit="{ codeBlock: false }"
     :image="false"
     :extensions="extensions"
-    :ui="props.ui"
+    :ui="props.flush ? { base: 'prose-flush *:my-3' } : undefined"
   />
 </template>

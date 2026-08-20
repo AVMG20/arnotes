@@ -36,6 +36,15 @@
   padding: 1rem 2.5rem;
 }
 
+/* Rendered inside something that already has its own padding — a modal, a
+   card — where the page-sized padding above reads as an indent. This is plain
+   CSS rather than a utility class because the rule above is unlayered and
+   would win over one. */
+.tiptap.prose-flush,
+.ProseMirror.prose-flush {
+  padding: 0;
+}
+
 /* ─── Cursors ───────────────────────────────────────────────── */
 
 /* Tailwind v4 drops the UA pointer cursor on buttons — put it back. */

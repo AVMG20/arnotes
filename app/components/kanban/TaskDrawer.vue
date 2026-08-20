@@ -327,18 +327,25 @@ const menuItems = computed(() => [[
 
         <!-- Header: state, breadcrumb, actions -->
         <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
+          <!-- The button borrows the menu's own padding and gap (6px each) so
+               that with the menu flush against it, its dot and label sit on the
+               same two vertical lines as every dot and label in the list.
+               `items-center` because the theme starts menu items at the top,
+               which leaves the dots riding above their labels. -->
           <UDropdownMenu
             :items="stateItems"
             :content="{ align: 'start', collisionPadding: 12 }"
+            :ui="{ item: 'items-center' }"
           >
             <UButton
               color="neutral"
               variant="soft"
               size="xs"
               trailing-icon="i-lucide-chevron-down"
+              :ui="{ base: 'px-1.5 gap-1.5' }"
             >
               <span
-                class="size-2 rounded-full"
+                class="size-2 shrink-0 rounded-full"
                 :class="columnDotClass(column?.name ?? '')"
               />
               {{ column?.name ?? 'No column' }}

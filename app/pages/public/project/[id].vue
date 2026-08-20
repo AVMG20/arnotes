@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { format } from 'date-fns'
 import { columnDotClass, tagChipClass } from '~/utils/tagColors'
+import { relativeTime } from '~/composables/useRelativeTime'
 
 // A shared board: the columns and the cards on them, and nothing else. No
 // sidebar, no editing, no task updates — a reader gets the state of the work,
@@ -105,6 +107,10 @@ watch(openTask, (task) => {
   if (task) shownTask.value = task
   else if (openTaskId.value) openTaskId.value = null
 })
+
+function fullDate(ts: number) {
+  return format(new Date(ts), 'PPp')
+}
 
 const shownTaskColumn = computed(() =>
   columns.value.find(c => c.id === shownTask.value?.columnId) ?? null
@@ -226,25 +232,29 @@ const shownTaskColumn = computed(() =>
       </p>
     </div>
 
-    <!-- Task detail, read-only -->
+    <!-- Task detail, read-only. Laid out like the card it was opened from:
+         state and labels on one line, then the description with room to
+         breathe, then when it last moved. -->
     <UModal
       :open="openTask !== null"
       :title="shownTask?.title ?? ''"
-      :ui="{ content: 'max-w-2xl' }"
+      :ui="{
+        content: 'max-w-3xl',
+        header: 'px-5 py-4 sm:px-6',
+        title: 'text-lg font-semibold text-highlighted',
+        body: 'p-0 sm:p-0'
+      }"
       @update:open="(value: boolean) => { if (!value) openTaskId = null }"
     >
       <template #body>
-        <div
-          v-if="shownTask"
-          class="space-y-3"
-        >
-          <div class="flex flex-wrap items-center gap-1.5">
+        <div v-if="shownTask">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-default px-5 py-3 sm:px-6">
             <span
               v-if="shownTaskColumn"
-              class="flex items-center gap-1.5 text-xs text-muted"
+              class="flex items-center gap-1.5 rounded-md bg-elevated px-2 py-0.5 text-xs font-medium text-default"
             >
               <span
-                class="size-2 rounded-full"
+                class="size-2 shrink-0 rounded-full"
                 :class="columnDotClass(shownTaskColumn.name)"
               />
               {{ shownTaskColumn.name }}
@@ -252,26 +262,33 @@ const shownTaskColumn = computed(() =>
             <span
               v-for="tag in shownTask.tags"
               :key="tag"
-              class="rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+              class="rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
               :class="tagChipClass(tag)"
             >
               {{ tag }}
             </span>
+
+            <span
+              class="ml-auto shrink-0 text-xs text-dimmed"
+              :title="`Created ${fullDate(shownTask.createdAt)}\nUpdated ${fullDate(shownTask.updatedAt)}`"
+            >
+              edited {{ relativeTime(shownTask.updatedAt) }}
+            </span>
           </div>
 
-          <!-- The editor pads itself for a full page; inside a modal that
-               padding reads as the text being indented from everything else. -->
-          <ReadOnlyRichText
-            v-if="shownTask.description"
-            :content="shownTask.description"
-            :ui="{ base: 'sm:px-0 *:my-3' }"
-          />
-          <p
-            v-else
-            class="text-sm text-dimmed"
-          >
-            No description.
-          </p>
+          <div class="max-h-[60vh] min-h-24 overflow-y-auto px-5 py-4 sm:px-6">
+            <ReadOnlyRichText
+              v-if="shownTask.description"
+              :content="shownTask.description"
+              flush
+            />
+            <p
+              v-else
+              class="text-sm text-dimmed"
+            >
+              No description.
+            </p>
+          </div>
         </div>
       </template>
     </UModal>
