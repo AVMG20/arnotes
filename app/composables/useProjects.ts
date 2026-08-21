@@ -9,6 +9,11 @@ export interface Project {
   publicUntil: number | null
   createdAt: number
   updatedAt: number
+  // Which of the board's columns read as finished, so the sidebar can say how
+  // much of it is still open without loading it. Empty when the board has no
+  // ending to measure against. Only the list and create endpoints answer with
+  // this; a rename or a share toggle sends the row back on its own.
+  terminalColumnIds?: string[]
 }
 
 export interface ProjectColumn {
@@ -106,8 +111,14 @@ function reindexSearch() {
 
 function upsertProject(project: Project) {
   const idx = _projects.value.findIndex(p => p.id === project.id)
-  if (idx < 0) _projects.value = [project, ..._projects.value]
-  else _projects.value = [..._projects.value.slice(0, idx), project, ..._projects.value.slice(idx + 1)]
+  if (idx < 0) {
+    _projects.value = [project, ..._projects.value]
+  } else {
+    // Merged rather than replaced: an endpoint that answers with the row alone
+    // should not blank the board shape that came with the list.
+    const merged = { ..._projects.value[idx]!, ...project }
+    _projects.value = [..._projects.value.slice(0, idx), merged, ..._projects.value.slice(idx + 1)]
+  }
   reindexSearch()
 }
 
@@ -320,6 +331,9 @@ export function useProjects() {
       _board.value = { ..._board.value, columns: [..._board.value.columns, column] }
     }
     touchProject(projectId)
+    // Which columns read as finished is a fact about the column names, so any
+    // change to them re-asks for the board shapes the sidebar counts against.
+    await syncProjects()
     return column
   }
 
@@ -329,6 +343,7 @@ export function useProjects() {
       body: { name }
     })
     patchBoardColumn(updated)
+    await syncProjects()
     return updated
   }
 
@@ -340,6 +355,7 @@ export function useProjects() {
     patchBoardColumn(updated)
     // Positions were possibly renumbered server-side; cheap reload keeps truth.
     if (updated.projectId) await reloadBoardQuiet(updated.projectId)
+    await syncProjects()
     return updated
   }
 
@@ -369,6 +385,7 @@ export function useProjects() {
       _allTasks.value = _allTasks.value.filter(t => !orphaned.includes(t.id))
       reindexSearch()
     }
+    await syncProjects()
   }
 
   function patchBoardColumn(column: ProjectColumn) {

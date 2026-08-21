@@ -79,14 +79,31 @@ export async function positionBetween(
   renumber: (ids: string[]) => Promise<void>,
   retried = false
 ): Promise<number> {
-  const byId = new Map(list.map(i => [i.id, i]))
   const ordered = [...list].sort((a, b) => a.position - b.position)
 
   // A neighbour the caller named but the list does not hold means its view raced
   // with a delete. That side is treated as open rather than retried: rebuilding
   // the list cannot conjure up an id that is gone, so retrying would never end.
-  const before = beforeId ? byId.get(beforeId)?.position ?? null : null
-  const after = afterId ? byId.get(afterId)?.position ?? null : null
+  const beforeIdx = beforeId ? ordered.findIndex(i => i.id === beforeId) : -1
+  const afterIdx = afterId ? ordered.findIndex(i => i.id === afterId) : -1
+
+  // Only one named neighbour is trusted; the opposite bound comes from the list
+  // itself. The caller reports the cards it can see, and a board under a label
+  // filter hides some of the column — so the card it names as the one below the
+  // drop may have others between it and the drop point. Splitting the named pair
+  // would then land straight on top of a hidden card's position. Anchoring to
+  // the card the user actually dropped under, and bounding with *its* true
+  // neighbour, puts the card where it was dropped and keeps positions unique.
+  let before: number | null = null
+  let after: number | null = null
+
+  if (beforeIdx >= 0) {
+    before = ordered[beforeIdx]!.position
+    after = ordered[beforeIdx + 1]?.position ?? null
+  } else if (afterIdx >= 0) {
+    before = ordered[afterIdx - 1]?.position ?? null
+    after = ordered[afterIdx]!.position
+  }
 
   if (before === null && after === null) {
     // Nothing left to anchor to. A drop aimed above a card that has since been
