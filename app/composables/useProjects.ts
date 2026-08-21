@@ -5,6 +5,9 @@ import { realtimeHeaders } from '~/composables/useRealtime'
 export interface Project {
   id: string
   name: string
+  // Colours pinned to this board's task labels, keyed by the label. A label
+  // with no entry falls back to the colour derived from its own text.
+  labelColors?: Record<string, string>
   isPublic: boolean
   publicUntil: number | null
   createdAt: number
@@ -20,6 +23,8 @@ export interface ProjectColumn {
   id: string
   projectId: string
   name: string
+  // A colour the user picked; null means the dot follows the column's name.
+  color?: string | null
   position: number
   createdAt: number
   // Set only on trashed rows, and only present when the board was asked for
@@ -289,6 +294,27 @@ export function useProjects() {
     return _showTrashed.value ? `/api/projects/${id}/board?trashed=1` : `/api/projects/${id}/board`
   }
 
+  // ─── Label colours ────────────────────────────────────────
+
+  const labelColors = computed(() => activeProject.value?.labelColors ?? {})
+
+  function labelColor(tag: string): string | null {
+    return labelColors.value[tag] ?? null
+  }
+
+  // One label at a time: the server merges rather than taking the whole map, so
+  // two boards open side by side cannot undo each other's colours.
+  async function setLabelColor(tag: string, color: string | null) {
+    const projectId = _activeProjectId.value
+    if (!projectId) return
+    const updated = await $fetch<Project>(`/api/projects/${projectId}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { labelColor: { label: tag, color } }
+    })
+    upsertProject(updated)
+    return updated
+  }
+
   async function loadBoard(id: string) {
     _boardLoading.value = true
     try {
@@ -374,6 +400,16 @@ export function useProjects() {
     // change to them re-asks for the board shapes the sidebar counts against.
     await syncProjects()
     return column
+  }
+
+  // Colours the column's dot, or clears it back to the one its name implies.
+  async function setColumnColor(id: string, color: string | null) {
+    const updated = await $fetch<ProjectColumn>(`/api/columns/${id}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { color }
+    })
+    patchBoardColumn(updated)
+    return updated
   }
 
   async function renameColumn(id: string, name: string) {
@@ -593,12 +629,16 @@ export function useProjects() {
     boardTagCounts,
     toggleTagFilter,
     clearTagFilter,
+    labelColors,
+    labelColor,
+    setLabelColor,
     showTrashed: _showTrashed,
     trashedCount: _trashedCount,
     toggleShowTrashed,
     isTrashed,
     addColumn,
     renameColumn,
+    setColumnColor,
     moveColumn,
     deleteColumn,
     restoreColumn,

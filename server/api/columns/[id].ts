@@ -2,6 +2,7 @@ import { db } from '../../db'
 import { projects, projectColumns, projectTasks } from '../../db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
 import { requireColumn, projectColumnsOrdered, positionBetween, renumberColumnTasks, uiDeletion } from '../../utils/projects'
+import { isAccentColor } from '#shared/utils/colors'
 import { publishFromEvent } from '../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
@@ -14,10 +15,24 @@ export default defineEventHandler(async (event) => {
     // A trashed column is read-only: restore it first, then rename or move it.
     if (column.deletedAt) throw createError({ statusCode: 404, message: 'Column not found' })
 
-    const body = await readBody<{ name?: string, beforeId?: string | null, afterId?: string | null }>(event)
+    const body = await readBody<{
+      name?: string
+      color?: string | null
+      beforeId?: string | null
+      afterId?: string | null
+    }>(event)
 
-    const patch: { name?: string, position?: number } = {}
+    const patch: { name?: string, color?: string | null, position?: number } = {}
     if (typeof body.name === 'string') patch.name = body.name.trim() || column.name
+    if (body.color !== undefined) {
+      // null puts the column back on the colour derived from its name; anything
+      // that is not one of the palette's colours is refused rather than stored,
+      // since it would come back out as an inline style.
+      if (body.color !== null && !isAccentColor(body.color)) {
+        throw createError({ statusCode: 400, message: 'Unknown colour' })
+      }
+      patch.color = body.color
+    }
     if (body.beforeId !== undefined || body.afterId !== undefined) {
       const siblings = (await projectColumnsOrdered(column.projectId))
         .filter(c => c.id !== id)

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { tagChipClass } from '~/utils/tagColors'
 import { formatDateMention } from '~/composables/useDateMention'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { checklistProgress, taskDueDate, deletionSourceLabel } from '#shared/utils/board'
@@ -94,14 +93,13 @@ const hasMeta = computed(() =>
       v-if="hasMeta"
       class="mt-2 flex items-center gap-1.5"
     >
-      <span
+      <KanbanLabelChip
         v-for="tag in task.tags.slice(0, 3)"
         :key="tag"
-        class="truncate rounded px-1.5 py-0.5 text-[0.6875rem] font-medium ring-1 ring-inset"
-        :class="tagChipClass(tag)"
-      >
-        {{ tag }}
-      </span>
+        :tag="tag"
+        :editable="!trashed"
+        chip-class="text-[0.6875rem]"
+      />
       <span
         v-if="task.tags.length > 3"
         class="text-[0.6875rem] text-dimmed"

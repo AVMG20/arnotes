@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { tagChipClass, columnDotClass } from '~/utils/tagColors'
+import { columnDotAttrs } from '~/utils/tagColors'
 import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
 
@@ -324,7 +324,7 @@ const stateItems = computed(() =>
     label: c.name,
     // Rendered by the #item slot below: the same dot as the board column, so
     // state reads the same in both places.
-    dotClass: columnDotClass(c.name),
+    dot: columnDotAttrs(c),
     active: c.id === props.task?.columnId,
     onSelect: () => moveToColumn(c.id)
   }))]
@@ -409,7 +409,8 @@ const menuItems = computed(() => [[
             >
               <span
                 class="size-2 shrink-0 rounded-full"
-                :class="columnDotClass(column?.name ?? '')"
+                :class="columnDotAttrs(column ?? { name: '' }).class"
+                :style="columnDotAttrs(column ?? { name: '' }).style"
               />
               {{ column?.name ?? 'No column' }}
             </UButton>
@@ -417,7 +418,8 @@ const menuItems = computed(() => [[
             <template #item="{ item }">
               <span
                 class="size-2 shrink-0 rounded-full"
-                :class="item.dotClass"
+                :class="item.dot.class"
+                :style="item.dot.style"
               />
               <span class="flex-1 truncate text-left">{{ item.label }}</span>
               <UIcon
@@ -474,19 +476,15 @@ const menuItems = computed(() => [[
             />
 
             <div class="mt-2 flex flex-wrap items-center gap-1.5">
-              <span
+              <KanbanLabelChip
                 v-for="tag in shownTask.tags"
                 :key="tag"
-                class="group flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
-                :class="tagChipClass(tag)"
-                @click="removeTag(tag)"
-              >
-                {{ tag }}
-                <UIcon
-                  name="i-lucide-x"
-                  class="size-3 opacity-40 transition-opacity group-hover:opacity-100"
-                />
-              </span>
+                :tag="tag"
+                editable
+                removable
+                chip-class="text-xs"
+                @remove="removeTag"
+              />
               <div class="relative min-w-24 flex-1">
                 <input
                   v-model="tagDraft"
@@ -511,12 +509,10 @@ const menuItems = computed(() => [[
                     :class="index === tagHighlight ? 'bg-elevated' : 'hover:bg-elevated/60'"
                     @mousedown.prevent="addTagValue(tag)"
                   >
-                    <span
-                      class="min-w-0 truncate rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
-                      :class="tagChipClass(tag)"
-                    >
-                      {{ tag }}
-                    </span>
+                    <KanbanLabelChip
+                      :tag="tag"
+                      chip-class="min-w-0 text-xs"
+                    />
                   </button>
                 </div>
               </div>

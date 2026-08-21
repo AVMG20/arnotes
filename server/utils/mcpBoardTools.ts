@@ -11,6 +11,7 @@ import type { ApiKeyContext } from './api-keys'
 import { projectAccessFilter } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
 import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks, RESTORED } from './projects'
+import { ACCENT_COLORS, isAccentColor } from '#shared/utils/colors'
 import { McpToolError, excerpt, idFromReference, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 
@@ -688,8 +689,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'update_column',
-    title: 'Rename or move a column',
-    description: 'Rename a column, move it to another place on the board, or both. Renaming keeps every task in it.',
+    title: 'Rename, recolour or move a column',
+    description: 'Rename a column, give it a colour, move it to another place on the board, or any combination. Renaming keeps every task in it.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -698,6 +699,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         board: { type: 'string', description: 'Board id or name.' },
         column: { type: 'string', description: 'Column id or current name.' },
         name: { type: 'string', description: 'New column name.' },
+        color: { type: 'string', description: `The colour of the column's dot on the board — one of: ${ACCENT_COLORS.join(', ')}. Pass an empty string to go back to the colour derived from the column's name.` },
         after: { type: 'string', description: 'Move the column to directly after this one (id or name). Pass an empty string to move it to the far left.' }
       },
       required: ['board', 'column']
@@ -706,14 +708,21 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const board = await findBoard(requireString(args, 'board'), context)
       const column = await findColumn(board, requireString(args, 'column'))
       const name = optionalString(args, 'name')?.trim()
+      const colorRef = optionalString(args, 'color')?.trim().toLowerCase()
       const afterRef = optionalString(args, 'after')
 
-      if (!name && afterRef === undefined) {
-        throw new McpToolError('Pass "name" to rename the column, "after" to move it, or both.')
+      if (!name && colorRef === undefined && afterRef === undefined) {
+        throw new McpToolError('Pass "name" to rename the column, "color" to recolour it, "after" to move it, or any combination.')
       }
 
-      const patch: { name?: string, position?: number } = {}
+      const patch: { name?: string, color?: string | null, position?: number } = {}
       if (name) patch.name = name
+      if (colorRef !== undefined) {
+        if (colorRef && !isAccentColor(colorRef)) {
+          throw new McpToolError(`"${colorRef}" is not a colour here. Pick one of: ${ACCENT_COLORS.join(', ')}.`)
+        }
+        patch.color = colorRef || null
+      }
       if (afterRef !== undefined) {
         const after = afterRef.trim() ? await findColumn(board, afterRef) : undefined
         patch.position = await columnPosition(board.id, columnSpot(afterRef, after?.id), column.id)
@@ -730,7 +739,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       return {
         updated: true,
         board: { id: board.id, name: board.name },
-        column: { id: updated!.id, name: updated!.name },
+        column: { id: updated!.id, name: updated!.name, ...(updated!.color ? { color: updated!.color } : {}) },
         columnOrder: columns.map(c => c.name)
       }
     }

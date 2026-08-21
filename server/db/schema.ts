@@ -128,6 +128,10 @@ export const projects = pgTable(
     // NULL = personal workspace, same scoping rule as notes.
     teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
     name: text('name').notNull().default('Untitled project'),
+    // Colours the user has pinned to this board's task labels, keyed by label.
+    // A label with no entry keeps the colour derived from its own text, so a
+    // board reads the same as it always did until someone changes one.
+    labelColors: json('label_colors').$type<Record<string, string>>().notNull().default({}),
     // Same share model as notes: a link anyone can open, optionally until a date.
     isPublic: boolean('is_public').notNull().default(false),
     publicUntil: bigint('public_until', { mode: 'number' }),
@@ -147,6 +151,10 @@ export const projectColumns = pgTable(
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     position: integer('position').notNull(),
+    // A colour the user picked, from the same palette as the accent in Settings.
+    // NULL means the column has not been given one and its dot is still derived
+    // from its name, so renaming "To do" to "Done" still turns it green.
+    color: text('color'),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     // Soft delete, same shape as notes. A trashed column keeps its position so
     // restoring puts it back between the same two neighbours it sat between.

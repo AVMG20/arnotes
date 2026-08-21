@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { ProjectTask } from '~/composables/useProjects'
-import { tagChipClass } from '~/utils/tagColors'
 import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
 
 definePageMeta({ layout: 'app' })
@@ -234,12 +233,11 @@ useSeoMeta({
                   class="size-3.5 shrink-0"
                   :class="activeTags.includes(tag) ? 'text-primary' : 'text-dimmed'"
                 />
-                <span
-                  class="min-w-0 flex-1 truncate rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
-                  :class="tagChipClass(tag)"
-                >
-                  {{ tag }}
-                </span>
+                <KanbanLabelChip
+                  :tag="tag"
+                  editable
+                  chip-class="min-w-0 flex-1 text-xs"
+                />
                 <span class="shrink-0 text-xs tabular-nums text-dimmed">{{ count }}</span>
               </button>
             </div>
@@ -305,19 +303,22 @@ useSeoMeta({
       class="flex shrink-0 items-center gap-1.5 border-b border-default px-4 py-2 lg:px-6"
     >
       <span class="text-xs text-dimmed">Showing tasks labelled</span>
-      <span
+      <button
         v-for="tag in activeTags"
         :key="tag"
-        class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
-        :class="tagChipClass(tag)"
+        class="flex items-center gap-1"
         @click="toggleTagFilter(tag)"
       >
-        {{ tag }}
+        <KanbanLabelChip
+          :tag="tag"
+          editable
+          chip-class="cursor-pointer text-xs"
+        />
         <UIcon
           name="i-lucide-x"
           class="size-3 opacity-50"
         />
-      </span>
+      </button>
     </div>
 
     <!-- Board -->

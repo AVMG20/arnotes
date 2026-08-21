@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import Sortable from 'sortablejs'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import type { ProjectColumn, ProjectTask } from '~/composables/useProjects'
-import { columnDotClass } from '~/utils/tagColors'
+import { columnDotAttrs } from '~/utils/tagColors'
+import { ACCENT_COLORS, colorHex } from '#shared/utils/colors'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { deletionSourceLabel } from '#shared/utils/board'
 
@@ -22,6 +24,7 @@ const {
   restoreTask,
   addColumn,
   renameColumn,
+  setColumnColor,
   moveColumn,
   deleteColumn,
   restoreColumn
@@ -328,10 +331,39 @@ async function confirmDeleteColumn() {
   })
 }
 
-function columnMenu(column: ProjectColumn) {
+// The palette as a submenu. Each entry carries its swatch as a `chip`, so the
+// list reads as colours rather than as colour names, and "Automatic" is how a
+// column goes back to the colour its name implies.
+// Typed as the menu's own item type: the swatch slot lives on items nested
+// under `children`, which the component's inferred slot names do not reach.
+function colorMenu(column: ProjectColumn): DropdownMenuItem[][] {
+  return [
+    [{
+      label: 'Automatic',
+      icon: 'i-lucide-wand-2',
+      type: 'checkbox' as const,
+      checked: !column.color,
+      onSelect: () => { if (column.color) setColumnColor(column.id, null) }
+    }],
+    ACCENT_COLORS.map(color => ({
+      label: color[0]!.toUpperCase() + color.slice(1),
+      type: 'checkbox' as const,
+      checked: column.color === color,
+      // Named slot rather than an icon: the swatch has to be an inline style,
+      // since Tailwind never sees a class name chosen at runtime. The menu
+      // forwards its slots into submenus, so one template covers both levels.
+      slot: 'color' as const,
+      hex: colorHex(color),
+      onSelect: () => setColumnColor(column.id, color)
+    }))
+  ]
+}
+
+function columnMenu(column: ProjectColumn): DropdownMenuItem[][] {
   return [[
     { label: 'Add task', icon: 'i-lucide-plus', onSelect: () => startCompose(column.id) },
-    { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => startRename(column) }
+    { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => startRename(column) },
+    { label: 'Change color', icon: 'i-lucide-palette', children: colorMenu(column) }
   ], [
     {
       label: 'Delete column',
@@ -640,7 +672,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
       >
         <span
           class="size-2 shrink-0 rounded-full"
-          :class="columnDotClass(column.name)"
+          :class="columnDotAttrs(column).class"
+          :style="columnDotAttrs(column).style"
         />
 
         <input
@@ -686,6 +719,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
               aria-label="Column options"
               @click.stop
             />
+
+            <template #color-leading="{ item }">
+              <span
+                class="size-3 shrink-0 rounded-full ring-1 ring-inset ring-black/10"
+                :style="{ backgroundColor: (item as { hex: string }).hex }"
+              />
+            </template>
           </UDropdownMenu>
         </div>
       </header>

@@ -1,9 +1,11 @@
-export const PRIMARY_COLORS = [
-  'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
-  'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose'
-] as const
+import { ACCENT_COLORS, NEUTRAL_COLORS } from '#shared/utils/colors'
 
-export const NEUTRAL_COLORS = ['slate', 'gray', 'zinc', 'neutral', 'stone'] as const
+// The accent picker and the column/label pickers offer the same colours, so the
+// list lives in one place. Kept under its old name here because that is what the
+// settings page and the theme plumbing call it.
+export const PRIMARY_COLORS = ACCENT_COLORS
+
+export { NEUTRAL_COLORS }
 
 export const POPULAR_OPENROUTER_MODELS = [
   'openai/gpt-4o-mini',

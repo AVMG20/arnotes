@@ -75,6 +75,32 @@ summary {
   margin-inline-start: auto;
 }
 
+/* ─── Dividers ──────────────────────────────────────────────── */
+
+/* A divider is a node with no text, so without a visible selection there is no
+   way to tell it has been clicked before pressing Backspace on it. The editor
+   renders it through a node view, which puts the selected class on the wrapper
+   rather than on the rule itself. */
+.tiptap hr,
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--ui-border-accented);
+  margin: 1.25rem 0;
+}
+
+.tiptap [data-type="horizontalRule"].ProseMirror-selectednode hr,
+.ProseMirror [data-type="horizontalRule"].ProseMirror-selectednode hr,
+.tiptap hr.ProseMirror-selectednode,
+.ProseMirror hr.ProseMirror-selectednode {
+  border-top-color: var(--ui-primary);
+  border-top-width: 2px;
+}
+
+.tiptap [data-type="horizontalRule"].ProseMirror-selectednode,
+.ProseMirror [data-type="horizontalRule"].ProseMirror-selectednode {
+  outline: none;
+}
+
 /* ─── Tables ────────────────────────────────────────────────── */
 
 .tiptap .tableWrapper,

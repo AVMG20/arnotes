@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { format } from 'date-fns'
-import { columnDotClass, tagChipClass } from '~/utils/tagColors'
+import { columnDotAttrs, tagChipAttrs } from '~/utils/tagColors'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
 
@@ -12,6 +12,7 @@ import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
 interface PublicColumn {
   id: string
   name: string
+  color: string | null
   position: number
 }
 
@@ -27,7 +28,7 @@ interface PublicTask {
 }
 
 interface PublicBoard {
-  project: { id: string, name: string, createdAt: number, updatedAt: number }
+  project: { id: string, name: string, labelColors: Record<string, string>, createdAt: number, updatedAt: number }
   columns: PublicColumn[]
   tasks: PublicTask[]
 }
@@ -83,6 +84,12 @@ const tasksByColumn = computed(() => {
   for (const tasks of map.values()) tasks.sort((a, b) => a.position - b.position)
   return map
 })
+
+// A shared board is read-only, so a label here only reads its colour — there
+// is no menu to change one.
+function chipFor(tag: string) {
+  return tagChipAttrs(tag, board.value?.project.labelColors?.[tag] ?? null)
+}
 
 function tasksOf(columnId: string): PublicTask[] {
   return tasksByColumn.value.get(columnId) ?? []
@@ -202,7 +209,8 @@ const shownTaskColumn = computed(() =>
         <header class="flex items-center gap-2 px-3 pb-2 pt-2.5">
           <span
             class="size-2 shrink-0 rounded-full"
-            :class="columnDotClass(column.name)"
+            :class="columnDotAttrs(column).class"
+            :style="columnDotAttrs(column).style"
           />
           <span
             class="min-w-0 truncate text-sm font-semibold text-default"
@@ -265,7 +273,8 @@ const shownTaskColumn = computed(() =>
             >
               <span
                 class="size-2 shrink-0 rounded-full"
-                :class="columnDotClass(shownTaskColumn.name)"
+                :class="columnDotAttrs(shownTaskColumn).class"
+                :style="columnDotAttrs(shownTaskColumn).style"
               />
               {{ shownTaskColumn.name }}
             </span>
@@ -273,7 +282,8 @@ const shownTaskColumn = computed(() =>
               v-for="tag in shownTask.tags"
               :key="tag"
               class="rounded-md px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
-              :class="tagChipClass(tag)"
+              :class="chipFor(tag).class"
+              :style="chipFor(tag).style"
             >
               {{ tag }}
             </span>

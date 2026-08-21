@@ -15,6 +15,7 @@ export default defineEventHandler(async (event) => {
     .select({
       id: projectColumns.id,
       name: projectColumns.name,
+      color: projectColumns.color,
       position: projectColumns.position
     })
     .from(projectColumns)
