@@ -176,7 +176,7 @@ Keys are created per workspace: a key made inside a team reaches that team's not
 | Read notes | `list_notes`, `search_notes`, `get_note`, `list_tags` |
 | Write notes | `create_note`, `update_note`, `delete_note`, `restore_note` |
 | Read boards | `list_boards`, `get_board`, `get_task`, `search_tasks`, `list_task_labels` |
-| Write boards | `create_board`, `update_board`, `delete_board`, `create_column`, `update_column`, `delete_column`, `create_task`, `update_task`, `move_task`, `delete_task`, `add_task_update` |
+| Write boards | `create_board`, `update_board`, `create_column`, `update_column`, `delete_column`, `restore_column`, `create_task`, `update_task`, `move_task`, `delete_task`, `restore_task`, `add_task_update` |
 
 A key is displayed once, at creation. Only its SHA-256 hash is stored, so it can never be shown again — copy it then, or create a new one. Keys can be given an expiry date and can be revoked at any time, which disconnects anything using them immediately.
 
@@ -215,7 +215,9 @@ For clients configured with JSON:
 
 Anything an agent writes shows up in an open browser immediately — the app listens on a WebSocket at `/_ws` and refetches what changed, so a board or note list never sits there stale. Public pages listen on the same socket for the one note or board they were given a link to, so a shared board follows the work as it moves. Behind a reverse proxy, that path needs the usual `Upgrade`/`Connection` headers forwarded; a single app instance holds the connections in memory, so running several would need a shared bus between them.
 
-Agents work with notes and task descriptions as Markdown; Arnotes converts to and from the editor's format on both sides. `delete_note` only moves a note to the trash, and `restore_note` brings it back — nothing reachable over MCP deletes a note permanently. Boards have no trash, so `delete_board`, `delete_column` and `delete_task` are permanent; they are advertised to clients as destructive so an agent can ask before using them.
+Agents work with notes and task descriptions as Markdown; Arnotes converts to and from the editor's format on both sides.
+
+Nothing reachable over MCP deletes anything permanently. `delete_note` moves a note to the trash and `restore_note` brings it back; `delete_column` and `delete_task` do the same on a board, undone by `restore_column` and `restore_task` or by the user under **Show trashed** on the board. A board's trash is emptied automatically after 7 days. There is no `delete_board` tool at all — deleting a board takes every column, task and update with it, so it stays in the app behind a confirmation, where an agent cannot reach it.
 
 The setup guide also offers a copyable skill file that teaches an agent the conventions of the app, such as matching your existing tags and reading a note before editing it.
 

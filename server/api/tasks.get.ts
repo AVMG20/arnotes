@@ -1,6 +1,6 @@
 import { db } from '../db'
 import { projects, projectTasks } from '../db/schema'
-import { eq, asc, desc, inArray } from 'drizzle-orm'
+import { and, eq, asc, desc, inArray, isNull } from 'drizzle-orm'
 import { getProjectAccessFilter } from '../utils/projects'
 
 // Flat task list across every accessible project — powers global search and
@@ -27,6 +27,11 @@ export default defineEventHandler(async (event) => {
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
-    .where(inArray(projectTasks.projectId, visibleProjects.map(p => p.id)))
+    .where(and(
+      inArray(projectTasks.projectId, visibleProjects.map(p => p.id)),
+      // Trashed cards stay out of global search and out of the deep links it
+      // hands back, so a hit never opens a board on a card that is not drawn.
+      isNull(projectTasks.deletedAt)
+    ))
     .orderBy(desc(projectTasks.updatedAt), asc(projectTasks.id))
 })

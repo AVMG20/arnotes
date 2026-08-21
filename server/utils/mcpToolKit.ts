@@ -11,7 +11,12 @@ export interface McpToolDefinition {
   scope: ApiKeyScope
   /** Advertised to clients so they can surface which tools change data. */
   readOnly: boolean
-  /** Advertised for the writes that cannot be undone, so a client can warn first. */
+  /**
+   * Advertised for the writes that cannot be undone, so a client can warn
+   * first. Nothing sets it today: every delete an agent can reach goes to a
+   * trash the user can empty or undo, and boards cannot be deleted over MCP
+   * at all.
+   */
   destructive?: boolean
   inputSchema: {
     type: 'object'

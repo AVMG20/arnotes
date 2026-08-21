@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { db } from '../db'
 import { projects, projectColumns, projectTasks } from '../db/schema'
-import { eq, and, asc } from 'drizzle-orm'
+import { eq, and, asc, isNull } from 'drizzle-orm'
 import { getUserActiveTeamId, projectAccessFilter } from './auth-helpers'
 
 export function genId(): string {
@@ -30,43 +30,79 @@ export async function requireProject(event: H3Event, projectId: string) {
   return project
 }
 
-export async function requireColumn(event: H3Event, columnId: string) {
+// Trashed rows are invisible everywhere by default; only the trash view and the
+// restore endpoints ask for them, and they have to say so. Defaulting the other
+// way is how a soft delete quietly leaks back into a board, a search index or a
+// public link.
+interface TrashOptions {
+  includeDeleted?: boolean
+}
+
+export async function requireColumn(event: H3Event, columnId: string, options: TrashOptions = {}) {
   const [column] = await db
     .select()
     .from(projectColumns)
-    .where(eq(projectColumns.id, columnId))
+    .where(and(
+      eq(projectColumns.id, columnId),
+      options.includeDeleted ? undefined : isNull(projectColumns.deletedAt)
+    ))
 
   if (!column) throw createError({ statusCode: 404, message: 'Column not found' })
   const project = await requireProject(event, column.projectId)
   return { column, project }
 }
 
-export async function requireTask(event: H3Event, taskId: string) {
+export async function requireTask(event: H3Event, taskId: string, options: TrashOptions = {}) {
   const [task] = await db
     .select()
     .from(projectTasks)
-    .where(eq(projectTasks.id, taskId))
+    .where(and(
+      eq(projectTasks.id, taskId),
+      options.includeDeleted ? undefined : isNull(projectTasks.deletedAt)
+    ))
 
   if (!task) throw createError({ statusCode: 404, message: 'Task not found' })
   const project = await requireProject(event, task.projectId)
   return { task, project }
 }
 
-export async function projectColumnsOrdered(projectId: string) {
+export async function projectColumnsOrdered(projectId: string, options: TrashOptions = {}) {
   return db
     .select()
     .from(projectColumns)
-    .where(eq(projectColumns.projectId, projectId))
+    .where(and(
+      eq(projectColumns.projectId, projectId),
+      options.includeDeleted ? undefined : isNull(projectColumns.deletedAt)
+    ))
     .orderBy(asc(projectColumns.position))
 }
 
+// Ordering only ever concerns live cards: a trashed one keeps the position it
+// had so it can go back there, and letting it into this list would have the
+// renumber below hand its slot away while it sits in the trash.
 export async function columnTasksOrdered(columnId: string) {
   return db
     .select()
     .from(projectTasks)
-    .where(eq(projectTasks.columnId, columnId))
+    .where(and(eq(projectTasks.columnId, columnId), isNull(projectTasks.deletedAt)))
     .orderBy(asc(projectTasks.position))
 }
+
+/** Stamps who deleted a row, for a delete arriving through the browser. */
+export function uiDeletion(event: H3Event) {
+  return {
+    deletedAt: Date.now(),
+    deletedBy: event.context.session.user.id,
+    deletedVia: 'ui' as const
+  }
+}
+
+/** Clears every trace of a delete, shared by the restore paths. */
+export const RESTORED = {
+  deletedAt: null,
+  deletedBy: null,
+  deletedVia: null
+} as const
 
 // Positions are integers spaced by 1000. A drag lands between two neighbors
 // (either may be null at the ends). When the gap has collapsed, the caller's

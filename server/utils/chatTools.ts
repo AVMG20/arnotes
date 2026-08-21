@@ -201,7 +201,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
     type: 'function',
     function: {
       name: 'delete_task',
-      description: 'Permanently delete a task from its board.',
+      description: 'Move a task to its board\'s trash. Recoverable: the user can restore it from "Show trashed" on the board for 7 days.',
       parameters: {
         type: 'object',
         properties: {
@@ -222,6 +222,6 @@ Guidelines:
 - For board work, use get_board before create_task or move_task so board, column and task names match exactly.
 - When editing, always pass complete replacement values for content, description and tags, not deltas.
 - Use "- [ ]" checklist items when the user wants a checklist in a note or task description.
-- delete_note only moves notes to trash (recoverable); delete_task is permanent — confirm intent in your reply, not with an extra question, when the request was explicit.
+- delete_note and delete_task both only move things to the trash, where the user can restore them — confirm intent in your reply, not with an extra question, when the request was explicit.
 
 Dates are YYYY-MM-DD. Be concise, use markdown, and reply in the user's language.`

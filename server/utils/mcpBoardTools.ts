@@ -3,14 +3,14 @@
 // `boards:*` key. They run against the database here, scoped to the workspace of
 // the API key, and mirror the HTTP endpoints the browser uses so a board changed
 // by an agent is indistinguishable from one changed by hand.
-import { and, asc, count, eq, inArray } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '../db'
 import { projects, projectColumns, projectTasks, taskComments, user } from '../db/schema'
 import type { Project, ProjectColumn, ProjectTask } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { projectAccessFilter } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
-import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks } from './projects'
+import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks, RESTORED } from './projects'
 import { McpToolError, excerpt, idFromReference, newId, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 
@@ -25,6 +25,18 @@ const SUMMARY_LENGTH = 160
 // so a long Backlog cannot crowd out the Done column an agent came to look at.
 const DEFAULT_COLUMN_TASKS = 50
 const MAX_COLUMN_TASKS = 200
+
+// Nothing an agent can reach removes a board, a column or a task for good. A
+// delete over MCP puts the row in the board's trash, where the user can see it
+// under "Show trashed" and put it back — and where it is removed on its own
+// after a week. Permanent deletion stays in the app, in front of a human.
+function agentDeletion(context: ApiKeyContext) {
+  return {
+    deletedAt: Date.now(),
+    deletedBy: context.userId,
+    deletedVia: 'mcp' as const
+  }
+}
 
 // ─── lookups ──────────────────────────────────────────────────────────────────
 
@@ -70,12 +82,28 @@ async function findColumn(board: Project, ref: string): Promise<ProjectColumn> {
   return match
 }
 
-async function findTask(reference: string, context: ApiKeyContext): Promise<{ task: ProjectTask, board: Project }> {
+async function findTask(
+  reference: string,
+  context: ApiKeyContext,
+  options: { includeDeleted?: boolean } = {}
+): Promise<{ task: ProjectTask, board: Project }> {
   // A board link with a task open names that task, which is what a user copying
   // out of the address bar will have in hand.
   const id = idFromReference(reference, 'task')
-  const [task] = await db.select().from(projectTasks).where(eq(projectTasks.id, id))
-  if (!task) throw new McpToolError(`No task with id "${id}" exists.`)
+  const [task] = await db
+    .select()
+    .from(projectTasks)
+    .where(and(
+      eq(projectTasks.id, id),
+      options.includeDeleted ? undefined : isNull(projectTasks.deletedAt)
+    ))
+  if (!task) {
+    throw new McpToolError(
+      options.includeDeleted
+        ? `No task with id "${id}" exists.`
+        : `No task with id "${id}" exists, or it is in the board's trash — restore_task brings it back.`
+    )
+  }
 
   const [board] = await db
     .select()
@@ -309,12 +337,12 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         db
           .select({ projectId: projectColumns.projectId, total: count() })
           .from(projectColumns)
-          .where(inArray(projectColumns.projectId, ids))
+          .where(and(inArray(projectColumns.projectId, ids), isNull(projectColumns.deletedAt)))
           .groupBy(projectColumns.projectId),
         db
           .select({ projectId: projectTasks.projectId, total: count() })
           .from(projectTasks)
-          .where(inArray(projectTasks.projectId, ids))
+          .where(and(inArray(projectTasks.projectId, ids), isNull(projectTasks.deletedAt)))
           .groupBy(projectTasks.projectId)
       ])
 
@@ -370,7 +398,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         ? await db
             .select()
             .from(projectTasks)
-            .where(inArray(projectTasks.columnId, columns.map(column => column.id)))
+            .where(and(
+              inArray(projectTasks.columnId, columns.map(column => column.id)),
+              isNull(projectTasks.deletedAt)
+            ))
             .orderBy(asc(projectTasks.position))
         : []
 
@@ -379,7 +410,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const [total] = await db
         .select({ tasks: count() })
         .from(projectTasks)
-        .where(eq(projectTasks.projectId, board.id))
+        .where(and(eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt)))
 
       // Clip each column before counting updates: the counts are only needed for
       // the tasks that make it into the answer.
@@ -467,7 +498,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const columns = await db
         .select()
         .from(projectColumns)
-        .where(inArray(projectColumns.projectId, [...boardsById.keys()]))
+        .where(and(
+          inArray(projectColumns.projectId, [...boardsById.keys()]),
+          isNull(projectColumns.deletedAt)
+        ))
       const columnsById = new Map(columns.map(column => [column.id, column]))
 
       const targetColumn = columnRef ? await findColumn(boards[0]!, columnRef) : null
@@ -475,7 +509,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const rows = await db
         .select()
         .from(projectTasks)
-        .where(inArray(projectTasks.projectId, [...boardsById.keys()]))
+        .where(and(
+          inArray(projectTasks.projectId, [...boardsById.keys()]),
+          isNull(projectTasks.deletedAt)
+        ))
         .orderBy(asc(projectTasks.position))
 
       const matches = rows.filter((task) => {
@@ -517,7 +554,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const rows = await db
         .select({ tags: projectTasks.tags })
         .from(projectTasks)
-        .where(inArray(projectTasks.projectId, boards.map(board => board.id)))
+        .where(and(
+          inArray(projectTasks.projectId, boards.map(board => board.id)),
+          isNull(projectTasks.deletedAt)
+        ))
 
       const counts = new Map<string, number>()
       for (const row of rows) {
@@ -603,26 +643,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       return { renamed: true, from: board.name, id: updated!.id, name: updated!.name }
     }
   },
-  {
-    name: 'delete_board',
-    title: 'Delete a board',
-    description: 'Permanently delete a board with every column, task and update on it. This cannot be undone — there is no trash for boards, so confirm with the user before calling it.',
-    scope: 'boards:write',
-    readOnly: false,
-    destructive: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: { type: 'string', description: 'Board id or name.' }
-      },
-      required: ['board']
-    },
-    async handler(args, context) {
-      const board = await findBoard(requireString(args, 'board'), context)
-      await db.delete(projects).where(eq(projects.id, board.id))
-      return { deleted: true, id: board.id, name: board.name }
-    }
-  },
+  // There is deliberately no delete_board tool. A board is the one thing here
+  // whose loss an agent cannot undo — its columns, tasks and updates go with it
+  // — and no agent workflow needs to destroy one. Deleting a board stays in the
+  // app, behind a confirmation, in front of the person who owns it.
   {
     name: 'create_column',
     title: 'Add a column',
@@ -713,11 +737,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'delete_column',
-    title: 'Delete a column',
-    description: 'Delete a column. Its tasks are not lost: they move to the column on its left, or to the one on its right when it was the first. Deleting the only column of a board takes its tasks with it.',
+    title: 'Trash a column',
+    description: 'Move a column to the board\'s trash. Its tasks are not lost: they move to the column on its left, or to the one on its right when it was the first; the only column of a board takes its tasks into the trash with it. Reversible with restore_column, and the user can restore it from the board.',
     scope: 'boards:write',
     readOnly: false,
-    destructive: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -734,22 +757,84 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const index = columns.findIndex(candidate => candidate.id === column.id)
       const target = columns[index > 0 ? index - 1 : index + 1]
       const affected = (await columnTasksOrdered(column.id)).length
+      const stamp = agentDeletion(context)
 
       if (target) {
-        await db.update(projectTasks).set({ columnId: target.id }).where(eq(projectTasks.columnId, column.id))
+        // Where they came from is recorded, so restore_column brings them home
+        // rather than handing back an empty column.
+        await db.update(projectTasks)
+          .set({ columnId: target.id, previousColumnId: column.id })
+          .where(and(eq(projectTasks.columnId, column.id), isNull(projectTasks.deletedAt)))
         // The moved tasks carry the old column's positions, which collide with
         // the ones already there; a renumber gives the merged column one order.
         await renumberColumnTasks(target.id)
+      } else {
+        // No neighbour to hand them to, so they go to the trash alongside the
+        // column, carrying its exact timestamp — that is how restore_column
+        // later tells them from cards trashed on their own.
+        await db.update(projectTasks)
+          .set(stamp)
+          .where(and(eq(projectTasks.columnId, column.id), isNull(projectTasks.deletedAt)))
       }
-      await db.delete(projectColumns).where(eq(projectColumns.id, column.id))
+
+      await db.update(projectColumns).set(stamp).where(eq(projectColumns.id, column.id))
       await touchBoard(board.id)
 
       return {
-        deleted: true,
+        trashed: true,
         board: { id: board.id, name: board.name },
-        column: column.name,
-        // Without a column left to hold them, the tasks go with it.
-        ...(target ? { tasksMovedTo: target.name, tasksMoved: affected } : { tasksDeleted: affected })
+        column: { id: column.id, name: column.name },
+        restoreWith: 'restore_column',
+        ...(target
+          ? { tasksMovedTo: target.name, tasksMoved: affected }
+          : { tasksTrashed: affected })
+      }
+    }
+  },
+  {
+    name: 'restore_column',
+    title: 'Restore a column',
+    description: 'Bring a column back out of the board\'s trash, along with the tasks that went with it. Use this to undo a delete_column — yours or anyone else\'s — while it is still in the trash.',
+    scope: 'boards:write',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The column id, as returned by delete_column.' }
+      },
+      required: ['id']
+    },
+    async handler(args, context) {
+      const id = requireString(args, 'id')
+      const [column] = await db.select().from(projectColumns).where(eq(projectColumns.id, id))
+      if (!column) throw new McpToolError(`No column with id "${id}" exists. It may have been removed for good.`)
+
+      const board = await findBoard(column.projectId, context)
+      if (!column.deletedAt) return { id, alreadyActive: true, column: column.name }
+
+      const withColumn = await db
+        .update(projectTasks)
+        .set(RESTORED)
+        .where(and(eq(projectTasks.columnId, id), eq(projectTasks.deletedAt, column.deletedAt)))
+        .returning({ id: projectTasks.id })
+
+      // Tasks handed to a neighbour on the way out, unless they have since been
+      // filed somewhere on purpose — moving a task clears the marker.
+      const relocated = await db
+        .update(projectTasks)
+        .set({ columnId: id, previousColumnId: null })
+        .where(and(eq(projectTasks.previousColumnId, id), isNull(projectTasks.deletedAt)))
+        .returning({ id: projectTasks.id })
+
+      await db.update(projectColumns).set(RESTORED).where(eq(projectColumns.id, id))
+      await renumberColumnTasks(id)
+      await touchBoard(board.id)
+
+      return {
+        restored: true,
+        board: { id: board.id, name: board.name },
+        column: { id: column.id, name: column.name },
+        tasksRestored: withColumn.length + relocated.length
       }
     }
   },
@@ -866,6 +951,9 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         .update(projectTasks)
         .set({
           columnId: column.id,
+          // Filing a card somewhere deliberately overrides where it came from,
+          // so restoring its old column later leaves this one where it is.
+          previousColumnId: null,
           position: await taskPosition(column.id, readPlacement(args), optionalString(args, 'after'), task.id),
           updatedAt: Date.now()
         })
@@ -887,11 +975,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'delete_task',
-    title: 'Delete a task',
-    description: 'Permanently delete a task and its updates. This cannot be undone — moving it to a "Done" column with move_task is usually what the user wants instead.',
+    title: 'Trash a task',
+    description: 'Move a task to the board\'s trash, where restore_task or the user can bring it back. Nothing is permanently deleted, but the trash is emptied after 7 days — and moving a finished task to a "Done" column with move_task is usually what the user actually wants.',
     scope: 'boards:write',
     readOnly: false,
-    destructive: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -901,9 +988,62 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
     },
     async handler(args, context) {
       const { task, board } = await findTask(requireString(args, 'id'), context)
-      await db.delete(projectTasks).where(eq(projectTasks.id, task.id))
+      await db.update(projectTasks).set(agentDeletion(context)).where(eq(projectTasks.id, task.id))
       await touchBoard(board.id)
-      return { deleted: true, id: task.id, title: task.title, board: { id: board.id, name: board.name } }
+      return {
+        trashed: true,
+        id: task.id,
+        title: task.title,
+        board: { id: board.id, name: board.name },
+        restoreWith: 'restore_task'
+      }
+    }
+  },
+  {
+    name: 'restore_task',
+    title: 'Restore a task',
+    description: 'Bring a task back out of the board\'s trash, into the column it was in. Use this to undo a delete_task while it is still in the trash.',
+    scope: 'boards:write',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The task id.' }
+      },
+      required: ['id']
+    },
+    async handler(args, context) {
+      const { task, board } = await findTask(requireString(args, 'id'), context, { includeDeleted: true })
+      if (!task.deletedAt) return { id: task.id, alreadyActive: true, title: task.title }
+
+      const [column] = await db.select().from(projectColumns).where(eq(projectColumns.id, task.columnId))
+      let columnId = task.columnId
+
+      if (column?.deletedAt) {
+        // Its column is in the trash too; the card needs it back to be drawn at
+        // all. The column's other trashed cards stay where they are.
+        await db.update(projectColumns).set(RESTORED).where(eq(projectColumns.id, column.id))
+      } else if (!column) {
+        const [first] = await projectColumnsOrdered(board.id)
+        if (!first) throw new McpToolError(`Board "${board.name}" has no column to restore this task into.`)
+        columnId = first.id
+      }
+
+      await db
+        .update(projectTasks)
+        .set({ ...RESTORED, columnId, updatedAt: Date.now() })
+        .where(eq(projectTasks.id, task.id))
+      await renumberColumnTasks(columnId)
+      await touchBoard(board.id)
+
+      const [restored] = await db.select().from(projectColumns).where(eq(projectColumns.id, columnId))
+      return {
+        restored: true,
+        id: task.id,
+        title: task.title,
+        board: { id: board.id, name: board.name },
+        column: restored?.name ?? columnId
+      }
     }
   },
   {

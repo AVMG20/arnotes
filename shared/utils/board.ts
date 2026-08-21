@@ -21,6 +21,17 @@ export function taskCountLabel(open: number, total: number, hasTerminalColumn: b
   return hasTerminalColumn ? `${open}/${total}` : String(total)
 }
 
+// ─── Deletions ────────────────────────────────────────────────────────────────
+
+// A trashed row says who emptied it, because the case the board's trash exists
+// for is a delete the user did not watch happen. "Deleted 6h ago by an agent"
+// is the difference between a mystery and a one-click undo.
+export function deletionSourceLabel(source: 'ui' | 'mcp' | 'ai' | null | undefined): string {
+  if (source === 'mcp') return ' by an agent over MCP'
+  if (source === 'ai') return ' by the AI assistant'
+  return ''
+}
+
 // ─── Checklist progress ───────────────────────────────────────────────────────
 
 export interface ChecklistProgress {

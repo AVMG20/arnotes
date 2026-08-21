@@ -101,9 +101,15 @@ and a running log of short updates.
 - \`add_task_update\` posts a line on the task's log. Use it for progress,
   blockers and decisions the user will want to read later; keep it to a sentence
   or two.
-- Boards have no trash. \`delete_board\`, \`delete_column\` and \`delete_task\` are
-  permanent, so move a task to Done instead of deleting it, and ask first when a
-  delete really is what the user wants.
+- \`delete_column\` and \`delete_task\` move things to the board's trash rather
+  than removing them; \`restore_column\` and \`restore_task\` undo either, and the
+  user can do the same from **Show trashed** on the board. The trash empties
+  itself after 7 days.
+- There is no \`delete_board\`. Deleting a board takes its columns, tasks and
+  updates with it, so it stays with the user in the app.
+- Deleting is still rarely the answer: a finished task belongs in Done via
+  \`move_task\`. Say what you are deleting before you delete it, and restore a
+  mistake rather than recreating it — a restored task keeps its updates.
 
 ## Habits
 

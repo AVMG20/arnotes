@@ -21,7 +21,11 @@ const {
   activeTags,
   boardTagCounts,
   toggleTagFilter,
-  clearTagFilter
+  clearTagFilter,
+  showTrashed,
+  trashedCount,
+  toggleShowTrashed,
+  isTrashed
 } = useProjects()
 
 const projectId = computed(() => route.params.id as string)
@@ -89,31 +93,48 @@ async function confirmDelete() {
   navigateTo('/projects')
 }
 
-const projectMenu = computed(() => [[
-  { label: 'Rename project', icon: 'i-lucide-pencil', onSelect: startRename }
-], [
-  {
-    label: 'Delete project',
-    icon: 'i-lucide-trash-2',
-    color: 'error' as const,
-    onSelect: () => { deleteOpen.value = true }
-  }
-]])
+// The trash entry earns its place only when there is something in it — or when
+// it is already on, so there is a way back. A board with nothing deleted looks
+// exactly as it did before.
+const projectMenu = computed(() => {
+  const trash = trashedCount.value > 0 || showTrashed.value
+    ? [[{
+        label: showTrashed.value ? 'Hide trashed' : `Show trashed (${trashedCount.value})`,
+        icon: showTrashed.value ? 'i-lucide-eye-off' : 'i-lucide-trash-2',
+        onSelect: () => { toggleShowTrashed() }
+      }]]
+    : []
+
+  return [
+    [{ label: 'Rename project', icon: 'i-lucide-pencil', onSelect: startRename }],
+    ...trash,
+    [{
+      label: 'Delete project',
+      icon: 'i-lucide-trash-2',
+      color: 'error' as const,
+      onSelect: () => { deleteOpen.value = true }
+    }]
+  ]
+})
 
 // The open board knows its own columns, so the count is read from them live
 // rather than from the shape cached with the project list.
-const taskCount = computed(() => board.value?.tasks.length ?? 0)
+// Trashed rows are only in state while "Show trashed" is on, and they are not
+// part of how much work the board holds.
+const liveColumns = computed(() => boardColumns.value.filter(column => !isTrashed(column)))
+const liveTasks = computed(() => (board.value?.tasks ?? []).filter(task => !isTrashed(task)))
+
+const taskCount = computed(() => liveTasks.value.length)
 
 const taskCountText = computed(() => {
-  const terminal = new Set(terminalColumnIds(boardColumns.value))
-  const tasks = board.value?.tasks ?? []
-  const open = tasks.filter(task => !terminal.has(task.columnId)).length
-  return taskCountLabel(open, tasks.length, terminal.size > 0)
+  const terminal = new Set(terminalColumnIds(liveColumns.value))
+  const open = liveTasks.value.filter(task => !terminal.has(task.columnId)).length
+  return taskCountLabel(open, liveTasks.value.length, terminal.size > 0)
 })
 
 const taskCountTitle = computed(() => {
-  const terminal = new Set(terminalColumnIds(boardColumns.value))
-  const tasks = board.value?.tasks ?? []
+  const terminal = new Set(terminalColumnIds(liveColumns.value))
+  const tasks = liveTasks.value
   if (!terminal.size) return `${tasks.length} in total`
   return `${tasks.filter(task => !terminal.has(task.columnId)).length} open of ${tasks.length}`
 })
@@ -235,16 +256,48 @@ useSeoMeta({
         />
 
         <UDropdownMenu :items="projectMenu">
-          <UButton
-            icon="i-lucide-ellipsis"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            aria-label="Project options"
-          />
+          <UChip
+            :show="trashedCount > 0 && !showTrashed"
+            color="warning"
+            size="sm"
+          >
+            <UButton
+              icon="i-lucide-ellipsis"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              :aria-label="trashedCount && !showTrashed
+                ? `Project options — ${trashedCount} deleted ${trashedCount === 1 ? 'item' : 'items'} in the trash`
+                : 'Project options'"
+            />
+          </UChip>
         </UDropdownMenu>
       </div>
     </header>
+
+    <!-- Trash summary. The board itself draws the deleted columns and cards in
+         place; this says what is being looked at and how long it has left. -->
+    <div
+      v-if="showTrashed"
+      class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-default bg-elevated/40 px-4 py-2 lg:px-6"
+    >
+      <UIcon
+        name="i-lucide-trash-2"
+        class="size-3.5 shrink-0 text-dimmed"
+      />
+      <span class="text-xs text-muted">
+        Showing {{ trashedCount }} deleted {{ trashedCount === 1 ? 'item' : 'items' }} in place.
+      </span>
+      <span class="text-xs text-dimmed">
+        Anything deleted more than 7 days ago is removed automatically.
+      </span>
+      <button
+        class="ml-auto text-xs text-primary hover:underline"
+        @click="toggleShowTrashed"
+      >
+        Hide
+      </button>
+    </div>
 
     <!-- Active filter summary -->
     <div

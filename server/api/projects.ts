@@ -1,6 +1,6 @@
 import { db } from '../db'
 import { projects, projectColumns } from '../db/schema'
-import { asc, desc, inArray } from 'drizzle-orm'
+import { and, asc, desc, inArray, isNull } from 'drizzle-orm'
 import { getProjectAccessFilter, genId } from '../utils/projects'
 import { getUserActiveTeamId } from '../utils/auth-helpers'
 import { publishFromEvent } from '../utils/realtime'
@@ -25,7 +25,10 @@ export default defineEventHandler(async (event) => {
         name: projectColumns.name
       })
       .from(projectColumns)
-      .where(inArray(projectColumns.projectId, rows.map(p => p.id)))
+      .where(and(
+        inArray(projectColumns.projectId, rows.map(p => p.id)),
+        isNull(projectColumns.deletedAt)
+      ))
       .orderBy(asc(projectColumns.position))
 
     const byProject = new Map<string, { id: string, name: string }[]>()

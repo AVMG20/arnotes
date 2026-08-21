@@ -18,6 +18,7 @@ const props = defineProps<{ task: Task | null }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { session } = useAuth()
+const toast = useToast()
 const {
   activeProject,
   boardColumns,
@@ -338,8 +339,15 @@ async function confirmDelete() {
   // Drop pending autosaves: the row is about to be gone.
   descDirty = false
   titleDirty = false
+  const title = props.task.title
   emit('close')
   await deleteTask(id)
+  toast.add({
+    title: `"${title}" moved to trash`,
+    description: 'Restore it from Show trashed for the next 7 days.',
+    icon: 'i-lucide-trash-2',
+    duration: 5000
+  })
 }
 
 const menuItems = computed(() => [[
@@ -617,7 +625,7 @@ const menuItems = computed(() => [[
   <UModal
     v-model:open="deleteOpen"
     title="Delete task?"
-    description="The task and its updates are deleted permanently."
+    description="It moves to the board's trash with its updates. Show trashed on the board can restore it for the next 7 days."
     :ui="{ footer: 'justify-end' }"
   >
     <template #footer>

@@ -111,6 +111,15 @@ export type NewNote = typeof notes.$inferInsert
 
 // ─── Projects (kanban) ────────────────────────────────────────────────────────
 
+// Where a delete came from. Recorded on the row so the board's trash can tell
+// the user's own tidying apart from an agent's, and so a runaway MCP key's work
+// can be picked out and restored in one go.
+export const DELETION_SOURCES = ['ui', 'mcp', 'ai'] as const
+export type DeletionSource = typeof DELETION_SOURCES[number]
+
+// How long a trashed column or task is kept before the purge job removes it.
+export const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 export const projects = pgTable(
   'projects',
   {
@@ -138,7 +147,15 @@ export const projectColumns = pgTable(
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     position: integer('position').notNull(),
-    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    // Soft delete, same shape as notes. A trashed column keeps its position so
+    // restoring puts it back between the same two neighbours it sat between.
+    deletedAt: bigint('deleted_at', { mode: 'number' }),
+    // Who emptied it and through which door. An agent working overnight is the
+    // case this exists for: the board can say "deleted by an MCP key" rather
+    // than leaving the user to guess where their column went.
+    deletedBy: text('deleted_by').references(() => user.id, { onDelete: 'set null' }),
+    deletedVia: text('deleted_via').$type<DeletionSource>()
   },
   table => [index('project_columns_project_id_idx').on(table.projectId)]
 )
@@ -159,11 +176,21 @@ export const projectTasks = pgTable(
     tags: json('tags').$type<string[]>().notNull().default([]),
     position: integer('position').notNull(),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
-    updatedAt: bigint('updated_at', { mode: 'number' }).notNull()
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    // Deleting a column hands its tasks to a neighbour rather than taking them
+    // down with it. This remembers where they came from, so restoring the
+    // column can bring them home; any later move clears it, because a task the
+    // user has since filed somewhere deliberately should stay where they put it.
+    previousColumnId: text('previous_column_id'),
+    deletedAt: bigint('deleted_at', { mode: 'number' }),
+    deletedBy: text('deleted_by').references(() => user.id, { onDelete: 'set null' }),
+    deletedVia: text('deleted_via').$type<DeletionSource>()
   },
   table => [
     index('project_tasks_project_id_idx').on(table.projectId),
-    index('project_tasks_column_id_idx').on(table.columnId)
+    index('project_tasks_column_id_idx').on(table.columnId),
+    // The trash view and the purge job both ask for "what is deleted here".
+    index('project_tasks_deleted_at_idx').on(table.deletedAt)
   ]
 )
 

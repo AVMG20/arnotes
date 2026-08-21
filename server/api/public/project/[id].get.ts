@@ -1,6 +1,6 @@
 import { db } from '../../../db'
 import { projectColumns, projectTasks } from '../../../db/schema'
-import { asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { findPublicProject } from '../../../utils/publicAccess'
 
 // A shared board, readable without a session: the columns and the cards on
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
       position: projectColumns.position
     })
     .from(projectColumns)
-    .where(eq(projectColumns.projectId, id))
+    .where(and(eq(projectColumns.projectId, id), isNull(projectColumns.deletedAt)))
     .orderBy(asc(projectColumns.position))
 
   const tasks = columns.length
@@ -34,7 +34,10 @@ export default defineEventHandler(async (event) => {
           updatedAt: projectTasks.updatedAt
         })
         .from(projectTasks)
-        .where(inArray(projectTasks.columnId, columns.map(c => c.id)))
+        .where(and(
+          inArray(projectTasks.columnId, columns.map(c => c.id)),
+          isNull(projectTasks.deletedAt)
+        ))
         .orderBy(asc(projectTasks.position))
     : []
 
