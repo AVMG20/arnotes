@@ -60,3 +60,53 @@ export function optionalLimit(args: Record<string, unknown>, key: string, fallba
 export function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2)
 }
+
+/**
+ * The id inside a reference someone pasted.
+ *
+ * Arnotes already addresses everything by a URL the user can copy straight out
+ * of the address bar — /note/<id>, /projects/<id>, /projects/<id>?task=<id> and
+ * their /public/ equivalents — so a pasted link is the easiest way to point an
+ * agent at one exact thing, with no title to describe and no id to retype.
+ *
+ * `prefer: 'task'` reads the task a board link has open; 'page' reads the note
+ * or board the link is for. Anything that is not a link comes back untouched
+ * and goes on being used as an id or a name, so a board actually named
+ * "Q1/Q2 roadmap" is still found by its name.
+ */
+export function idFromReference(ref: string, prefer: 'task' | 'page' = 'page'): string {
+  const trimmed = ref.trim()
+  if (!/^(https?:\/\/|\/)/i.test(trimmed)) return trimmed
+
+  let path: string
+  let taskId: string | null
+  try {
+    // A bare path needs a base to parse against; the origin is discarded anyway.
+    const url = new URL(trimmed, 'https://arnotes.invalid')
+    path = url.pathname
+    taskId = url.searchParams.get('task')
+  } catch {
+    return trimmed
+  }
+
+  if (prefer === 'task' && taskId) return taskId
+  return decodeURIComponent(path.split('/').filter(Boolean).at(-1) ?? '') || trimmed
+}
+
+/**
+ * A short excerpt of plain text, for the list-shaped results that show what a
+ * note or task is about without spending the whole body on it.
+ *
+ * With search terms it centres on the first one that hits, keeping `lead`
+ * characters of run-up; with none it takes the opening of the text, which is
+ * what a card shows. Either end that was cut is marked with an ellipsis so the
+ * model can tell an excerpt from a complete body and fetch the rest.
+ */
+export function excerpt(text: string, terms: string[] = [], length = 200, lead = 60): string {
+  if (!text) return ''
+  const lowered = text.toLowerCase()
+  const firstHit = terms.map(term => lowered.indexOf(term)).filter(index => index >= 0).sort((a, b) => a - b)[0] ?? 0
+  const start = Math.max(0, firstHit - lead)
+  const snippet = text.slice(start, start + length).trim()
+  return (start > 0 ? '…' : '') + snippet + (start + length < text.length ? '…' : '')
+}

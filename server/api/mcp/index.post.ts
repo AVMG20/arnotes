@@ -25,6 +25,8 @@ A note has a title, a Markdown body and tags, and tags are written inline in the
 
 Search or list before answering questions about the user's notes or boards, and ground answers in what the tools return. Read the board with get_board before creating or moving tasks so board, column and task names match. When editing, send the complete replacement body or description rather than a fragment — read the note or task first if you are only changing part of it.
 
+The list-shaped results are deliberately short: search_notes returns a snippet, and get_board and search_tasks return each task as its card — title, labels and the opening of the description, ending in an ellipsis when there is more. Read one thing in full with get_note or get_task rather than asking a board for every description at once.
+
 delete_note only moves a note to the trash, where restore_note can bring it back. Boards, columns and tasks have no trash: delete_board, delete_column and delete_task are permanent, so prefer move_task into a "Done" column over deleting, and confirm with the user before deleting anything.`
 
 const JSON_RPC_VERSION = '2.0'
@@ -167,7 +169,9 @@ async function handleMessage(message: JsonRpcMessage, context: ApiKeyContext) {
       try {
         const value = await tool.handler(asRecord(params.arguments), context)
         if (!tool.readOnly) announceWrite(tool, value, context)
-        return result(id, { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] })
+        // Compact rather than indented: a model reads either the same, and the
+        // whitespace is a fifth of a large board's payload.
+        return result(id, { content: [{ type: 'text', text: JSON.stringify(value) }] })
       } catch (error) {
         if (error instanceof McpToolError) return toolFailure(id, error.message)
         console.error(`[mcp] ${name} failed`, error)
