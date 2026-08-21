@@ -31,8 +31,6 @@ jobs:
             os: ubuntu-latest
           - system: aarch64-linux
             os: ubuntu-24.04-arm
-          - system: x86_64-darwin
-            os: macos-15-intel
           - system: aarch64-darwin
             os: macos-15
 
@@ -49,12 +47,14 @@ jobs:
           output=$(nix build .#node-deps-updater --no-link 2>&1)
           status=$?
           set -e
-          if [ "$status" -ne 0 ]; then
-            echo "::warning::node-deps build failed on ${{ matrix.system }}"
+          # The updater always fails with a hash mismatch; that failure is the
+          # result we want. Anything else is a real build problem.
+          if [ "$status" -ne 0 ] && ! printf '%s\n' "$output" | grep -q "hash mismatch in fixed-output"; then
+            echo "::error::unexpected node-deps build failure on ${{ matrix.system }}"
             printf '%s\n' "$output" | tail -20
-            exit 0
+            exit 1
           fi
-          hash=$(printf '%s\n' "$output" | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
+          hash=$(printf '%s\n' "$output" | grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
           echo "node-deps=$hash" >> "$GITHUB_OUTPUT"
 
       - name: Compute schema-deps hash
@@ -64,12 +64,12 @@ jobs:
           output=$(nix build .#schema-deps-updater --no-link 2>&1)
           status=$?
           set -e
-          if [ "$status" -ne 0 ]; then
-            echo "::warning::schema-deps build failed on ${{ matrix.system }}"
+          if [ "$status" -ne 0 ] && ! printf '%s\n' "$output" | grep -q "hash mismatch in fixed-output"; then
+            echo "::error::unexpected schema-deps build failure on ${{ matrix.system }}"
             printf '%s\n' "$output" | tail -20
-            exit 0
+            exit 1
           fi
-          hash=$(printf '%s\n' "$output" | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
+          hash=$(printf '%s\n' "$output" | grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
           echo "schema-deps=$hash" >> "$GITHUB_OUTPUT"
 
       - name: Write hashes artifact
@@ -79,7 +79,10 @@ jobs:
             --arg system "${{ matrix.system }}" \
             --arg node "${{ steps.node.outputs.node-deps }}" \
             --arg schema "${{ steps.schema.outputs.schema-deps }}" \
-            '{ ($system): { "node-deps": $node, "schema-deps": $schema } }' > /tmp/artifacts/hashes.json
+            '{} |
+            if $node != "" then .["node-deps"][$system] = $node else . end |
+            if $schema != "" then .["schema-deps"][$system] = $schema else . end' \
+            > /tmp/artifacts/hashes.json
 
       - uses: actions/upload-artifact@v4
         with:
@@ -99,12 +102,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/artifacts
-          merge-multiple: true
 
       - name: Merge hashes
         run: |
-          if ls /tmp/artifacts/hashes.json >/dev/null 2>&1; then
-            jq -s '.[0] * ([.[1:]] | add)' nix/hashes.json /tmp/artifacts/hashes.json > /tmp/hashes.json.new
+          if ls /tmp/artifacts/*/hashes.json >/dev/null 2>&1; then
+            jq -s '.[0] * (.[1:] | add)' nix/hashes.json /tmp/artifacts/*/hashes.json > /tmp/hashes.json.new
             mv /tmp/hashes.json.new nix/hashes.json
           fi
 

@@ -11,7 +11,9 @@
       nixpkgs,
     }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      # Intel macOS (x86_64-darwin) was retired from nixpkgs in 2026 and is not
+      # buildable there; Apple Silicon (aarch64-darwin) is supported.
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
 
       forAllSystems = nixpkgs.lib.genAttrs systems;
 

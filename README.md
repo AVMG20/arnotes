@@ -242,7 +242,7 @@ bun run dev         # run the dev server with hot reload
 
 `db-stop` stops the local PostgreSQL. Its data lives under `.nix-data/` in the repo.
 
-> Building the packages runs `bun install` against the npm registry inside a fixed-output derivation, so builds need network access on first run. The vendored `node_modules` hashes are recorded in `nix/packages.nix` for `x86_64-linux`; other platforms report their hash on the first build — paste it back in.
+> Building the packages runs `bun install` against the npm registry inside a fixed-output derivation, so builds need network access on first run. Native dependencies differ per platform, so each one has its own hash in `nix/hashes.json` (linux × x86_64/arm64 and Apple Silicon macOS). The `nix-hashes` workflow recomputes and commits them whenever `bun.lock`/`package.json` change, so dependency bumps don't break the flake. Intel macOS (`x86_64-darwin`) was retired from nixpkgs and is not supported.
 
 ## Connect An AI Agent
 
