@@ -25,3 +25,8 @@ data/
 .env
 .env.*
 !.env.example
+
+# Nix
+result
+.nix-data
+.codegraph
