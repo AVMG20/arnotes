@@ -36,6 +36,8 @@ export async function findPublicProject(id: string) {
     .select({
       id: projects.id,
       name: projects.name,
+      // A shared board should look like the board, colours included.
+      labelColors: projects.labelColors,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt
     })

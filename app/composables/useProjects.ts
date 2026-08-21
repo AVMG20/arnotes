@@ -5,6 +5,9 @@ import { realtimeHeaders } from '~/composables/useRealtime'
 export interface Project {
   id: string
   name: string
+  // Colours pinned to this board's task labels, keyed by the label. A label
+  // with no entry falls back to the colour derived from its own text.
+  labelColors?: Record<string, string>
   isPublic: boolean
   publicUntil: number | null
   createdAt: number
@@ -20,9 +23,18 @@ export interface ProjectColumn {
   id: string
   projectId: string
   name: string
+  // A colour the user picked; null means the dot follows the column's name.
+  color?: string | null
   position: number
   createdAt: number
+  // Set only on trashed rows, and only present when the board was asked for
+  // with `?trashed=1`. Everywhere else the server has already filtered them out.
+  deletedAt?: number | null
+  deletedVia?: DeletionSource | null
 }
+
+/** Where a delete came from, so the trash can name it. */
+export type DeletionSource = 'ui' | 'mcp' | 'ai'
 
 export interface ProjectTask {
   id: string
@@ -34,6 +46,8 @@ export interface ProjectTask {
   position: number
   createdAt: number
   updatedAt: number
+  deletedAt?: number | null
+  deletedVia?: DeletionSource | null
 }
 
 export interface TaskComment {
@@ -61,6 +75,10 @@ interface BoardPayload {
   columns: ProjectColumn[]
   tasks: ProjectTask[]
   commentCounts: Record<string, number>
+  // How much is in this board's trash. Sent whether or not the trashed rows
+  // themselves were asked for — the header has to be able to say there is
+  // something to look at before the user has gone looking.
+  trashedCount: number
 }
 
 // Module-level singleton state, same pattern as useNotes.
@@ -79,6 +97,11 @@ const _commentsTaskId = ref<string | null>(null)
 // workstream, …) rather than group boards, so they act as a board-level filter
 // and reset whenever another board is opened.
 const _activeTags = ref<string[]>([])
+
+// Whether the open board is drawing its trash. Off by default and per board:
+// opening another one starts clean, the same way the label filter does.
+const _showTrashed = ref(false)
+const _trashedCount = ref(0)
 
 // Search over projects and tasks; owned by the init plugin like the notes index.
 type ProjectSearchDoc = { id: string, type: 'project' | 'task', name: string, title: string, descriptionText: string }
@@ -216,6 +239,8 @@ export function useProjects() {
     _board.value = null
     _commentCounts.value = {}
     _activeTags.value = []
+    _showTrashed.value = false
+    _trashedCount.value = 0
     _activeProjectId.value = null
     await load()
   }
@@ -261,21 +286,61 @@ export function useProjects() {
     }
   }
 
+  // The board endpoint only sends trashed rows when asked, so the store needs no
+  // partitioning of its own: when the trash is hidden there is nothing trashed
+  // in state to begin with, and when it is shown the rows arrive holding the
+  // column and position they had, which is exactly where they should be drawn.
+  function boardUrl(id: string) {
+    return _showTrashed.value ? `/api/projects/${id}/board?trashed=1` : `/api/projects/${id}/board`
+  }
+
+  // ─── Label colours ────────────────────────────────────────
+
+  const labelColors = computed(() => activeProject.value?.labelColors ?? {})
+
+  function labelColor(tag: string): string | null {
+    return labelColors.value[tag] ?? null
+  }
+
+  // One label at a time: the server merges rather than taking the whole map, so
+  // two boards open side by side cannot undo each other's colours.
+  async function setLabelColor(tag: string, color: string | null) {
+    const projectId = _activeProjectId.value
+    if (!projectId) return
+    const updated = await $fetch<Project>(`/api/projects/${projectId}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { labelColor: { label: tag, color } }
+    })
+    upsertProject(updated)
+    return updated
+  }
+
   async function loadBoard(id: string) {
     _boardLoading.value = true
     try {
-      if (_activeProjectId.value !== id) _activeTags.value = []
+      if (_activeProjectId.value !== id) {
+        _activeTags.value = []
+        // A board is opened with its trash closed, however the last one was left.
+        _showTrashed.value = false
+      }
       _activeProjectId.value = id
-      const board = await $fetch<BoardPayload>(`/api/projects/${id}/board`)
+      const board = await $fetch<BoardPayload>(boardUrl(id))
       // A board opened for a project that was deleted mid-flight should not stick.
       if (_activeProjectId.value === id) {
         _board.value = { columns: board.columns, tasks: board.tasks }
         _commentCounts.value = board.commentCounts ?? {}
+        _trashedCount.value = board.trashedCount ?? 0
       }
       return board
     } finally {
       _boardLoading.value = false
     }
+  }
+
+  // Turning the trash on or off is a different read of the same board.
+  async function toggleShowTrashed() {
+    _showTrashed.value = !_showTrashed.value
+    if (_activeProjectId.value) await reloadBoardQuiet(_activeProjectId.value)
   }
 
   // Columns keep a sparse 1000-gap ordering; local sort mirrors the server's.
@@ -337,6 +402,16 @@ export function useProjects() {
     return column
   }
 
+  // Colours the column's dot, or clears it back to the one its name implies.
+  async function setColumnColor(id: string, color: string | null) {
+    const updated = await $fetch<ProjectColumn>(`/api/columns/${id}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { color }
+    })
+    patchBoardColumn(updated)
+    return updated
+  }
+
   async function renameColumn(id: string, name: string) {
     const updated = await $fetch<ProjectColumn>(`/api/columns/${id}`, {
       method: 'PUT', headers: realtimeHeaders(),
@@ -359,33 +434,26 @@ export function useProjects() {
     return updated
   }
 
+  // Moves a column to the board's trash; calling it again on a column already
+  // in the trash is what removes it for good. The server relocates its tasks to
+  // a neighbour on the way out, so the board is re-read rather than patched —
+  // guessing at which cards moved where is how the two fall out of step.
   async function deleteColumn(id: string) {
-    const res = await $fetch<{ ok: boolean, movedToColumnId: string | null }>(`/api/columns/${id}`, {
+    const res = await $fetch<{ ok: boolean, permanent: boolean, movedToColumnId: string | null }>(`/api/columns/${id}`, {
       method: 'DELETE', headers: realtimeHeaders()
     })
-    const orphaned = (_board.value?.tasks ?? []).filter(t => t.columnId === id).map(t => t.id)
-
-    if (_board.value && res.movedToColumnId) {
-      _board.value = {
-        columns: _board.value.columns.filter(c => c.id !== id),
-        tasks: _board.value.tasks.map(t => t.columnId === id ? { ...t, columnId: res.movedToColumnId! } : t)
-      }
-      // Keep the search index's column ids honest so a hit still opens the
-      // right place on the board.
-      _allTasks.value = _allTasks.value.map(t =>
-        t.columnId === id ? { ...t, columnId: res.movedToColumnId! } : t
-      )
-      reindexSearch()
-    } else if (_board.value) {
-      _board.value = {
-        columns: _board.value.columns.filter(c => c.id !== id),
-        tasks: _board.value.tasks.filter(t => t.columnId !== id)
-      }
-      // The board's last column took its tasks with it; they are gone server-side.
-      _allTasks.value = _allTasks.value.filter(t => !orphaned.includes(t.id))
-      reindexSearch()
-    }
+    if (_activeProjectId.value) await reloadBoardQuiet(_activeProjectId.value)
     await syncProjects()
+    return res
+  }
+
+  async function restoreColumn(id: string) {
+    const res = await $fetch<{ ok: boolean, restoredTasks: number }>(`/api/columns/${id}/restore`, {
+      method: 'POST', headers: realtimeHeaders()
+    })
+    if (_activeProjectId.value) await reloadBoardQuiet(_activeProjectId.value)
+    await syncProjects()
+    return res
   }
 
   function patchBoardColumn(column: ProjectColumn) {
@@ -403,12 +471,17 @@ export function useProjects() {
     return $fetch<BoardPayload>(`/api/projects/${projectId}/board`)
   }
 
+  function isTrashed(row: { deletedAt?: number | null }) {
+    return row.deletedAt != null
+  }
+
   async function reloadBoardQuiet(projectId: string) {
     try {
-      const board = await $fetch<BoardPayload>(`/api/projects/${projectId}/board`)
+      const board = await $fetch<BoardPayload>(boardUrl(projectId))
       if (_activeProjectId.value === projectId) {
         _board.value = { columns: board.columns, tasks: board.tasks }
         _commentCounts.value = board.commentCounts ?? {}
+        _trashedCount.value = board.trashedCount ?? 0
       }
     } catch { /* board may be gone; leave state as-is */ }
   }
@@ -446,12 +519,38 @@ export function useProjects() {
     return task
   }
 
+  // First call trashes the card, second removes it for good — the same two
+  // stages a note has. The card leaves the search index either way: a trashed
+  // task is not something a global search should be able to open.
   async function deleteTask(id: string) {
-    await $fetch(`/api/tasks/${id}`, { method: 'DELETE', headers: realtimeHeaders() })
-    removeBoardTask(id)
+    const res = await $fetch<{ ok: boolean, permanent: boolean }>(`/api/tasks/${id}`, {
+      method: 'DELETE', headers: realtimeHeaders()
+    })
     removeSearchRow(id)
+
+    if (_showTrashed.value && !res.permanent) {
+      // The trash is on screen, so the card stays put and goes grey instead of
+      // vanishing — a re-read is the cheapest way to get its deletedAt stamp.
+      if (_activeProjectId.value) await reloadBoardQuiet(_activeProjectId.value)
+      return res
+    }
+
+    removeBoardTask(id)
+    if (!res.permanent) _trashedCount.value += 1
+    else _trashedCount.value = Math.max(0, _trashedCount.value - 1)
     const { [id]: _dropped, ...rest } = _commentCounts.value
     _commentCounts.value = rest
+    return res
+  }
+
+  async function restoreTask(id: string) {
+    const res = await $fetch<{ ok: boolean, task: ProjectTask, restoredColumn: string | null }>(
+      `/api/tasks/${id}/restore`,
+      { method: 'POST', headers: realtimeHeaders() }
+    )
+    if (res.task) upsertSearchRow(res.task)
+    if (_activeProjectId.value) await reloadBoardQuiet(_activeProjectId.value)
+    return res
   }
 
   async function loadComments(taskId: string) {
@@ -530,14 +629,24 @@ export function useProjects() {
     boardTagCounts,
     toggleTagFilter,
     clearTagFilter,
+    labelColors,
+    labelColor,
+    setLabelColor,
+    showTrashed: _showTrashed,
+    trashedCount: _trashedCount,
+    toggleShowTrashed,
+    isTrashed,
     addColumn,
     renameColumn,
+    setColumnColor,
     moveColumn,
     deleteColumn,
+    restoreColumn,
     createTask,
     updateTask,
     moveTask,
     deleteTask,
+    restoreTask,
     loadComments,
     addComment,
     clearComments,

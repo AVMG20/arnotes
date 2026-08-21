@@ -1,24 +1,38 @@
 import { db } from '../../db'
 import { projects, projectTasks } from '../../db/schema'
 import { eq } from 'drizzle-orm'
-import { requireTask, requireColumn, columnTasksOrdered, positionBetween } from '../../utils/projects'
+import { requireTask, requireColumn, columnTasksOrdered, positionBetween, uiDeletion } from '../../utils/projects'
 import { publishFromEvent } from '../../utils/realtime'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
-  const { task, project } = await requireTask(event, id)
+  // Widened for the delete below, which has to be able to find a card that is
+  // already in the trash in order to remove it for good.
+  const { task, project } = await requireTask(event, id, { includeDeleted: true })
 
   if (event.method === 'DELETE') {
-    await db.delete(projectTasks).where(eq(projectTasks.id, id))
+    // Same two stages as a note: the first delete puts the card in the board's
+    // trash, and deleting it again from there is what removes it.
+    const permanent = task.deletedAt !== null
+
+    if (permanent) {
+      await db.delete(projectTasks).where(eq(projectTasks.id, id))
+    } else {
+      await db.update(projectTasks).set(uiDeletion(event)).where(eq(projectTasks.id, id))
+    }
+
     await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, project.id))
 
     await publishFromEvent(event, { type: 'board', projectId: project.id })
-    return { ok: true }
+    return { ok: true, permanent }
   }
 
   if (event.method !== 'PUT') {
     throw createError({ statusCode: 405, message: 'Method not allowed' })
   }
+
+  // A trashed card is read-only: restore it before editing or moving it.
+  if (task.deletedAt) throw createError({ statusCode: 404, message: 'Task not found' })
 
   // PUT — edit fields and/or move (columnId + beforeId/afterId neighbors).
   const body = await readBody<{
@@ -30,7 +44,15 @@ export default defineEventHandler(async (event) => {
     afterId?: string | null
   }>(event)
 
-  const patch: { title?: string, description?: string, tags?: string[], columnId?: string, position?: number, updatedAt: number } = {
+  const patch: {
+    title?: string
+    description?: string
+    tags?: string[]
+    columnId?: string
+    previousColumnId?: string | null
+    position?: number
+    updatedAt: number
+  } = {
     updatedAt: Date.now()
   }
   if (body.title !== undefined) patch.title = body.title.trim() || 'Untitled'
@@ -47,6 +69,9 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 400, message: 'That column belongs to another project' })
     }
     patch.columnId = body.columnId
+    // Filing a card somewhere deliberately overrides where it happened to come
+    // from, so restoring its old column later leaves this one alone.
+    patch.previousColumnId = null
     targetColumnId = body.columnId
   }
 

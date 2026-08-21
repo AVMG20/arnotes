@@ -1,3 +1,14 @@
+import { chipStyle, colorHex } from '#shared/utils/colors'
+
+// How a label chip and a column dot get their colour.
+//
+// Two sources, in order: a colour the user pinned — on a column, or on a label
+// through its right-click menu — applied as an inline style from the shared
+// palette, and failing that one derived from the text itself. The derived ones
+// stay on semantic Nuxt UI classes so they follow the user's theme; the pinned
+// ones cannot, because Tailwind has no class to compile for a colour chosen at
+// runtime.
+//
 // Deterministic per-tag color so the same label looks identical everywhere
 // (card, drawer, board filter) without storing a color anywhere. Colors are
 // Nuxt UI semantic badge colors; chip classes are prebuilt because Tailwind
@@ -24,6 +35,17 @@ const TAG_CHIP_CLASSES: Record<TagColor, string> = {
 
 export function tagChipClass(tag: string): string {
   return TAG_CHIP_CLASSES[tagColor(tag)]
+}
+
+/**
+ * What to bind on a label chip: the derived class when the label has no colour
+ * of its own, an inline style built from the palette when it has. Both are
+ * returned every time so a caller can bind `:class` and `:style` unconditionally.
+ */
+export function tagChipAttrs(tag: string, pinned?: string | null) {
+  return pinned
+    ? { class: 'ring-current/25', style: chipStyle(pinned) }
+    : { class: TAG_CHIP_CLASSES[tagColor(tag)], style: undefined }
 }
 
 // ─── Column accents ───────────────────────────────────────────────────────────
@@ -65,4 +87,11 @@ export function columnAccent(name: string): ColumnAccent {
 
 export function columnDotClass(name: string): string {
   return COLUMN_DOT_CLASSES[columnAccent(name)]
+}
+
+/** The same two sources as a label chip, for the dot beside a column name. */
+export function columnDotAttrs(column: { name: string, color?: string | null }) {
+  return column.color
+    ? { class: '', style: { backgroundColor: colorHex(column.color) } }
+    : { class: COLUMN_DOT_CLASSES[columnAccent(column.name)], style: undefined }
 }

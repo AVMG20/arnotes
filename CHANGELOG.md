@@ -18,9 +18,15 @@ All notable changes to Arnotes are documented in this file.
 - Labels autocomplete from the ones the board already uses, so a label stays one label
 - The board can be walked from the keyboard: arrows move between cards, Enter opens one, `n` starts a card in the column you are on
 - Long columns fold their tail behind one line, so a board that has been collecting finished work for months still opens quickly
+- Boards have a trash: deleting a column or a task moves it there instead of destroying it, and **Show trashed** in the board menu draws the deleted columns and cards faded and in place, each with Restore and Delete permanently. The trash empties itself after 7 days
+- Nothing an AI agent can reach deletes permanently any more. `delete_column` and `delete_task` move to the trash and are undone with the new `restore_column` and `restore_task`; a trashed row records whether it was the user, an MCP agent or the in-app assistant that deleted it
+- Removed `delete_board` from the MCP server. Deleting a board takes its columns, tasks and updates with it, so it stays in the app behind a confirmation where an agent cannot reach it
+- Restoring a column brings its tasks back: the ones handed to a neighbour when it was deleted return, unless they have since been filed somewhere on purpose
+- Columns and task labels can be given a colour of their own, from the same palette as the accent in Settings: a column through **Change color** in its menu, a label by right-clicking it anywhere it appears. Both fall back to the colour derived from their name until one is set, and agents can colour a column through `update_column`
 - Fixed: dragging a card while a label filter was on could give two cards the same position, leaving them to swap places on their own
 - Fixed: deleting a board's last column destroyed its tasks while the confirmation promised they would move
 - Fixed: a card picked up on a touch screen no longer swallows the scroll — a card drags after a short hold
+- Fixed: the editor's divider did nothing. It was offered in the `/` menu but the extension behind it was switched off, so the entry was dead; it now works from there, from a new toolbar button, and by typing `---`
 
 ## 0.1.0 - 2026-07-28
 

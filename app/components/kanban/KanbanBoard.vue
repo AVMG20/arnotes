@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import Sortable from 'sortablejs'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import type { ProjectColumn, ProjectTask } from '~/composables/useProjects'
-import { columnDotClass } from '~/utils/tagColors'
+import { columnDotAttrs } from '~/utils/tagColors'
+import { ACCENT_COLORS, colorHex } from '#shared/utils/colors'
+import { relativeTime } from '~/composables/useRelativeTime'
+import { deletionSourceLabel } from '#shared/utils/board'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ openTask: [taskId: string] }>()
@@ -13,13 +17,20 @@ const {
   visibleColumnTasks,
   commentCount,
   activeTags,
+  isTrashed,
   createTask,
   moveTask,
+  deleteTask,
+  restoreTask,
   addColumn,
   renameColumn,
+  setColumnColor,
   moveColumn,
-  deleteColumn
+  deleteColumn,
+  restoreColumn
 } = useProjects()
+
+const toast = useToast()
 
 // ─── Drag & drop ────────────────────────────────────────────
 
@@ -159,7 +170,9 @@ watch(columnSignature, async () => {
       draggable: '.kanban-column',
       animation: 150,
       handle: '.kanban-column-handle',
-      filter: '.kanban-add-column',
+      // A column in the trash keeps its slot on the board so it is obvious
+      // where it used to be, but it is not something to drag around.
+      filter: '.kanban-add-column, .kanban-column-trashed',
       ...TOUCH_HOLD,
       onEnd: handleColumnDrop
     })
@@ -170,6 +183,8 @@ watch(columnSignature, async () => {
     if (!el) continue
     taskSortables.push(Sortable.create(el, {
       group: 'kanban-tasks',
+      // Trashed cards render without this class, so they sit in place and
+      // neither drag nor accept a drop.
       draggable: '.kanban-card-wrap',
       animation: 150,
       ghostClass: 'kanban-ghost',
@@ -282,23 +297,23 @@ async function commitRename(column: ProjectColumn) {
 const deletingColumn = ref<ProjectColumn | null>(null)
 
 // A column normally hands its tasks to a neighbour, but the last column on a
-// board has no neighbour to hand them to and takes them with it. Boards have no
-// trash, so that case has to say so instead of promising a move that cannot
-// happen.
+// board has no neighbour to hand them to and takes them into the trash with it.
+// Either way the column is recoverable for a week, which is what the prompt has
+// to get across — this is no longer a point of no return.
 const deleteColumnPrompt = computed(() => {
   const column = deletingColumn.value
   if (!column) return null
-  if (boardColumns.value.length > 1) {
+  if (liveColumns.value.length > 1) {
     return {
-      description: 'Its tasks move to the previous column. A first column\'s tasks move to the next one.',
+      description: 'Its tasks move to the previous column — a first column\'s tasks move to the next one. The column goes to the board\'s trash, where "Show trashed" can restore it with its tasks for 7 days.',
       confirm: 'Delete column'
     }
   }
   const count = columnTasks(column.id).length
   return {
     description: count
-      ? `This is the board's only column, so there is nowhere for its ${count} ${count === 1 ? 'task' : 'tasks'} to go — they are deleted with it, along with their updates. This cannot be undone.`
-      : 'This is the board\'s only column. Deleting it leaves an empty board.',
+      ? `This is the board's only column, so there is nowhere for its ${count} ${count === 1 ? 'task' : 'tasks'} to go — they go to the trash with it. "Show trashed" can restore all of it for 7 days.`
+      : 'This is the board\'s only column. Deleting it leaves an empty board; "Show trashed" can restore it for 7 days.',
     confirm: count ? `Delete column and ${count} ${count === 1 ? 'task' : 'tasks'}` : 'Delete column'
   }
 })
@@ -306,13 +321,49 @@ const deleteColumnPrompt = computed(() => {
 async function confirmDeleteColumn() {
   const column = deletingColumn.value
   deletingColumn.value = null
-  if (column) await deleteColumn(column.id)
+  if (!column) return
+  await deleteColumn(column.id)
+  toast.add({
+    title: `"${column.name}" moved to trash`,
+    description: 'Restore it from Show trashed for the next 7 days.',
+    icon: 'i-lucide-trash-2',
+    duration: 5000
+  })
 }
 
-function columnMenu(column: ProjectColumn) {
+// The palette as a submenu. Each entry carries its swatch as a `chip`, so the
+// list reads as colours rather than as colour names, and "Automatic" is how a
+// column goes back to the colour its name implies.
+// Typed as the menu's own item type: the swatch slot lives on items nested
+// under `children`, which the component's inferred slot names do not reach.
+function colorMenu(column: ProjectColumn): DropdownMenuItem[][] {
+  return [
+    [{
+      label: 'Automatic',
+      icon: 'i-lucide-wand-2',
+      type: 'checkbox' as const,
+      checked: !column.color,
+      onSelect: () => { if (column.color) setColumnColor(column.id, null) }
+    }],
+    ACCENT_COLORS.map(color => ({
+      label: color[0]!.toUpperCase() + color.slice(1),
+      type: 'checkbox' as const,
+      checked: column.color === color,
+      // Named slot rather than an icon: the swatch has to be an inline style,
+      // since Tailwind never sees a class name chosen at runtime. The menu
+      // forwards its slots into submenus, so one template covers both levels.
+      slot: 'color' as const,
+      hex: colorHex(color),
+      onSelect: () => setColumnColor(column.id, color)
+    }))
+  ]
+}
+
+function columnMenu(column: ProjectColumn): DropdownMenuItem[][] {
   return [[
     { label: 'Add task', icon: 'i-lucide-plus', onSelect: () => startCompose(column.id) },
-    { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => startRename(column) }
+    { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => startRename(column) },
+    { label: 'Change color', icon: 'i-lucide-palette', children: colorMenu(column) }
   ], [
     {
       label: 'Delete column',
@@ -321,6 +372,77 @@ function columnMenu(column: ProjectColumn) {
       onSelect: () => { deletingColumn.value = column }
     }
   ]]
+}
+
+// ─── Trash ──────────────────────────────────────────────────
+
+// The board draws its trash in place: a deleted column keeps its slot and a
+// deleted card keeps its row, both faded. Nothing is filtered out here — the
+// board endpoint only sends trashed rows when the mode is on, so when it is off
+// there is nothing trashed in state to draw.
+const liveColumns = computed(() => boardColumns.value.filter(column => !isTrashed(column)))
+
+// A live column counts the cards on it, as it always has; the trashed cards
+// sitting in it are not part of the board. A trashed column counts what
+// restoring it would bring back, which is everything still inside it.
+function columnCount(column: ProjectColumn): number {
+  const tasks = tasksOf(column.id)
+  return isTrashed(column) ? tasks.length : tasks.filter(task => !isTrashed(task)).length
+}
+
+function trashedNote(row: { deletedAt?: number | null, deletedVia?: 'ui' | 'mcp' | 'ai' | null }) {
+  if (!row.deletedAt) return ''
+  return `Deleted ${relativeTime(row.deletedAt)}${deletionSourceLabel(row.deletedVia)}`
+}
+
+async function onRestoreTask(taskId: string) {
+  const res = await restoreTask(taskId)
+  toast.add({
+    title: 'Task restored',
+    ...(res.restoredColumn ? { description: `Back in "${res.restoredColumn}".` } : {}),
+    icon: 'i-lucide-undo-2',
+    duration: 4000
+  })
+}
+
+async function onRestoreColumn(column: ProjectColumn) {
+  const res = await restoreColumn(column.id)
+  toast.add({
+    title: `"${column.name}" restored`,
+    ...(res.restoredTasks ? { description: `${res.restoredTasks} ${res.restoredTasks === 1 ? 'task came' : 'tasks came'} back with it.` } : {}),
+    icon: 'i-lucide-undo-2',
+    duration: 4000
+  })
+}
+
+// Permanent removal is the one thing an agent cannot do, so it always asks
+// first — from here there is nothing left to restore.
+const purgingTask = ref<ProjectTask | null>(null)
+const purgingColumn = ref<ProjectColumn | null>(null)
+
+function askPurgeTask(taskId: string) {
+  purgingTask.value = (board.value?.tasks ?? []).find(task => task.id === taskId) ?? null
+}
+
+async function confirmPurgeTask() {
+  const task = purgingTask.value
+  purgingTask.value = null
+  if (task) await deleteTask(task.id)
+}
+
+const purgeColumnPrompt = computed(() => {
+  const column = purgingColumn.value
+  if (!column) return null
+  const count = (board.value?.tasks ?? []).filter(task => task.columnId === column.id).length
+  return count
+    ? `"${column.name}" and the ${count} ${count === 1 ? 'task' : 'tasks'} still in it are removed for good, with their updates. This cannot be undone.`
+    : `"${column.name}" is removed for good. This cannot be undone.`
+})
+
+async function confirmPurgeColumn() {
+  const column = purgingColumn.value
+  purgingColumn.value = null
+  if (column) await deleteColumn(column.id)
 }
 
 const addingColumn = ref(false)
@@ -466,8 +588,11 @@ function onBoardKeydown(e: KeyboardEvent) {
     case 'n':
     case 'N': {
       // The column being looked at, or the first one when nothing is focused.
-      const columnId = card?.closest<HTMLElement>('.kanban-column')?.dataset.columnId
-        ?? boardColumns.value[0]?.id
+      // A trashed column takes no new cards, so `n` skips past it.
+      const focused = card?.closest<HTMLElement>('.kanban-column')?.dataset.columnId
+      const columnId = liveColumns.value.some(column => column.id === focused)
+        ? focused
+        : liveColumns.value[0]?.id
       if (!columnId) return
       e.preventDefault()
       startCompose(columnId)
@@ -490,13 +615,65 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
       v-for="column in boardColumns"
       :key="column.id"
       :data-column-id="column.id"
-      class="kanban-column flex h-full w-[19rem] shrink-0 flex-col rounded-xl bg-elevated/50"
+      class="kanban-column flex h-full w-[19rem] shrink-0 flex-col rounded-xl"
+      :class="isTrashed(column)
+        ? 'kanban-column-trashed border border-dashed border-default bg-elevated/20 opacity-60 transition-opacity hover:opacity-100'
+        : 'bg-elevated/50'"
     >
+      <!-- A trashed column is a header and its cards, and nothing that edits
+           them: the two ways out are restoring it or removing it for good. -->
+      <header
+        v-if="isTrashed(column)"
+        class="flex flex-col gap-1.5 px-3 pb-2 pt-2.5"
+      >
+        <div class="flex items-center gap-2">
+          <UIcon
+            name="i-lucide-trash-2"
+            class="size-3.5 shrink-0 text-dimmed"
+          />
+          <span
+            class="min-w-0 flex-1 truncate text-sm font-semibold text-muted line-through decoration-1"
+            :title="column.name"
+          >
+            {{ column.name }}
+          </span>
+          <span class="shrink-0 text-xs tabular-nums text-dimmed">
+            {{ columnCount(column) }}
+          </span>
+        </div>
+        <p class="truncate text-[0.6875rem] text-dimmed">
+          {{ trashedNote(column) }}
+        </p>
+        <div class="flex items-center gap-1">
+          <UButton
+            label="Restore"
+            icon="i-lucide-undo-2"
+            size="xs"
+            color="neutral"
+            variant="soft"
+            @click="onRestoreColumn(column)"
+          />
+          <UButton
+            icon="i-lucide-trash-2"
+            size="xs"
+            color="error"
+            variant="ghost"
+            aria-label="Delete column permanently"
+            title="Delete permanently"
+            @click="purgingColumn = column"
+          />
+        </div>
+      </header>
+
       <!-- Column header — also the drag handle -->
-      <header class="kanban-column-handle group/col flex cursor-grab items-center gap-2 px-3 pb-2 pt-2.5 active:cursor-grabbing">
+      <header
+        v-else
+        class="kanban-column-handle group/col flex cursor-grab items-center gap-2 px-3 pb-2 pt-2.5 active:cursor-grabbing"
+      >
         <span
           class="size-2 shrink-0 rounded-full"
-          :class="columnDotClass(column.name)"
+          :class="columnDotAttrs(column).class"
+          :style="columnDotAttrs(column).style"
         />
 
         <input
@@ -519,7 +696,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
         </button>
 
         <span class="mr-auto shrink-0 text-xs tabular-nums text-dimmed">
-          {{ tasksOf(column.id).length }}
+          {{ columnCount(column) }}
         </span>
 
         <!-- Actions keep their slot at all times: fading them in instead of
@@ -542,6 +719,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
               aria-label="Column options"
               @click.stop
             />
+
+            <template #color-leading="{ item }">
+              <span
+                class="size-3 shrink-0 rounded-full ring-1 ring-inset ring-black/10"
+                :style="{ backgroundColor: (item as { hex: string }).hex }"
+              />
+            </template>
           </UDropdownMenu>
         </div>
       </header>
@@ -555,13 +739,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
         <div
           v-for="task in visibleTasksOf(column.id)"
           :key="task.id"
-          class="kanban-card-wrap"
+          :class="isTrashed(task) ? '' : 'kanban-card-wrap'"
           :data-id="task.id"
         >
           <KanbanCard
             :task="task"
             :comment-count="commentCount(task.id)"
             @open="emit('openTask', $event)"
+            @restore="onRestoreTask"
+            @purge="askPurgeTask"
           />
         </div>
 
@@ -584,7 +770,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
         <!-- Composer sits with the cards, not pinned to the bottom of a tall
              empty column. Sortable ignores it: only .kanban-card-wrap drags. -->
         <textarea
-          v-if="composingColumnId === column.id"
+          v-if="composingColumnId === column.id && !isTrashed(column)"
           v-model="composingTitle"
           data-composer
           rows="2"
@@ -594,7 +780,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
           @blur="onComposerBlur(column.id)"
         />
         <button
-          v-else
+          v-else-if="!isTrashed(column)"
           class="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm text-muted transition-colors hover:bg-default hover:text-default"
           @click="startCompose(column.id)"
         >
@@ -651,6 +837,51 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
           :label="deleteColumnPrompt?.confirm ?? 'Delete column'"
           color="error"
           @click="confirmDeleteColumn"
+        />
+      </template>
+    </UModal>
+
+    <!-- Permanent delete confirms — the trash is the last stop before these -->
+    <UModal
+      :open="purgingTask !== null"
+      title="Delete this task for good?"
+      :description="purgingTask ? `\u201C${purgingTask.title}\u201D and its updates are removed permanently. This cannot be undone.` : ''"
+      :ui="{ footer: 'justify-end' }"
+      @update:open="(v: boolean) => { if (!v) purgingTask = null }"
+    >
+      <template #footer>
+        <UButton
+          label="Cancel"
+          color="neutral"
+          variant="ghost"
+          @click="purgingTask = null"
+        />
+        <UButton
+          label="Delete permanently"
+          color="error"
+          @click="confirmPurgeTask"
+        />
+      </template>
+    </UModal>
+
+    <UModal
+      :open="purgingColumn !== null"
+      title="Delete this column for good?"
+      :description="purgeColumnPrompt ?? ''"
+      :ui="{ footer: 'justify-end' }"
+      @update:open="(v: boolean) => { if (!v) purgingColumn = null }"
+    >
+      <template #footer>
+        <UButton
+          label="Cancel"
+          color="neutral"
+          variant="ghost"
+          @click="purgingColumn = null"
+        />
+        <UButton
+          label="Delete permanently"
+          color="error"
+          @click="confirmPurgeColumn"
         />
       </template>
     </UModal>

@@ -660,7 +660,8 @@ const fixedToolbarItems: any[][] = [[
   { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
   { kind: 'table', slot: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
   { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
-  { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } }
+  { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } },
+  { kind: 'horizontalRule', icon: 'i-lucide-separator-horizontal', tooltip: { text: 'Divider' } }
 ]]
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -782,7 +783,7 @@ const suggestionItems = computed(() => {
       :model-value="content"
       content-type="html"
       :placeholder="placeholder ?? 'Start writing… (@ for dates, # for tags)'"
-      :starter-kit="{ codeBlock: false }"
+      :starter-kit="{ codeBlock: false, horizontalRule: {} }"
       :image="false"
       :extensions="extensions"
       :handlers="customHandlers"

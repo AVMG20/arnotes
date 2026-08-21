@@ -351,8 +351,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const id = String(args.id ?? '')
       const row = allTasks.value.find(t => t.id === id)
       if (!row) return { result: { error: 'Task not found' }, label: 'Task not found' }
-      await deleteTask(id)
-      return { result: { ok: true, id, deleted: true }, label: `Deleted task "${row.title}"` }
+      await deleteTask(id) // soft delete — restorable from the board's trash
+      return { result: { ok: true, id, trashed: true }, label: `Moved task "${row.title}" to trash` }
     }
     default:
       return { result: { error: `Unknown tool: ${name}` }, label: `Unknown tool ${name}` }

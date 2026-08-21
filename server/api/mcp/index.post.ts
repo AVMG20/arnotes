@@ -8,7 +8,7 @@ import { toolsForScopes } from '../../utils/mcpTools'
 import { McpToolError } from '../../utils/mcpToolKit'
 import { API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
-import { closeTopic, publicNoteTopic, publicProjectTopic, publish, workspaceTopic } from '../../utils/realtime'
+import { closeTopic, publicNoteTopic, publish, workspaceTopic } from '../../utils/realtime'
 import type { RealtimeEvent } from '../../utils/realtime'
 
 const SERVER_NAME = 'arnotes'
@@ -27,7 +27,9 @@ Search or list before answering questions about the user's notes or boards, and 
 
 The list-shaped results are deliberately short: search_notes returns a snippet, and get_board and search_tasks return each task as its card — title, labels and the opening of the description, ending in an ellipsis when there is more. Read one thing in full with get_note or get_task rather than asking a board for every description at once.
 
-delete_note only moves a note to the trash, where restore_note can bring it back. Boards, columns and tasks have no trash: delete_board, delete_column and delete_task are permanent, so prefer move_task into a "Done" column over deleting, and confirm with the user before deleting anything.`
+Nothing here deletes permanently. delete_note moves a note to the trash and restore_note brings it back; delete_column and delete_task do the same on a board, undone with restore_column and restore_task, and the user can see and restore both under "Show trashed" on the board itself. A board's trash is emptied after 7 days.
+
+There is no tool for deleting a board — that stays with the user, in the app. Deleting is still the wrong move most of the time: a finished task belongs in a "Done" column via move_task, not in the trash. Say what you are about to delete and why before you do it, and when a delete turns out to be wrong, restore it rather than recreating it — a restored task keeps its updates and its place on the board.`
 
 const JSON_RPC_VERSION = '2.0'
 
@@ -89,13 +91,11 @@ function announceWrite(tool: { scope: ApiKeyScope }, value: unknown, context: Ap
 
   const event: RealtimeEvent = typeof projectId === 'string'
     ? { type: 'board', projectId }
-    // Creating, renaming or deleting a board changes the list itself, and the
-    // client reloads the open board along with it. The board-shaped results
-    // carry their own id, which a renamed or deleted board's readers need.
+    // Creating or renaming a board changes the list itself, and the client
+    // reloads the open board along with it. The board-shaped results carry
+    // their own id, which a renamed board's readers need.
     : { type: 'projects', ...(typeof record.id === 'string' && { projectId: record.id }) }
   publish(topic, event)
-
-  if (record.deleted === true && typeof record.id === 'string') closeTopic(publicProjectTopic(record.id))
 }
 
 /** Tool failures are reported inside the result so the model can read and retry them. */
