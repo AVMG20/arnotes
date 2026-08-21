@@ -593,3 +593,66 @@ summary {
 .date-mention:hover::after {
   opacity: 1;
 }
+
+/* ─── Inline markdown (task updates) ────────────────────────── */
+
+/* Updates are written and read in a narrow inline markdown: bold, italic,
+   code, strike, highlight and links, and nothing that opens a block. The same
+   rules dress both ends — the composer is a real editor, so what you type
+   looks like what everyone else will read. */
+
+.inline-md {
+  line-height: 1.6;
+}
+
+.inline-md p {
+  margin: 0;
+}
+
+.inline-md p + p {
+  margin-top: 0.35rem;
+}
+
+.inline-md a {
+  color: var(--ui-color-primary-600);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-word;
+}
+.dark .inline-md a {
+  color: var(--ui-color-primary-400);
+}
+
+.inline-md code {
+  padding: 0.1em 0.3em;
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background-color: var(--ui-bg-elevated);
+  border: 1px solid var(--ui-border);
+  border-radius: 0.3rem;
+}
+
+.inline-md mark {
+  padding: 0.05em 0.15em;
+  color: inherit;
+  background-color: #fef08a;
+  border-radius: 0.2em;
+}
+.dark .inline-md mark {
+  color: #fef9c3;
+  background-color: #713f12;
+}
+
+/* The composer: an editor with none of an editor's furniture. The page-sized
+   padding on `.tiptap` above would make it an indented block, so it goes. */
+.tiptap.inline-editor,
+.ProseMirror.inline-editor {
+  padding: 0;
+  outline: none;
+  /* Fills its row, so the caret lands wherever the row is clicked rather than
+     only on the text itself. */
+  width: 100%;
+  min-height: 1.5rem;
+  max-height: 7.5rem;
+  overflow-y: auto;
+}

@@ -5,7 +5,7 @@
 // by an agent is indistinguishable from one changed by hand.
 import { and, asc, count, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '../db'
-import { projects, projectColumns, projectTasks, taskComments, user } from '../db/schema'
+import { projects, projectColumns, projectTasks, taskComments, user, apiKeys } from '../db/schema'
 import type { Project, ProjectColumn, ProjectTask } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { projectAccessFilter } from './auth-helpers'
@@ -213,10 +213,13 @@ async function taskDetail(task: ProjectTask, board: Project) {
     .select({
       body: taskComments.body,
       createdAt: taskComments.createdAt,
-      authorName: user.name
+      createdVia: taskComments.createdVia,
+      authorName: user.name,
+      keyName: apiKeys.name
     })
     .from(taskComments)
     .leftJoin(user, eq(user.id, taskComments.userId))
+    .leftJoin(apiKeys, eq(apiKeys.id, taskComments.apiKeyId))
     .where(eq(taskComments.taskId, task.id))
     .orderBy(asc(taskComments.createdAt))
 
@@ -229,8 +232,14 @@ async function taskDetail(task: ProjectTask, board: Project) {
     description: task.description ? htmlToMarkdown(task.description) : '',
     createdAt: new Date(task.createdAt).toISOString(),
     updatedAt: new Date(task.updatedAt).toISOString(),
+    // Update bodies are stored as the inline Markdown they were written in, by
+    // an agent here or by a person in the app, so they pass through untouched.
+    // An agent's update is attributed to its key, not to the key's owner, so a
+    // thread reads back as the conversation it was.
     updates: updates.map(update => ({
-      author: update.authorName ?? 'Unknown',
+      author: update.createdVia === 'mcp'
+        ? `${update.keyName ?? 'MCP key'} (agent)`
+        : update.authorName ?? 'Unknown',
       body: update.body,
       at: new Date(update.createdAt).toISOString()
     }))
@@ -1058,14 +1067,14 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'add_task_update',
     title: 'Post a task update',
-    description: 'Post an update on a task — the short running log the team reads for progress, blockers and decisions. Plain text, posted under the API key owner\'s name.',
+    description: 'Post an update on a task — the short running log the team reads for progress, blockers and decisions. Posted under this API key\'s name, shown in the app as an agent rather than as the key owner. Inline Markdown only: **bold**, *italic*, `code`, ~~strike~~, ==highlight== and [links](https://example.com). Headings, lists and images are not rendered — those belong in the task description.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The task id.' },
-        body: { type: 'string', description: 'The update. One or two sentences beats a wall of text.' }
+        body: { type: 'string', description: 'The update, as inline Markdown. One or two sentences beats a wall of text.' }
       },
       required: ['id', 'body']
     },
@@ -1078,6 +1087,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         taskId: task.id,
         userId: context.userId,
         body,
+        // Posted by the key, in the owner's workspace: the update carries the
+        // key's name in the app rather than the owner's.
+        createdVia: 'mcp',
+        apiKeyId: context.keyId,
         createdAt: Date.now()
       })
 

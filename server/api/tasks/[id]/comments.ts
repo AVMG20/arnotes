@@ -1,5 +1,5 @@
 import { db } from '../../../db'
-import { taskComments, user } from '../../../db/schema'
+import { taskComments, user, apiKeys } from '../../../db/schema'
 import { eq, asc } from 'drizzle-orm'
 import { requireTask, genId } from '../../../utils/projects'
 import { publishFromEvent } from '../../../utils/realtime'
@@ -16,10 +16,15 @@ export default defineEventHandler(async (event) => {
         userId: taskComments.userId,
         body: taskComments.body,
         createdAt: taskComments.createdAt,
-        userName: user.name
+        createdVia: taskComments.createdVia,
+        userName: user.name,
+        // An agent's update is signed with the key it was posted with, so the
+        // log says "Claude Code" where the work was actually an agent's.
+        keyName: apiKeys.name
       })
       .from(taskComments)
       .leftJoin(user, eq(user.id, taskComments.userId))
+      .leftJoin(apiKeys, eq(apiKeys.id, taskComments.apiKeyId))
       .where(eq(taskComments.taskId, id))
       .orderBy(asc(taskComments.createdAt))
   }
@@ -37,9 +42,10 @@ export default defineEventHandler(async (event) => {
     taskId: id,
     userId: event.context.session.user.id,
     body,
+    createdVia: 'ui',
     createdAt: Date.now()
   }).returning()
 
   await publishFromEvent(event, { type: 'board', projectId: _task.projectId })
-  return { ...comment, userName: event.context.session.user.name }
+  return { ...comment, userName: event.context.session.user.name, keyName: null }
 })

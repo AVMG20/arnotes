@@ -209,8 +209,18 @@ export const taskComments = pgTable(
   {
     id: text('id').primaryKey(),
     taskId: text('task_id').notNull().references(() => projectTasks.id, { onDelete: 'cascade' }),
+    // The account the update belongs to. An agent posts under the key owner's
+    // account because that is whose workspace it is, but it does not get to
+    // wear their name — see `createdVia` below.
     userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    // Inline Markdown, stored as written. A person types it in the drawer and an
+    // agent posts it over MCP; both speak the same narrow subset.
     body: text('body').notNull(),
+    // Which door the update came through, the same three as a deletion. An
+    // update posted by an agent is signed with the key's name rather than the
+    // owner's, so a log the user reads back says who was really working.
+    createdVia: text('created_via').$type<DeletionSource>().notNull().default('ui'),
+    apiKeyId: text('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
     createdAt: bigint('created_at', { mode: 'number' }).notNull()
   },
   table => [index('task_comments_task_id_idx').on(table.taskId)]

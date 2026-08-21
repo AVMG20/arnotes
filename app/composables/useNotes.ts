@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
 import { markdownToHtml } from '~/utils/markdown'
 import { realtimeHeaders } from '~/composables/useRealtime'
+import { matchesTagRequirements, type TagRequirement } from '#shared/utils/tags'
 
 export interface Note {
   id: string
@@ -212,18 +213,20 @@ export function useNotes() {
     return updateNote(id, setTitleInContent(note.content, trimmed))
   }
 
-  function searchNotes(query: string, filterTags: string[] = []): Note[] {
+  // A requirement is a tag, or the set of tags a half-typed `#tag` could still
+  // complete to — any one of them satisfies it, and every requirement has to be
+  // satisfied, so `#sani #todo` still narrows.
+  function searchNotes(query: string, filterTags: TagRequirement[] = []): Note[] {
     let pool: Note[]
     if (query.trim() && _search) {
       const hits = _search.search(query, {
-        filter: result => filterTags.length === 0
-          || filterTags.every(t => (result.tags as string[] | undefined)?.includes(t))
+        filter: result => matchesTagRequirements((result.tags as string[] | undefined) ?? [], filterTags)
       })
       pool = hits.map(h => notesById.value.get(String(h.id))).filter((n): n is Note => !!n)
     } else {
       pool = _notes.value.filter(n => !n.deletedAt)
       if (filterTags.length > 0) {
-        pool = pool.filter(n => filterTags.every(t => n.tags.includes(t)))
+        pool = pool.filter(n => matchesTagRequirements(n.tags, filterTags))
       }
     }
     return pool.filter(n => !n.deletedAt)

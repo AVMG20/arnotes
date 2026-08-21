@@ -20,7 +20,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags, wit
 - Private notes and boards, each with an optional expiring public link
 - Email/password accounts with optional Discord and GitHub OAuth
 - Bring-your-own-key OpenRouter integration; AI is entirely optional
-- Kanban boards for projects: columns, drag-and-drop tasks, labels, rich-text descriptions, and a log of updates per task
+- Kanban boards for projects: columns, drag-and-drop tasks, labels, rich-text descriptions, and a log of updates per task, written in a narrow inline Markdown (bold, italic, code, strike, highlight, links)
 - Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload — on shared links too
 - Built-in MCP server so Claude Code and other AI agents can read and write your notes and run your boards, using API keys you scope yourself
 - Installable Progressive Web App

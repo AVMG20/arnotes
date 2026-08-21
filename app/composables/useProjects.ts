@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type MiniSearch from 'minisearch'
 import { realtimeHeaders } from '~/composables/useRealtime'
+import { matchesTagRequirements, type TagRequirement } from '#shared/utils/tags'
 
 export interface Project {
   id: string
@@ -57,6 +58,10 @@ export interface TaskComment {
   body: string
   createdAt: number
   userName: string | null
+  // How the update was posted, and — when that was an agent over MCP — the name
+  // of the key it used, which is what the thread signs it with.
+  createdVia?: DeletionSource | null
+  keyName?: string | null
 }
 
 // Lightweight row used by global search; not the full task.
@@ -580,19 +585,43 @@ export function useProjects() {
 
   // Merged hits for the global search modal: tasks first (title boost), then
   // projects. Resolved back to rows by prefixed id (`task:` / `project:`).
-  function searchBoards(query: string): { tasks: TaskSearchRow[], projects: Project[] } {
-    if (!query.trim() || !_search) return { tasks: [], projects: [] }
+  // What a `#tag` in the search box can match on a board. Boards do not carry
+  // note tags, so a task answers with its labels plus the words of its board's
+  // name — which is how `#sanitairkamer` finds the Sanitairkamer board's work.
+  function taskTagPool(row: TaskSearchRow): string[] {
+    return [...row.tags, ...row.projectName.toLowerCase().split(/[^\w]+/).filter(Boolean)]
+  }
+
+  function projectTagPool(project: Project): string[] {
+    return project.name.toLowerCase().split(/[^\w]+/).filter(Boolean)
+  }
+
+  function searchBoards(
+    query: string,
+    filterTags: TagRequirement[] = []
+  ): { tasks: TaskSearchRow[], projects: Project[] } {
+    // Tags on their own are a filter, not a search: with no words to match,
+    // every task the tags allow is a hit, newest first.
+    if (!query.trim()) {
+      if (filterTags.length === 0) return { tasks: [], projects: [] }
+      return {
+        tasks: _allTasks.value.filter(row => matchesTagRequirements(taskTagPool(row), filterTags)).slice(0, 5),
+        projects: _projects.value.filter(p => matchesTagRequirements(projectTagPool(p), filterTags)).slice(0, 3)
+      }
+    }
+    if (!_search) return { tasks: [], projects: [] }
+
     const hits = _search.search(query, { prefix: true, fuzzy: 0.2 })
     const tasks: TaskSearchRow[] = []
     const projectIds: string[] = []
     for (const hit of hits) {
       if (hit.id.startsWith('task:')) {
         const row = _allTasks.value.find(t => `task:${t.id}` === hit.id)
-        if (row) tasks.push(row)
+        if (row && matchesTagRequirements(taskTagPool(row), filterTags)) tasks.push(row)
       } else {
         const id = hit.id.slice('project:'.length)
         const project = _projects.value.find(p => p.id === id)
-        if (project) projectIds.push(id)
+        if (project && matchesTagRequirements(projectTagPool(project), filterTags)) projectIds.push(id)
       }
     }
     return {

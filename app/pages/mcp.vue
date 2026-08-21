@@ -56,7 +56,7 @@ Arnotes is the user's note-taking app, with kanban boards beside the notes. A
 note has a title, a Markdown body and tags, and tags are written inline in the
 body as \`#hashtags\`. A board has columns — kanban stages such as Backlog, To do,
 Verify, Done — holding tasks; a task has a title, a Markdown description, labels
-and a running log of short updates.
+and a running log of short updates written in inline Markdown.
 
 ## Finding things
 
@@ -100,7 +100,11 @@ and a running log of short updates.
   title to describe, no id to retype.
 - \`add_task_update\` posts a line on the task's log. Use it for progress,
   blockers and decisions the user will want to read later; keep it to a sentence
-  or two.
+  or two. Updates take inline Markdown only — \`**bold**\`, \`*italic*\`,
+  \`\`code\`\`, \`~~strike~~\`, \`==highlight==\` and links. Headings and lists
+  do not render there; put anything that size in the description. The update is
+  signed with your API key's name and marked as an agent's, so say what you did
+  rather than who you are.
 - \`delete_column\` and \`delete_task\` move things to the board's trash rather
   than removing them; \`restore_column\` and \`restore_task\` undo either, and the
   user can do the same from **Show trashed** on the board. The trash empties

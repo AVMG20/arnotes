@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { tagChipClass } from '~/utils/tagColors'
+import { expandTagToken, type TagRequirement } from '#shared/utils/tags'
 
 const { activeNoteId, activeTag, searchQuery, allTags, searchNotes, createNote } = useNotes()
 const { searchBoards, allTasks } = useProjects()
@@ -9,9 +10,36 @@ const { searchBoards, allTasks } = useProjects()
 const open = useSearchModal()
 const query = ref('')
 const highlighted = ref(0)
-const selectedTags = ref<string[]>([])
+
+// ─── Scope: everything, notes only, tasks only ───────────────
+
+// Remembered, because which half of the workspace someone searches is a habit
+// rather than a per-search decision.
+type Scope = 'all' | 'notes' | 'tasks'
+
+const scope = useCookie<Scope>('search-scope', { default: () => 'all' })
+
+const scopes: { value: Scope, label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'notes', label: 'Notes' },
+  { value: 'tasks', label: 'Tasks' }
+]
+
+const wantsNotes = computed(() => scope.value !== 'tasks')
+const wantsTasks = computed(() => scope.value !== 'notes')
 
 // ─── Query parsing: "#tag1 #tag2 search text" ────────────────
+
+// Every tag the box knows about: the notes' own tags, plus what a board offers
+// a `#tag` to match on — its labels and the words of its name.
+const knownTags = computed(() => {
+  const tags = new Set(allTags.value.map(t => t.tag))
+  for (const task of allTasks.value) {
+    for (const label of task.tags) tags.add(label.toLowerCase())
+    for (const word of task.projectName.toLowerCase().split(/[^\w]+/)) if (word) tags.add(word)
+  }
+  return [...tags]
+})
 
 const parsed = computed(() => {
   const tokens = query.value.split(/\s+/).filter(Boolean)
@@ -22,24 +50,35 @@ const parsed = computed(() => {
   return { tags, text, trailingToken: trailing?.[1] ?? null }
 })
 
-// Tags from the query merge with the manually toggled chips.
-const effectiveTags = computed(() => [...new Set([...selectedTags.value, ...parsed.value.tags])])
+// A half-typed tag filters by everything it could still become, so `#sani`
+// searches `#sanitairkamer` without anyone having to finish the word.
+const tagFilters = computed<TagRequirement[]>(() =>
+  parsed.value.tags.map(token => expandTagToken(token, knownTags.value))
+)
+
+// Whichever tags are actually doing the filtering, flattened — the result rows
+// use this to pick out the tag that matched.
+const matchedTags = computed(() => new Set(tagFilters.value.flat()))
 
 const hasQuery = computed(() => parsed.value.text.trim().length > 0)
-const isFiltered = computed(() => hasQuery.value || effectiveTags.value.length > 0)
+const isFiltered = computed(() => hasQuery.value || tagFilters.value.length > 0)
 
 // Board hits ride along with note hits — one modal, whole workspace.
-const noteResults = computed(() => searchNotes(parsed.value.text, effectiveTags.value).slice(0, 8))
-const boardResults = computed(() => hasQuery.value ? searchBoards(parsed.value.text) : { tasks: [], projects: [] })
+const noteResults = computed(() =>
+  wantsNotes.value ? searchNotes(parsed.value.text, tagFilters.value).slice(0, 8) : []
+)
+const boardResults = computed(() =>
+  wantsTasks.value ? searchBoards(parsed.value.text, tagFilters.value) : { tasks: [], projects: [] }
+)
 const recentTasks = computed(() => allTasks.value.slice(0, 3))
 
-// Autocomplete for the trailing "#par" token.
+// Autocomplete for the trailing "#par" token. It is a shortcut now rather than
+// a requirement — the partial already filters on its own.
 const tagSuggestions = computed(() => {
   const partial = parsed.value.trailingToken
   if (partial === null) return []
-  return allTags.value
-    .map(t => t.tag)
-    .filter(tag => tag.startsWith(partial.toLowerCase()) && !effectiveTags.value.includes(tag))
+  return knownTags.value
+    .filter(tag => tag.startsWith(partial.toLowerCase()) && tag !== partial.toLowerCase())
     .slice(0, 6)
 })
 
@@ -47,35 +86,18 @@ function completeTag(tag: string) {
   query.value = query.value.replace(/#([\w]*)$/, `#${tag} `)
 }
 
-// Selected tags first, then the rest in last-modified order (allTags is already sorted)
-const filterTagOptions = computed(() => {
-  const sel = selectedTags.value
-  const rest = allTags.value.map(t => t.tag).filter(t => !sel.includes(t))
-  return [...sel, ...rest]
-})
-
 watch(query, () => {
   highlighted.value = 0
 })
-watch(selectedTags, () => {
+watch(scope, () => {
   highlighted.value = 0
 })
 watch(open, (v) => {
   if (v) {
     query.value = ''
     highlighted.value = 0
-    selectedTags.value = []
   }
 })
-
-// ─── Tag filter ──────────────────────────────────────────────
-
-function toggleTag(tag: string) {
-  const idx = selectedTags.value.indexOf(tag)
-  selectedTags.value = idx >= 0
-    ? selectedTags.value.filter(t => t !== tag)
-    : [...selectedTags.value, tag]
-}
 
 // ─── Actions ─────────────────────────────────────────────────
 
@@ -231,6 +253,19 @@ function smartSnippet(html: string): string {
             class="flex-1 bg-transparent outline-none text-base text-default placeholder:text-muted"
             @keydown="onInputKeydown"
           >
+          <div class="hidden shrink-0 items-center gap-0.5 rounded-lg bg-elevated/70 p-0.5 sm:flex">
+            <button
+              v-for="option in scopes"
+              :key="option.value"
+              class="cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-colors"
+              :class="scope === option.value
+                ? 'bg-default text-default shadow-sm'
+                : 'text-muted hover:text-default'"
+              @click="scope = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
           <UKbd size="sm">
             Esc
           </UKbd>
@@ -256,44 +291,20 @@ function smartSnippet(html: string): string {
           </button>
         </div>
 
-        <!-- Tag filter chips -->
-        <div
-          v-if="filterTagOptions.length > 0"
-          class="scrollbar-hidden flex items-center gap-1.5 px-5 py-2.5 border-b border-default overflow-x-auto"
-        >
-          <UIcon
-            name="i-lucide-tag"
-            class="size-3 text-muted shrink-0 mr-0.5"
-          />
-          <button
-            v-for="tag in filterTagOptions"
-            :key="tag"
-            class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium shrink-0 transition-colors cursor-pointer"
-            :class="selectedTags.includes(tag)
-              ? 'bg-primary-500 text-white dark:bg-primary-500'
-              : 'bg-elevated text-muted hover:text-default hover:bg-elevated/80'"
-            @click="toggleTag(tag)"
-          >
-            <span class="opacity-70">#</span>{{ tag }}
-            <UIcon
-              v-if="selectedTags.includes(tag)"
-              name="i-lucide-x"
-              class="size-2.5 ml-0.5"
-            />
-          </button>
-        </div>
-
-        <!-- Empty state: recent tags + recent notes -->
+        <!-- Empty state: what was touched last, within the chosen scope -->
         <template v-if="!isFiltered">
           <div class="overflow-y-auto max-h-[34rem]">
             <!-- Recent notes (top 5) -->
-            <div class="px-5 pt-3 pb-1">
+            <div
+              v-if="wantsNotes"
+              class="px-5 pt-3 pb-1"
+            >
               <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">
                 Recent Notes
               </p>
             </div>
             <button
-              v-for="note in searchNotes('').slice(0, 5)"
+              v-for="note in wantsNotes ? searchNotes('').slice(0, 5) : []"
               :key="note.id"
               class="group flex w-full items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-elevated/70"
               @click="selectNote(note.id)"
@@ -317,7 +328,7 @@ function smartSnippet(html: string): string {
             </button>
 
             <!-- Recent tasks (top 3) -->
-            <template v-if="recentTasks.length > 0">
+            <template v-if="wantsTasks && recentTasks.length > 0">
               <div class="px-5 pt-3 pb-1">
                 <p class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">
                   Recent Tasks
@@ -423,7 +434,7 @@ function smartSnippet(html: string): string {
                     v-for="tag in note.tags.slice(0, 5)"
                     :key="tag"
                     class="text-xs transition-colors"
-                    :class="selectedTags.includes(tag)
+                    :class="matchedTags.has(tag)
                       ? 'text-primary-600 dark:text-primary-400 font-semibold'
                       : 'text-primary-500/70 dark:text-primary-500/70'"
                   >#{{ tag }}</span>
@@ -542,6 +553,7 @@ function smartSnippet(html: string): string {
           <span class="flex items-center gap-1.5"><UKbd size="sm">↑↓</UKbd> navigate</span>
           <span class="flex items-center gap-1.5"><UKbd size="sm">↵</UKbd> open</span>
           <span class="hidden items-center gap-1.5 sm:flex"><UKbd size="sm">Tab</UKbd> complete #tag</span>
+          <span class="hidden items-center gap-1.5 md:flex"><UKbd size="sm">#</UKbd> partial tags match too</span>
           <span class="hidden items-center gap-1.5 sm:flex"><UKbd size="sm">Esc</UKbd> close</span>
           <span class="ml-auto flex items-center gap-1"><UKbd size="sm">⌘</UKbd><UKbd size="sm">K</UKbd></span>
         </div>

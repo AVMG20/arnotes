@@ -2,6 +2,7 @@
 import { columnDotAttrs } from '~/utils/tagColors'
 import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
+import type { TaskComment } from '~/composables/useProjects'
 
 interface Task {
   id: string
@@ -107,6 +108,8 @@ function resetWidth() {
 
 // Declared up here because the task-switch watcher below resets them.
 const commentDraft = ref('')
+// Clicking anywhere along the composer row puts the caret in the editor.
+const composer = ref<{ focus: () => void } | null>(null)
 const tagDraft = ref('')
 const tagFocused = ref(false)
 const tagHighlight = ref(-1)
@@ -287,6 +290,23 @@ function initials(name: string | null | undefined) {
 
 const userInitials = computed(() => initials(session.value?.user?.name))
 
+// An update posted by an agent is signed with the key it came in on, not with
+// the account that owns the key — otherwise a night of agent work reads back as
+// the user's own writing.
+function isAgentUpdate(comment: TaskComment) {
+  return comment.createdVia === 'mcp' || comment.createdVia === 'ai'
+}
+
+function updateAuthor(comment: TaskComment) {
+  if (comment.createdVia === 'mcp') return comment.keyName ?? 'MCP key'
+  if (comment.createdVia === 'ai') return 'AI assistant'
+  return comment.userName ?? 'Unknown'
+}
+
+function updateSourceLabel(comment: TaskComment) {
+  return comment.createdVia === 'mcp' ? 'MCP' : 'AI'
+}
+
 async function scrollUpdatesToEnd() {
   await nextTick()
   const el = updatesEl.value
@@ -299,13 +319,6 @@ async function sendComment() {
   commentDraft.value = ''
   await addComment(props.task.id, body)
   scrollUpdatesToEnd()
-}
-
-function onCommentKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    sendComment()
-  }
 }
 
 watch(updatesOpen, (isOpen) => {
@@ -571,6 +584,13 @@ const menuItems = computed(() => [[
                 class="flex gap-2.5"
               >
                 <UAvatar
+                  v-if="isAgentUpdate(comment)"
+                  icon="i-lucide-bot"
+                  size="2xs"
+                  class="mt-0.5 shrink-0"
+                />
+                <UAvatar
+                  v-else
                   :alt="initials(comment.userName)"
                   size="2xs"
                   class="mt-0.5 shrink-0"
@@ -578,35 +598,46 @@ const menuItems = computed(() => [[
                 <div class="min-w-0 flex-1">
                   <div class="flex items-baseline gap-2">
                     <span class="truncate text-xs font-medium text-default">
-                      {{ comment.userName ?? 'Unknown' }}
+                      {{ updateAuthor(comment) }}
+                    </span>
+                    <span
+                      v-if="isAgentUpdate(comment)"
+                      class="shrink-0 rounded px-1 py-px text-[0.625rem] font-semibold uppercase tracking-wide text-muted ring-1 ring-inset ring-accented"
+                    >
+                      {{ updateSourceLabel(comment) }}
                     </span>
                     <span class="shrink-0 text-xs text-dimmed">
                       {{ relativeTime(comment.createdAt) }}
                     </span>
                   </div>
-                  <p class="whitespace-pre-wrap break-words text-sm leading-relaxed text-default">
-                    {{ comment.body }}
-                  </p>
+                  <InlineMarkdown
+                    :text="comment.body"
+                    class="text-sm leading-relaxed text-default"
+                  />
                 </div>
               </div>
             </div>
 
-            <div class="flex shrink-0 items-center gap-2 border-t border-default px-4 py-2.5">
+            <div
+              class="flex shrink-0 cursor-text items-start gap-2 border-t border-default px-4 py-2.5"
+              @click="composer?.focus()"
+            >
               <UAvatar
                 :alt="userInitials"
                 size="2xs"
-                class="shrink-0"
+                class="mt-0.5 shrink-0"
               />
-              <input
+              <UpdateComposer
+                ref="composer"
                 v-model="commentDraft"
                 placeholder="Add an update…"
-                class="min-w-0 flex-1 bg-transparent text-sm text-default outline-none placeholder:text-dimmed"
-                @keydown="onCommentKeydown"
-              >
+                @submit="sendComment"
+              />
               <UButton
                 icon="i-lucide-arrow-up"
                 size="xs"
                 color="primary"
+                class="shrink-0"
                 :disabled="!commentDraft.trim()"
                 aria-label="Add update"
                 @click="sendComment"
