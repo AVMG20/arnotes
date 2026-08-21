@@ -12,7 +12,7 @@ const html = computed(() => renderInlineMarkdown(props.text))
 
 <template>
   <div
-    class="inline-md break-words"
+    class="inline-md w-full min-w-0 break-words"
     v-html="html"
   />
 </template>

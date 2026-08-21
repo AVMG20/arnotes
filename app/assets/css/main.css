@@ -602,6 +602,11 @@ summary {
    looks like what everyone else will read. */
 
 .inline-md {
+  /* The editor styles this shares a look with cap their measure at 65ch, which
+     in a drawer the user has widened leaves the text ending mid-row. An update
+     is a log line and takes the width it is given. */
+  width: 100%;
+  max-width: 100%;
   line-height: 1.6;
 }
 

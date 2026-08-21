@@ -581,7 +581,7 @@ const menuItems = computed(() => [[
               <div
                 v-for="comment in comments"
                 :key="comment.id"
-                class="flex gap-2.5"
+                class="flex w-full gap-2.5"
               >
                 <UAvatar
                   v-if="isAgentUpdate(comment)"
@@ -595,7 +595,7 @@ const menuItems = computed(() => [[
                   size="2xs"
                   class="mt-0.5 shrink-0"
                 />
-                <div class="min-w-0 flex-1">
+                <div class="w-full min-w-0 flex-1">
                   <div class="flex items-baseline gap-2">
                     <span class="truncate text-xs font-medium text-default">
                       {{ updateAuthor(comment) }}
