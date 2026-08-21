@@ -355,10 +355,15 @@ const menuItems = computed(() => [[
 </script>
 
 <template>
+  <!-- `handle-only` with no handle rendered means nothing on the panel is a
+       drag surface: swipe-to-dismiss fired on mouse drags inside the
+       description and comment fields. Close is the X, a click outside, or
+       Escape. The left edge still resizes. -->
   <UDrawer
     v-model:open="open"
     direction="right"
     :handle="false"
+    handle-only
     :ui="{ content: 'inset-y-0 right-0 rounded-none' }"
   >
     <template #content>
