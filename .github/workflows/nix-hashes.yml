@@ -1,0 +1,121 @@
+name: nix-hashes
+
+# Recomputes the fixed-output hashes for the vendored bun dependencies and
+# commits them to nix/hashes.json. Runs whenever the dependency set might have
+# changed, so bun.lock/package.json updates never leave the flake broken.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "nix/**"
+      - "flake.lock"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  compute:
+    name: hash (${{ matrix.system }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            os: ubuntu-latest
+          - system: aarch64-linux
+            os: ubuntu-24.04-arm
+          - system: x86_64-darwin
+            os: macos-15-intel
+          - system: aarch64-darwin
+            os: macos-15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Compute node-deps hash
+        id: node
+        run: |
+          set +e
+          output=$(nix build .#node-deps-updater --no-link 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::node-deps build failed on ${{ matrix.system }}"
+            printf '%s\n' "$output" | tail -20
+            exit 0
+          fi
+          hash=$(printf '%s\n' "$output" | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
+          echo "node-deps=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Compute schema-deps hash
+        id: schema
+        run: |
+          set +e
+          output=$(nix build .#schema-deps-updater --no-link 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::schema-deps build failed on ${{ matrix.system }}"
+            printf '%s\n' "$output" | tail -20
+            exit 0
+          fi
+          hash=$(printf '%s\n' "$output" | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | tail -1 | awk '{print $2}')
+          echo "schema-deps=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Write hashes artifact
+        run: |
+          mkdir -p /tmp/artifacts
+          jq -n \
+            --arg system "${{ matrix.system }}" \
+            --arg node "${{ steps.node.outputs.node-deps }}" \
+            --arg schema "${{ steps.schema.outputs.schema-deps }}" \
+            '{ ($system): { "node-deps": $node, "schema-deps": $schema } }' > /tmp/artifacts/hashes.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-${{ matrix.system }}
+          path: /tmp/artifacts/hashes.json
+          if-no-files-found: error
+
+  update:
+    name: update hashes.json
+    needs: compute
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+          merge-multiple: true
+
+      - name: Merge hashes
+        run: |
+          if ls /tmp/artifacts/hashes.json >/dev/null 2>&1; then
+            jq -s '.[0] * ([.[1:]] | add)' nix/hashes.json /tmp/artifacts/hashes.json > /tmp/hashes.json.new
+            mv /tmp/hashes.json.new nix/hashes.json
+          fi
+
+      - name: Commit changes
+        run: |
+          if ! git diff --quiet nix/hashes.json; then
+            git config user.name "nix-hashes[bot]"
+            git config user.email "nix-hashes[bot]@users.noreply.github.com"
+            git add nix/hashes.json
+            git commit -m "chore(nix): refresh dependency hashes"
+            git push
+          else
+            echo "no hash changes"
+          fi

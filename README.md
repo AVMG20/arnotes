@@ -24,7 +24,7 @@ Arnotes is a fast, self-hosted note-taking app organized around inline tags, wit
 - Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload — on shared links too
 - Built-in MCP server so Claude Code and other AI agents can read and write your notes and run your boards, using API keys you scope yourself
 - Installable Progressive Web App
-- Docker-based self-hosting with persistent PostgreSQL and attachment storage
+- Docker- and Nix-based self-hosting with persistent PostgreSQL and attachment storage
 
 ## Quick Start
 
@@ -161,6 +161,89 @@ docker image prune -f
 
 Take a backup first. Watch startup with `docker compose logs -f app` and verify `http://localhost:3000/api/health` returns a healthy response.
 
+## Self-Host With Nix
+
+The same stack runs natively on Nix: a `flake.nix` builds the app and the schema tooling as hermetic packages, and a NixOS module turns them into the same three services Compose runs — PostgreSQL, a one-shot schema push, and the app.
+
+Requirements: [Nix with flakes](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix.html).
+
+### NixOS module
+
+The module manages everything itself. By default it creates a dedicated `arnotes` PostgreSQL role and database on the system PostgreSQL, generates a stable auth secret into `/var/lib/arnotes` on first start, and runs the Drizzle schema push before launching the app.
+
+```nix
+# flake.nix of your system
+{
+  inputs.arnotes.url = "github:AVMG20/arnotes";
+  outputs = { self, nixpkgs, arnotes, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      modules = [
+        arnotes.nixosModules.default
+        {
+          services.arnotes = {
+            enable = true;
+            betterAuth.url = "https://notes.example.com";
+            openFirewall = true;
+            # allowSignUp defaults to true; set to false once the owner account exists
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+Build the configuration and apply it with `nixos-rebuild switch --flake .#host`, then open `http://localhost:3000`. Attachments and the generated secret live under `/var/lib/arnotes`; back that directory up alongside PostgreSQL (`pg_dump`).
+
+Key options (`services.arnotes.*`):
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `port` / `host` | `3000` / `0.0.0.0` | Listen address |
+| `stateDir` | `/var/lib/arnotes` | Attachments and generated auth secret |
+| `database.createLocally` | `true` | Manage a local PostgreSQL role and database |
+| `database.url` | derived | Use an external database instead of the local one |
+| `betterAuth.url` | `http://localhost:3000` | Public origin used by authentication |
+| `betterAuth.secretFile` | generated | Read a stable 32+ char secret from a file |
+| `allowSignUp` | `true` | Allow new email/password accounts |
+| `discord.enable` / `github.enable` | `false` | Enable OAuth sign-in; set `clientId`/`clientSecret` |
+| `environment` | `{}` | Extra environment variables |
+| `openFirewall` | `false` | Open the app port in the firewall |
+
+### Packages
+
+Without a NixOS system, build and run the packages directly:
+
+```bash
+nix build .#default   # the app  (result/bin/arnotes)
+nix build .#schema    # schema tooling (result/bin/arnotes-db-push)
+```
+
+Run the app against a PostgreSQL of your choice:
+
+```bash
+DATABASE_URL=postgresql://arnotes:arnotes@localhost:5432/arnotes \
+BETTER_AUTH_URL=http://localhost:3000 \
+BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters \
+./result/bin/arnotes
+```
+
+### Development shell
+
+`nix develop` provides bun, node, PostgreSQL, and two helpers that replace `docker compose up -d postgres`:
+
+```bash
+nix develop
+db-start            # init and start a local PostgreSQL on port 5432
+bun install
+bun run db:push     # push server/db/schema.ts to PostgreSQL
+bun run dev         # run the dev server with hot reload
+```
+
+`db-stop` stops the local PostgreSQL. Its data lives under `.nix-data/` in the repo.
+
+> Building the packages runs `bun install` against the npm registry inside a fixed-output derivation, so builds need network access on first run. The vendored `node_modules` hashes are recorded in `nix/packages.nix` for `x86_64-linux`; other platforms report their hash on the first build — paste it back in.
+
 ## Connect An AI Agent
 
 Arnotes ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Claude Desktop, and any other MCP client can search, read, and write your notes, and run your kanban boards.
@@ -221,10 +304,10 @@ The setup guide also offers a copyable skill file that teaches an agent the conv
 
 ## Development
 
-Requirements:
+Requirements, either path:
 
-- [Bun 1.3.10 or newer](https://bun.sh/)
-- Docker with Compose
+- [Bun 1.3.10 or newer](https://bun.sh/) and Docker with Compose
+- Or [Nix with flakes](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix.html) and run `nix develop` instead of the steps below
 
 Install dependencies and prepare local configuration:
 
@@ -242,6 +325,8 @@ docker compose up -d postgres
 bun run db:push
 bun run dev
 ```
+
+With Nix, `docker compose up -d postgres` becomes `db-start` inside `nix develop`; the rest is identical.
 
 Open [http://localhost:3000](http://localhost:3000). Run `bun run db:push` again after changing `server/db/schema.ts`.
 

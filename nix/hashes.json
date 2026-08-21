@@ -1,0 +1,8 @@
+{
+  "node-deps": {
+    "x86_64-linux": "sha256-2WYCY+Fj38c7qoxsJqYP6RynBVl0EF142m2pftOxXD4="
+  },
+  "schema-deps": {
+    "x86_64-linux": "sha256-QnScpgZuPpW2n3TlpVnZbW8x/TkfKlqNqVHrYeD5lKk="
+  }
+}
