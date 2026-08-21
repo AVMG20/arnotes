@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ProjectTask } from '~/composables/useProjects'
 import { tagChipClass } from '~/utils/tagColors'
+import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
 
 definePageMeta({ layout: 'app' })
 
@@ -13,6 +14,7 @@ const {
   activeProject,
   loadBoard,
   board,
+  boardColumns,
   renameProject,
   updateProjectSharing,
   deleteProject,
@@ -98,7 +100,23 @@ const projectMenu = computed(() => [[
   }
 ]])
 
+// The open board knows its own columns, so the count is read from them live
+// rather than from the shape cached with the project list.
 const taskCount = computed(() => board.value?.tasks.length ?? 0)
+
+const taskCountText = computed(() => {
+  const terminal = new Set(terminalColumnIds(boardColumns.value))
+  const tasks = board.value?.tasks ?? []
+  const open = tasks.filter(task => !terminal.has(task.columnId)).length
+  return taskCountLabel(open, tasks.length, terminal.size > 0)
+})
+
+const taskCountTitle = computed(() => {
+  const terminal = new Set(terminalColumnIds(boardColumns.value))
+  const tasks = board.value?.tasks ?? []
+  if (!terminal.size) return `${tasks.length} in total`
+  return `${tasks.filter(task => !terminal.has(task.columnId)).length} open of ${tasks.length}`
+})
 
 // ─── Sharing ───────────────────────────────────────────────
 
@@ -149,8 +167,11 @@ useSeoMeta({
         {{ activeProject?.name ?? 'Board' }}
       </button>
 
-      <span class="shrink-0 text-xs text-dimmed">
-        {{ taskCount }} {{ taskCount === 1 ? 'task' : 'tasks' }}
+      <span
+        class="shrink-0 text-xs text-dimmed"
+        :title="taskCountTitle"
+      >
+        {{ taskCountText }} {{ taskCount === 1 ? 'task' : 'tasks' }}
       </span>
 
       <div class="ml-auto flex shrink-0 items-center gap-1">

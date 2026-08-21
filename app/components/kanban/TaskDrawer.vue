@@ -21,6 +21,7 @@ const { session } = useAuth()
 const {
   activeProject,
   boardColumns,
+  boardTagCounts,
   updateTask,
   moveTask,
   deleteTask,
@@ -103,8 +104,11 @@ function resetWidth() {
   storedWidth.value = null
 }
 
-// Declared up here because the task-switch watcher below resets it.
+// Declared up here because the task-switch watcher below resets them.
 const commentDraft = ref('')
+const tagDraft = ref('')
+const tagFocused = ref(false)
+const tagHighlight = ref(-1)
 
 // ─── Title (auto-save) ─────────────────────────────────────
 
@@ -173,6 +177,8 @@ watch(() => props.task?.id, (id, previousId) => {
   })
 
   commentDraft.value = ''
+  tagDraft.value = ''
+  tagHighlight.value = -1
   clearComments()
   loadComments(id).then(scrollUpdatesToEnd)
 }, { immediate: true })
@@ -201,13 +207,38 @@ onBeforeUnmount(() => {
 
 // ─── Labels ────────────────────────────────────────────────
 
-const tagDraft = ref('')
+// A label is only worth anything when it is the same label the rest of the board
+// carries, and typing one from memory is how a board ends up holding "bug",
+// "bugs" and "Bug" in three different colours. Focusing the field offers what is
+// already in use; typing narrows it.
+const tagSuggestions = computed(() => {
+  const partial = tagDraft.value.trim().toLowerCase()
+  const own = props.task?.tags ?? []
+  return boardTagCounts.value
+    .map(([tag]) => tag)
+    .filter(tag => !own.includes(tag) && (!partial || tag.includes(partial)))
+    .slice(0, 6)
+})
+
+const showTagSuggestions = computed(() => tagFocused.value && tagSuggestions.value.length > 0)
+
+// -1 is "nothing picked": an open list under an empty field is a menu to look
+// at, not an answer waiting on Enter. Typing narrows it to a best match, and
+// arrowing always picks.
+watch(tagDraft, (draft) => {
+  tagHighlight.value = draft.trim() ? 0 : -1
+})
+
+function addTagValue(value: string) {
+  const tag = value.trim().toLowerCase()
+  tagDraft.value = ''
+  tagHighlight.value = -1
+  if (!tag || !props.task || props.task.tags.includes(tag)) return
+  updateTask(props.task.id, { tags: [...props.task.tags, tag] })
+}
 
 function addTag() {
-  const raw = tagDraft.value.trim().toLowerCase()
-  tagDraft.value = ''
-  if (!raw || !props.task || props.task.tags.includes(raw)) return
-  updateTask(props.task.id, { tags: [...props.task.tags, raw] })
+  addTagValue(tagDraft.value)
 }
 
 function removeTag(tag: string) {
@@ -216,12 +247,31 @@ function removeTag(tag: string) {
 }
 
 function onTagKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' || e.key === ',') {
+  const suggestions = showTagSuggestions.value ? tagSuggestions.value : []
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!suggestions.length) return
     e.preventDefault()
-    addTag()
+    const step = e.key === 'ArrowDown' ? 1 : -1
+    tagHighlight.value = (Math.max(tagHighlight.value, 0) + step + suggestions.length) % suggestions.length
+  } else if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault()
+    // The picked suggestion is what the field is offering, so that is what Enter
+    // takes; with nothing picked it is the label being typed.
+    addTagValue(suggestions[tagHighlight.value] ?? tagDraft.value)
+  } else if (e.key === 'Escape') {
+    if (!suggestions.length) return
+    e.preventDefault()
+    e.stopPropagation()
+    tagFocused.value = false
   } else if (e.key === 'Backspace' && !tagDraft.value && props.task?.tags.length) {
     removeTag(props.task.tags[props.task.tags.length - 1]!)
   }
+}
+
+function onTagBlur() {
+  tagFocused.value = false
+  addTag()
 }
 
 // ─── Updates (comments) ────────────────────────────────────
@@ -424,13 +474,39 @@ const menuItems = computed(() => [[
                   class="size-3 opacity-40 transition-opacity group-hover:opacity-100"
                 />
               </span>
-              <input
-                v-model="tagDraft"
-                :placeholder="shownTask.tags.length ? 'Add label…' : 'Add a label…'"
-                class="min-w-24 flex-1 bg-transparent py-0.5 text-xs text-default outline-none placeholder:text-dimmed"
-                @keydown="onTagKeydown"
-                @blur="addTag"
-              >
+              <div class="relative min-w-24 flex-1">
+                <input
+                  v-model="tagDraft"
+                  :placeholder="shownTask.tags.length ? 'Add label…' : 'Add a label…'"
+                  class="w-full bg-transparent py-0.5 text-xs text-default outline-none placeholder:text-dimmed"
+                  @keydown="onTagKeydown"
+                  @focus="tagFocused = true"
+                  @input="tagFocused = true"
+                  @blur="onTagBlur"
+                >
+
+                <!-- The board's own labels. `mousedown.prevent` keeps the field
+                     focused so picking one is not read as blurring away from it. -->
+                <div
+                  v-if="showTagSuggestions"
+                  class="absolute left-0 top-full z-20 mt-1 w-44 rounded-lg border border-default bg-default p-1 shadow-lg"
+                >
+                  <button
+                    v-for="(tag, index) in tagSuggestions"
+                    :key="tag"
+                    class="flex w-full items-center rounded-md px-1 py-1 text-left transition-colors"
+                    :class="index === tagHighlight ? 'bg-elevated' : 'hover:bg-elevated/60'"
+                    @mousedown.prevent="addTagValue(tag)"
+                  >
+                    <span
+                      class="min-w-0 truncate rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+                      :class="tagChipClass(tag)"
+                    >
+                      {{ tag }}
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -447,7 +523,7 @@ const menuItems = computed(() => [[
         <!-- Updates: a short running log of what happened -->
         <section
           class="flex shrink-0 flex-col border-t border-default"
-          :class="updatesOpen ? 'h-72' : ''"
+          :class="updatesOpen ? 'max-h-72' : ''"
         >
           <button
             class="flex shrink-0 items-center gap-2 px-5 py-2.5 text-left transition-colors hover:bg-elevated/50"

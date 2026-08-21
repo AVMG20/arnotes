@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { tagChipClass } from '~/utils/tagColors'
+import { formatDateMention } from '~/composables/useDateMention'
+import { checklistProgress, taskDueDate } from '#shared/utils/board'
 
 const props = defineProps<{
   task: {
@@ -28,13 +30,33 @@ const snippet = computed(() => {
     .trim()
     .slice(0, 160)
 })
+
+// Both of these are read out of the description rather than stored: a checklist
+// is the editor's task list, a due date is an `@date` mention. Nothing to fill
+// in, and nothing that can fall out of step with what the task actually says.
+const checklist = computed(() => checklistProgress(props.task.description))
+const checklistDone = computed(() => !!checklist.value && checklist.value.done === checklist.value.total)
+
+const due = computed(() => taskDueDate(props.task.description))
+const dueLabel = computed(() => due.value === null ? '' : formatDateMention(new Date(due.value).toISOString()))
+const overdue = computed(() => due.value !== null && due.value < Date.now())
+
+// One row of small print under the card, or none at all.
+const hasMeta = computed(() =>
+  props.task.tags.length > 0 || !!checklist.value || due.value !== null || !!props.commentCount
+)
 </script>
 
 <template>
   <div
     :data-id="task.id"
-    class="group cursor-pointer rounded-lg border border-default bg-default px-3 py-2.5 transition-all hover:border-primary/40 hover:shadow-sm"
+    :data-card-id="task.id"
+    role="button"
+    tabindex="0"
+    class="group cursor-pointer rounded-lg border border-default bg-default px-3 py-2.5 transition-all hover:border-primary/40 hover:shadow-sm focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
     @click="$emit('open', task.id)"
+    @keydown.enter.prevent="$emit('open', task.id)"
+    @keydown.space.prevent="$emit('open', task.id)"
   >
     <p class="line-clamp-2 text-sm font-medium leading-snug text-default">
       {{ task.title }}
@@ -47,8 +69,10 @@ const snippet = computed(() => {
       {{ snippet }}
     </p>
 
+    <!-- Labels carry the colour on a card; everything else stays small print so
+         the row reads as one quiet line however much of it is filled in. -->
     <div
-      v-if="task.tags.length || commentCount"
+      v-if="hasMeta"
       class="mt-2 flex items-center gap-1.5"
     >
       <span
@@ -66,15 +90,41 @@ const snippet = computed(() => {
         +{{ task.tags.length - 3 }}
       </span>
 
-      <span
-        v-if="commentCount"
-        class="ml-auto flex shrink-0 items-center gap-1 text-[0.6875rem] text-dimmed"
-      >
-        <UIcon
-          name="i-lucide-message-square"
-          class="size-3"
-        />
-        {{ commentCount }}
+      <span class="ml-auto flex shrink-0 items-center gap-2 text-[0.6875rem] text-dimmed">
+        <span
+          v-if="due !== null"
+          class="flex items-center gap-1"
+          :class="overdue ? 'font-medium text-error' : ''"
+        >
+          <UIcon
+            name="i-lucide-calendar"
+            class="size-3"
+          />
+          {{ dueLabel }}
+        </span>
+
+        <span
+          v-if="checklist"
+          class="flex items-center gap-1 tabular-nums"
+          :class="checklistDone ? 'text-success' : ''"
+        >
+          <UIcon
+            name="i-lucide-list-checks"
+            class="size-3"
+          />
+          {{ checklist.done }}/{{ checklist.total }}
+        </span>
+
+        <span
+          v-if="commentCount"
+          class="flex items-center gap-1"
+        >
+          <UIcon
+            name="i-lucide-message-square"
+            class="size-3"
+          />
+          {{ commentCount }}
+        </span>
       </span>
     </div>
   </div>

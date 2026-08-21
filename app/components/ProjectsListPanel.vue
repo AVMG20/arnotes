@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { relativeTime } from '~/composables/useRelativeTime'
+import type { Project } from '~/composables/useProjects'
+import { taskCountLabel } from '#shared/utils/board'
 
 const { ready, projects, allTasks, deleteProject, renameProject } = useProjects()
 const route = useRoute()
@@ -15,11 +17,34 @@ function newProject() {
   navigateTo('/projects?new=1')
 }
 
+// "47 tasks" on a board six months old says nothing — almost all of them are
+// finished. Counting what is still short of the board's finishing columns says
+// how much is left, and the total is still there behind it.
 const taskCounts = computed(() => {
-  const counts = new Map<string, number>()
-  for (const task of allTasks.value) counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1)
+  const terminal = new Map(projects.value.map(p => [p.id, new Set(p.terminalColumnIds ?? [])]))
+  const counts = new Map<string, { open: number, total: number }>()
+  for (const task of allTasks.value) {
+    const entry = counts.get(task.projectId) ?? { open: 0, total: 0 }
+    entry.total++
+    if (!terminal.get(task.projectId)?.has(task.columnId)) entry.open++
+    counts.set(task.projectId, entry)
+  }
   return counts
 })
+
+function countsFor(project: Project) {
+  return taskCounts.value.get(project.id) ?? { open: 0, total: 0 }
+}
+
+function countLabel(project: Project) {
+  const { open, total } = countsFor(project)
+  return taskCountLabel(open, total, (project.terminalColumnIds?.length ?? 0) > 0)
+}
+
+function countTitle(project: Project) {
+  const { open, total } = countsFor(project)
+  return project.terminalColumnIds?.length ? `${open} open of ${total}` : `${total} in total`
+}
 
 // ─── Inline rename / delete ────────────────────────────────
 
@@ -121,8 +146,11 @@ function menuItems(project: { id: string, name: string }) {
           <p class="truncate text-sm font-medium leading-snug text-default">
             {{ project.name }}
           </p>
-          <p class="truncate text-xs text-muted">
-            {{ relativeTime(project.updatedAt) }} · {{ taskCounts.get(project.id) ?? 0 }} {{ (taskCounts.get(project.id) ?? 0) === 1 ? 'task' : 'tasks' }}
+          <p
+            class="truncate text-xs text-muted"
+            :title="countTitle(project)"
+          >
+            {{ relativeTime(project.updatedAt) }} · {{ countLabel(project) }} {{ countsFor(project).total === 1 ? 'task' : 'tasks' }}
           </p>
         </div>
         <!-- The menu keeps its slot even when invisible, so rows never jump on hover. -->

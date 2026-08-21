@@ -9,6 +9,7 @@ const emit = defineEmits<{ openTask: [taskId: string] }>()
 const {
   board,
   boardColumns,
+  columnTasks,
   visibleColumnTasks,
   commentCount,
   activeTags,
@@ -21,6 +22,16 @@ const {
 } = useProjects()
 
 // ─── Drag & drop ────────────────────────────────────────────
+
+// A finger on a card means "scroll this column" far more often than it means
+// "pick this card up", and without a hold the board eats every swipe. A short
+// press before the drag arms gives touch its scrolling back; a mouse is
+// unambiguous and keeps dragging on contact.
+const TOUCH_HOLD = {
+  delay: 160,
+  delayOnTouchOnly: true,
+  touchStartThreshold: 6
+} as const
 
 const boardEl = useTemplateRef<HTMLDivElement>('boardEl')
 const listEls = new Map<string, HTMLElement>()
@@ -43,12 +54,31 @@ function applyLocalMove(taskId: string, columnId: string, beforeId: string | nul
   const siblings = tasks
     .filter(t => t.columnId === columnId && t.id !== taskId)
     .sort((a, b) => a.position - b.position)
-  const before = beforeId ? siblings.find(t => t.id === beforeId)?.position ?? null : null
-  const after = afterId ? siblings.find(t => t.id === afterId)?.position ?? null : null
+
+  // Mirrors positionBetween on the server: the card named above the drop is the
+  // anchor and the bound below it comes from the whole column, not from the pair
+  // the DOM reported. A label filter or a collapsed column leaves cards out of
+  // that DOM, and splitting the reported pair would compute a slot a hidden card
+  // is already sitting in.
+  const beforeIdx = beforeId ? siblings.findIndex(t => t.id === beforeId) : -1
+  const afterIdx = afterId ? siblings.findIndex(t => t.id === afterId) : -1
+
+  let before: number | null = null
+  let after: number | null = null
+  if (beforeIdx >= 0) {
+    before = siblings[beforeIdx]!.position
+    after = siblings[beforeIdx + 1]?.position ?? null
+  } else if (afterIdx >= 0) {
+    before = siblings[afterIdx - 1]?.position ?? null
+    after = siblings[afterIdx]!.position
+  }
 
   let position: number
-  if (before === null && after === null) position = (siblings.at(-1)?.position ?? -1000) + 1000
-  else if (before === null) position = (after as number) - 1000
+  if (before === null && after === null) {
+    position = afterId && !beforeId
+      ? (siblings[0]?.position ?? 1000) - 1000
+      : (siblings.at(-1)?.position ?? -1000) + 1000
+  } else if (before === null) position = (after as number) - 1000
   else if (after === null) position = before + 1000
   else position = Math.floor((before + after) / 2)
 
@@ -130,6 +160,7 @@ watch(columnSignature, async () => {
       animation: 150,
       handle: '.kanban-column-handle',
       filter: '.kanban-add-column',
+      ...TOUCH_HOLD,
       onEnd: handleColumnDrop
     })
   }
@@ -142,6 +173,7 @@ watch(columnSignature, async () => {
       draggable: '.kanban-card-wrap',
       animation: 150,
       ghostClass: 'kanban-ghost',
+      ...TOUCH_HOLD,
       onEnd: handleDrop
     }))
   }
@@ -170,12 +202,20 @@ function focusIn<T extends HTMLElement>(selector: string, select = false) {
 }
 
 async function startCompose(columnId: string) {
+  // A new card joins the end of the column, which on a folded one is behind the
+  // fold — so writing in a column opens the whole of it. Adding to a column is
+  // as good a sign as any that it is the one being worked in.
+  expandColumn(columnId)
   composingColumnId.value = columnId
   composingTitle.value = ''
   await nextTick()
   focusIn<HTMLTextAreaElement>('[data-composer]')
 }
 
+// An empty composer never becomes a card: a title is the whole of a task, so
+// with nothing typed there is nothing to keep. Anything typed is committed,
+// including on the way out — clicking away from a written card should not throw
+// the writing away.
 async function submitTask(columnId: string) {
   const title = composingTitle.value.trim()
   composingTitle.value = ''
@@ -187,6 +227,13 @@ async function submitTask(columnId: string) {
 // new card re-renders the list and blurs the textarea, so the blur handler has
 // to know a submit is in flight and leave the composer alone.
 let submitting = false
+
+function closeComposer(columnId: string) {
+  // Blur fires after the click that caused it, so by now another column's
+  // composer may already have opened. Closing then would shut the one that has
+  // just taken this one's place.
+  if (composingColumnId.value === columnId) composingColumnId.value = null
+}
 
 async function onComposerKeydown(e: KeyboardEvent, columnId: string) {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -200,15 +247,17 @@ async function onComposerKeydown(e: KeyboardEvent, columnId: string) {
       submitting = false
     }
   } else if (e.key === 'Escape') {
+    // Escape is the way out that keeps nothing, so the draft is dropped before
+    // the blur that follows can commit it.
     composingTitle.value = ''
-    composingColumnId.value = null
+    closeComposer(columnId)
   }
 }
 
 async function onComposerBlur(columnId: string) {
   if (submitting) return
   await submitTask(columnId)
-  composingColumnId.value = null
+  closeComposer(columnId)
 }
 
 // ─── Column rename (inline) / delete / add ──────────────────
@@ -231,6 +280,28 @@ async function commitRename(column: ProjectColumn) {
 }
 
 const deletingColumn = ref<ProjectColumn | null>(null)
+
+// A column normally hands its tasks to a neighbour, but the last column on a
+// board has no neighbour to hand them to and takes them with it. Boards have no
+// trash, so that case has to say so instead of promising a move that cannot
+// happen.
+const deleteColumnPrompt = computed(() => {
+  const column = deletingColumn.value
+  if (!column) return null
+  if (boardColumns.value.length > 1) {
+    return {
+      description: 'Its tasks move to the previous column. A first column\'s tasks move to the next one.',
+      confirm: 'Delete column'
+    }
+  }
+  const count = columnTasks(column.id).length
+  return {
+    description: count
+      ? `This is the board's only column, so there is nowhere for its ${count} ${count === 1 ? 'task' : 'tasks'} to go — they are deleted with it, along with their updates. This cannot be undone.`
+      : 'This is the board\'s only column. Deleting it leaves an empty board.',
+    confirm: count ? `Delete column and ${count} ${count === 1 ? 'task' : 'tasks'}` : 'Delete column'
+  }
+})
 
 async function confirmDeleteColumn() {
   const column = deletingColumn.value
@@ -283,6 +354,130 @@ const tasksByColumn = computed(() => {
 function tasksOf(columnId: string): ProjectTask[] {
   return tasksByColumn.value.get(columnId) ?? []
 }
+
+// ─── Long columns ───────────────────────────────────────────
+
+// A column that has been collecting finished work for months is a long stretch
+// of cards nobody scrolls to, rendered on every board load. Past this many, the
+// tail folds into one line that opens it. Column order is untouched — this is
+// only how much of the column is on screen.
+const COLLAPSE_AFTER = 20
+
+const expandedColumns = ref(new Set<string>())
+
+// Opening one board and then another should not carry the first one's expanded
+// columns over, and neither should filtering down to a handful of cards.
+watch([() => props.projectId, activeTags], () => {
+  expandedColumns.value = new Set()
+})
+
+function isCollapsed(columnId: string): boolean {
+  return tasksOf(columnId).length > COLLAPSE_AFTER && !expandedColumns.value.has(columnId)
+}
+
+function visibleTasksOf(columnId: string): ProjectTask[] {
+  const tasks = tasksOf(columnId)
+  return isCollapsed(columnId) ? tasks.slice(0, COLLAPSE_AFTER) : tasks
+}
+
+function foldedCount(columnId: string): number {
+  return isCollapsed(columnId) ? tasksOf(columnId).length - COLLAPSE_AFTER : 0
+}
+
+function expandColumn(columnId: string) {
+  expandedColumns.value = new Set(expandedColumns.value).add(columnId)
+}
+
+// ─── Keyboard ───────────────────────────────────────────────
+
+// Cards are focusable, so the board can be walked without a mouse: arrows move
+// between cards, Enter opens one (the card handles that itself) and `n` starts
+// a card in the column being looked at.
+
+function cardsIn(columnEl: Element): HTMLElement[] {
+  return [...columnEl.querySelectorAll<HTMLElement>('[data-card-id]')]
+}
+
+function focusedCard(): HTMLElement | null {
+  const el = document.activeElement
+  return el instanceof HTMLElement && el.dataset.cardId ? el : null
+}
+
+function columnEls(): HTMLElement[] {
+  return boardEl.value ? [...boardEl.value.querySelectorAll<HTMLElement>('.kanban-column')] : []
+}
+
+function moveFocusWithinColumn(card: HTMLElement, step: number) {
+  const columnEl = card.closest('.kanban-column')
+  if (!columnEl) return
+  const cards = cardsIn(columnEl)
+  cards[Math.min(Math.max(cards.indexOf(card) + step, 0), cards.length - 1)]?.focus()
+}
+
+function moveFocusAcrossColumns(card: HTMLElement | null, step: number) {
+  const columns = columnEls()
+  if (!columns.length) return
+
+  const columnEl = card?.closest('.kanban-column')
+  const from = columnEl ? columns.indexOf(columnEl as HTMLElement) : -1
+  const row = columnEl && card ? cardsIn(columnEl).indexOf(card) : 0
+
+  // Skip past columns with nothing to land on rather than stopping dead on them.
+  for (let i = from + step; i >= 0 && i < columns.length; i += step) {
+    const cards = cardsIn(columns[i]!)
+    if (cards.length) {
+      cards[Math.min(row, cards.length - 1)]?.focus()
+      return
+    }
+  }
+}
+
+function onBoardKeydown(e: KeyboardEvent) {
+  if (!boardEl.value || e.metaKey || e.ctrlKey || e.altKey) return
+
+  // Anything being typed into owns its own keys, and an open panel or menu is
+  // in front of the board rather than part of it.
+  const target = e.target as HTMLElement | null
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+  if (document.querySelector('[role="dialog"], [role="menu"]')) return
+
+  const card = focusedCard()
+
+  switch (e.key) {
+    case 'ArrowDown':
+    case 'ArrowUp': {
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      if (card) moveFocusWithinColumn(card, step)
+      else if (step === 1) moveFocusAcrossColumns(null, 1)
+      else return
+      e.preventDefault()
+      break
+    }
+    case 'ArrowRight':
+    case 'ArrowLeft':
+      moveFocusAcrossColumns(card, e.key === 'ArrowRight' ? 1 : -1)
+      e.preventDefault()
+      break
+    case 'Escape':
+      if (!card) return
+      card.blur()
+      e.preventDefault()
+      break
+    case 'n':
+    case 'N': {
+      // The column being looked at, or the first one when nothing is focused.
+      const columnId = card?.closest<HTMLElement>('.kanban-column')?.dataset.columnId
+        ?? boardColumns.value[0]?.id
+      if (!columnId) return
+      e.preventDefault()
+      startCompose(columnId)
+      break
+    }
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onBoardKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onBoardKeydown))
 </script>
 
 <template>
@@ -358,7 +553,7 @@ function tasksOf(columnId: string): ProjectTask[] {
         class="flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2 scrollbar-hidden"
       >
         <div
-          v-for="task in tasksOf(column.id)"
+          v-for="task in visibleTasksOf(column.id)"
           :key="task.id"
           class="kanban-card-wrap"
           :data-id="task.id"
@@ -369,6 +564,15 @@ function tasksOf(columnId: string): ProjectTask[] {
             @open="emit('openTask', $event)"
           />
         </div>
+
+        <!-- The tail of a long column, one line instead of a hundred cards. -->
+        <button
+          v-if="foldedCount(column.id)"
+          class="rounded-lg border border-dashed border-default px-2 py-1.5 text-xs text-muted transition-colors hover:border-primary/50 hover:text-default"
+          @click="expandColumn(column.id)"
+        >
+          +{{ foldedCount(column.id) }} older
+        </button>
 
         <p
           v-if="isFiltering && tasksOf(column.id).length === 0"
@@ -432,7 +636,7 @@ function tasksOf(columnId: string): ProjectTask[] {
     <UModal
       :open="deletingColumn !== null"
       title="Delete column?"
-      description="Its tasks move to the previous column. A first column's tasks move to the next one."
+      :description="deleteColumnPrompt?.description"
       :ui="{ footer: 'justify-end' }"
       @update:open="(v: boolean) => { if (!v) deletingColumn = null }"
     >
@@ -444,7 +648,7 @@ function tasksOf(columnId: string): ProjectTask[] {
           @click="deletingColumn = null"
         />
         <UButton
-          label="Delete column"
+          :label="deleteColumnPrompt?.confirm ?? 'Delete column'"
           color="error"
           @click="confirmDeleteColumn"
         />

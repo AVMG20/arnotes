@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { format } from 'date-fns'
 import { columnDotClass, tagChipClass } from '~/utils/tagColors'
 import { relativeTime } from '~/composables/useRelativeTime'
+import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
 
 // A shared board: the columns and the cards on them, and nothing else. No
 // sidebar, no editing, no task updates — a reader gets the state of the work,
@@ -89,6 +90,15 @@ function tasksOf(columnId: string): PublicTask[] {
 
 const taskCount = computed(() => board.value?.tasks.length ?? 0)
 
+// A shared board reads the same as the one behind the login: how much is left,
+// with the total behind it.
+const taskCountText = computed(() => {
+  const terminal = new Set(terminalColumnIds(columns.value))
+  const tasks = board.value?.tasks ?? []
+  const open = tasks.filter(task => !terminal.has(task.columnId)).length
+  return taskCountLabel(open, tasks.length, terminal.size > 0)
+})
+
 // ─── Read-only task detail ─────────────────────────────────
 
 const openTaskId = ref<string | null>(null)
@@ -134,7 +144,7 @@ const shownTaskColumn = computed(() =>
           {{ board.project.name }}
         </h1>
         <span class="shrink-0 text-xs text-dimmed">
-          {{ taskCount }} {{ taskCount === 1 ? 'task' : 'tasks' }}
+          {{ taskCountText }} {{ taskCount === 1 ? 'task' : 'tasks' }}
         </span>
       </template>
 
