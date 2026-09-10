@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { AppMode } from '~/composables/useSidebar'
+
 const emit = defineEmits<{ close: [] }>()
 const { activeNoteId, createNote } = useNotes()
 const searchOpen = useSearchModal()
@@ -49,20 +51,36 @@ async function newProject() {
   navigateTo('/projects?new=1')
 }
 
+// Archive has nothing to create — you talk to it instead, so it gets no button.
+const createAction = computed(() => {
+  if (appMode.value === 'projects') {
+    return { icon: 'i-lucide-kanban', label: 'New project', run: newProject }
+  }
+  if (appMode.value === 'notes') {
+    return { icon: 'i-lucide-square-pen', label: 'New note', run: newNote }
+  }
+  return null
+})
+
 const route = useRoute()
 
 // Direct navigation (search result, URL) syncs the toggle with the real view.
 watch(() => route.path, (path) => {
   if (path.startsWith('/projects')) appMode.value = 'projects'
+  else if (path.startsWith('/archive')) appMode.value = 'archive'
   else if (path.startsWith('/note')) appMode.value = 'notes'
 }, { immediate: true })
 
-function switchMode(mode: 'notes' | 'projects') {
+const MODES = [
+  { key: 'notes', label: 'Notes', icon: 'i-lucide-notebook-pen', path: '/note' },
+  { key: 'projects', label: 'Projects', icon: 'i-lucide-kanban', path: '/projects' },
+  { key: 'archive', label: 'Archive', icon: 'i-lucide-archive', path: '/archive' }
+] as const
+
+function switchMode(mode: AppMode) {
   appMode.value = mode
-  const inNotes = route.path.startsWith('/note')
-  const inProjects = route.path.startsWith('/projects')
-  if (mode === 'notes' && !inNotes) navigateTo('/note')
-  if (mode === 'projects' && !inProjects) navigateTo('/projects')
+  const target = MODES.find(entry => entry.key === mode)
+  if (target && !route.path.startsWith(target.path)) navigateTo(target.path)
 }
 </script>
 
@@ -71,46 +89,39 @@ function switchMode(mode: 'notes' | 'projects') {
     <div class="flex shrink-0 items-center gap-3 px-4 pb-3 pt-4">
       <AppLogo class="min-w-0 flex-1 text-xl" />
       <UButton
-        :icon="appMode === 'notes' ? 'i-lucide-square-pen' : 'i-lucide-kanban'"
+        v-if="createAction"
+        :icon="createAction.icon"
         size="sm"
         color="primary"
         variant="soft"
-        :aria-label="appMode === 'notes' ? 'New note' : 'New project'"
+        :aria-label="createAction.label"
         class="shrink-0 rounded-lg"
-        @click="appMode === 'notes' ? newNote() : newProject()"
+        @click="createAction.run()"
       />
     </div>
 
     <!-- Notes / Projects mode toggle -->
     <div class="shrink-0 px-3 pb-2">
-      <div class="grid grid-cols-2 gap-1 rounded-lg bg-elevated/60 p-1">
+      <div class="grid grid-cols-3 gap-1 rounded-lg bg-elevated/60 p-1">
         <button
-          class="flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
-          :class="appMode === 'notes' ? 'bg-default text-default shadow-sm' : 'text-muted hover:text-default'"
-          @click="switchMode('notes')"
+          v-for="mode in MODES"
+          :key="mode.key"
+          class="flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors"
+          :class="appMode === mode.key ? 'bg-default text-default shadow-sm' : 'text-muted hover:text-default'"
+          @click="switchMode(mode.key)"
         >
           <UIcon
-            name="i-lucide-notebook-pen"
-            class="size-4"
+            :name="mode.icon"
+            class="size-4 shrink-0"
           />
-          Notes
-        </button>
-        <button
-          class="flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors"
-          :class="appMode === 'projects' ? 'bg-default text-default shadow-sm' : 'text-muted hover:text-default'"
-          @click="switchMode('projects')"
-        >
-          <UIcon
-            name="i-lucide-kanban"
-            class="size-4"
-          />
-          Projects
+          {{ mode.label }}
         </button>
       </div>
     </div>
 
     <div class="shrink-0 space-y-2 px-3 pb-2">
       <button
+        v-if="appMode !== 'archive'"
         class="flex w-full items-center gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-default"
         @click="searchOpen = true"
       >
@@ -137,10 +148,21 @@ function switchMode(mode: 'notes' | 'projects') {
       class="min-h-0 flex-1"
     />
     <div
-      v-else
+      v-else-if="appMode === 'projects'"
       class="min-h-0 flex-1 overflow-y-auto p-2"
     >
       <ProjectsListPanel />
+    </div>
+    <!-- Archive is a chat window and nothing else: there is no list to show
+         here, because there is nothing for the user to file. -->
+    <div
+      v-else
+      class="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+    >
+      <p class="text-xs leading-relaxed text-dimmed">
+        Archive stores and manages what you tell it. Ask it what it knows, or
+        just tell it something worth keeping.
+      </p>
     </div>
 
     <div class="shrink-0 space-y-1.5 border-t border-default p-2">
