@@ -105,7 +105,7 @@ const editor = useEditor({
   ],
   editorProps: {
     attributes: {
-      class: 'inline-md inline-editor w-full',
+      'class': 'inline-md inline-editor w-full',
       'aria-label': 'Update'
     }
   },

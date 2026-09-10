@@ -1,6 +1,7 @@
 import { and, isNotNull, lt } from 'drizzle-orm'
 import { db } from '../db'
 import { projectColumns, projectTasks, TRASH_RETENTION_MS } from '../db/schema'
+import { removeTaskAttachments } from '../utils/attachments'
 
 // A board's trash empties itself. Without this a column deleted once, by an
 // agent at three in the morning, would sit in the database for the life of the
@@ -24,6 +25,7 @@ async function purge() {
     .delete(projectTasks)
     .where(and(isNotNull(projectTasks.deletedAt), lt(projectTasks.deletedAt, cutoff)))
     .returning({ id: projectTasks.id })
+  removeTaskAttachments(tasks.map(t => t.id))
 
   const columns = await db
     .delete(projectColumns)

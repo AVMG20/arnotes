@@ -3,6 +3,7 @@ import { projects, projectTasks } from '../../db/schema'
 import { eq } from 'drizzle-orm'
 import { requireTask, requireColumn, columnTasksOrdered, positionBetween, uiDeletion } from '../../utils/projects'
 import { publishFromEvent } from '../../utils/realtime'
+import { removeTaskAttachments } from '../../utils/attachments'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -17,6 +18,7 @@ export default defineEventHandler(async (event) => {
 
     if (permanent) {
       await db.delete(projectTasks).where(eq(projectTasks.id, id))
+      removeTaskAttachments([id])
     } else {
       await db.update(projectTasks).set(uiDeletion(event)).where(eq(projectTasks.id, id))
     }

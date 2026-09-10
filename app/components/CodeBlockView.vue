@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { NodeViewWrapper, NodeViewContent, nodeViewProps } from '@tiptap/vue-3'
 
 const props = defineProps(nodeViewProps)
@@ -44,8 +44,6 @@ const displayLabel = computed(
 
 const open = ref(false)
 const search = ref('')
-const triggerRef = ref<HTMLButtonElement | null>(null)
-const pos = ref({ top: 0, right: 0 })
 const searchRef = ref<HTMLInputElement | null>(null)
 
 const filtered = computed(() => {
@@ -53,44 +51,29 @@ const filtered = computed(() => {
   return q ? LANGUAGES.filter(l => l.label.toLowerCase().includes(q) || l.value.includes(q)) : LANGUAGES
 })
 
-function openDropdown(e: MouseEvent) {
-  e.preventDefault()
-  e.stopPropagation()
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  pos.value = { top: rect.bottom + 4, right: window.innerWidth - rect.right }
-  open.value = true
-  search.value = ''
-  // Focus the search input on next tick
-  setTimeout(() => searchRef.value?.focus(), 10)
-}
+// The picker is a real popover rather than a hand-rolled teleport. Inside a
+// modal panel (the task drawer) only registered overlay layers receive pointer
+// events and are allowed to hold focus; a plain fixed div is neither, so it
+// could be seen but not used there.
+watch(open, (isOpen) => {
+  if (!isOpen) {
+    search.value = ''
+    return
+  }
+  nextTick(() => searchRef.value?.focus())
+})
 
-function close() {
-  open.value = false
-  search.value = ''
-}
-
-function select(e: MouseEvent, value: string) {
-  e.preventDefault()
-  e.stopPropagation()
+function select(value: string) {
   props.updateAttributes({ language: value || null })
-  close()
+  open.value = false
 }
 
 function onSearchKey(e: KeyboardEvent) {
-  e.stopPropagation()
-  if (e.key === 'Escape') close()
   if (e.key === 'Enter' && filtered.value.length > 0) {
-    props.updateAttributes({ language: filtered.value[0]!.value || null })
-    close()
+    e.preventDefault()
+    select(filtered.value[0]!.value)
   }
 }
-
-function onOutsideClick(e: MouseEvent) {
-  if (!(e.target as HTMLElement)?.closest?.('.code-lang-dropdown')) close()
-}
-
-onMounted(() => document.addEventListener('mousedown', onOutsideClick))
-onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
 </script>
 
 <template>
@@ -102,20 +85,59 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
     >
       <span class="text-xs text-muted font-mono select-none leading-none">{ }</span>
 
-      <button
-        ref="triggerRef"
-        class="flex items-center gap-1 text-xs px-2 py-0.5 rounded text-muted hover:text-default bg-accented hover:bg-elevated transition-colors select-none"
-        @mousedown="openDropdown"
+      <!-- `mousedown.prevent` keeps the editor's selection where it is while
+           the button takes the click. -->
+      <UPopover
+        v-model:open="open"
+        :content="{ side: 'bottom', align: 'end', sideOffset: 4, collisionPadding: 8 }"
+        :ui="{ content: 'w-52 overflow-hidden p-0' }"
       >
-        {{ displayLabel }}
-        <svg
-          class="size-3 opacity-50"
-          viewBox="0 0 16 16"
-          fill="currentColor"
+        <button
+          class="flex items-center gap-1 text-xs px-2 py-0.5 rounded text-muted hover:text-default bg-accented hover:bg-elevated transition-colors select-none"
+          @mousedown.prevent
         >
-          <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z" />
-        </svg>
-      </button>
+          {{ displayLabel }}
+          <svg
+            class="size-3 opacity-50"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z" />
+          </svg>
+        </button>
+
+        <template #content>
+          <div class="p-2 border-b border-default">
+            <input
+              ref="searchRef"
+              v-model="search"
+              placeholder="Search language…"
+              class="w-full px-2 py-1.5 text-xs rounded-md bg-elevated border border-default outline-none text-default placeholder:text-muted"
+              @keydown="onSearchKey"
+            >
+          </div>
+
+          <div class="max-h-56 overflow-y-auto py-1">
+            <div
+              v-if="filtered.length === 0"
+              class="px-3 py-2 text-xs text-muted"
+            >
+              No match
+            </div>
+            <button
+              v-for="lang in filtered"
+              :key="lang.value"
+              class="w-full text-left px-3 py-1.5 text-sm transition-colors"
+              :class="lang.value === language
+                ? 'text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950/60 font-medium'
+                : 'text-default hover:bg-elevated'"
+              @click="select(lang.value)"
+            >
+              {{ lang.label }}
+            </button>
+          </div>
+        </template>
+      </UPopover>
     </div>
 
     <!-- Code content -->
@@ -123,48 +145,5 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsideClick))
 as="code"
                                                  :class="language ? `language-${language}` : ''"
     /></pre>
-
-    <!-- Teleported dropdown — outside the editor DOM entirely -->
-    <Teleport to="body">
-      <div
-        v-if="open"
-        class="code-lang-dropdown fixed z-[9999] w-52 bg-default shadow-xl overflow-hidden"
-        data-editor-overlay
-        :style="{ top: pos.top + 'px', right: pos.right + 'px' }"
-        @mousedown.stop
-      >
-        <!-- Search -->
-        <div class="p-2 border-b border-default">
-          <input
-            ref="searchRef"
-            v-model="search"
-            placeholder="Search language…"
-            class="w-full px-2 py-1.5 text-xs rounded-md bg-elevated border border-default outline-none text-default placeholder:text-muted"
-            @keydown="onSearchKey"
-          >
-        </div>
-
-        <!-- List -->
-        <div class="max-h-56 overflow-y-auto py-1">
-          <div
-            v-if="filtered.length === 0"
-            class="px-3 py-2 text-xs text-muted"
-          >
-            No match
-          </div>
-          <button
-            v-for="lang in filtered"
-            :key="lang.value"
-            class="w-full text-left px-3 py-1.5 text-sm transition-colors"
-            :class="lang.value === language
-              ? 'text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950/60 font-medium'
-              : 'text-default hover:bg-elevated'"
-            @mousedown="(e) => select(e, lang.value)"
-          >
-            {{ lang.label }}
-          </button>
-        </div>
-      </div>
-    </Teleport>
   </NodeViewWrapper>
 </template>

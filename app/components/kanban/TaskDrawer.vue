@@ -37,9 +37,12 @@ function fullDate(ts: number) {
   return format(new Date(ts), 'PPp')
 }
 
+// The drawer reports "closed" once on mount, before any task is shown. Passing
+// that on as a close would wipe a ?task= deep link before the board has even
+// loaded the task it points at, so only a close of something open counts.
 const open = computed({
   get: () => props.task !== null,
-  set: (v: boolean) => { if (!v) emit('close') }
+  set: (v: boolean) => { if (!v && props.task) emit('close') }
 })
 
 // The panel slides out over ~half a second. It renders the last task it was
@@ -208,6 +211,32 @@ onBeforeUnmount(() => {
   flushTitle()
   flushDescription()
 })
+
+// ─── Images ────────────────────────────────────────────────
+
+// Pasted or dropped into the description. The file is stored with the task and
+// served from the task's own attachment route, so the notes uploader's per-note
+// bookkeeping is not involved.
+async function uploadImage(file: File): Promise<string | null> {
+  const id = props.task?.id
+  if (!id) return null
+  const form = new FormData()
+  form.append('file', file)
+  try {
+    const res = await $fetch<{ url: string }>(`/api/tasks/${id}/attachments`, { method: 'POST', body: form })
+    return res.url
+  } catch (e) {
+    const err = e as { data?: { message?: string } }
+    toast.add({
+      title: 'Image upload failed',
+      description: err?.data?.message,
+      icon: 'i-lucide-image-off',
+      color: 'error',
+      duration: 3000
+    })
+    return null
+  }
+}
 
 // ─── Labels ────────────────────────────────────────────────
 
@@ -536,6 +565,7 @@ const menuItems = computed(() => [[
           <div class="flex min-h-0 flex-1 flex-col border-t border-default">
             <RichEditor
               v-model="editorContent"
+              :upload-image="uploadImage"
               placeholder="Add a description… (@ for dates, / for commands)"
               class="min-h-0 flex-1"
             />

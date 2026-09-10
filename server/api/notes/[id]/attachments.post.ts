@@ -1,20 +1,8 @@
 import { db } from '../../../db'
 import { notes } from '../../../db/schema'
 import { eq, and } from 'drizzle-orm'
-import { join } from 'path'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { getNoteAccessFilter } from '../../../utils/auth-helpers'
-
-const ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
-const EXT_FROM_MIME: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/gif': 'gif',
-  'image/webp': 'webp',
-  'image/svg+xml': 'svg'
-}
-const MAX_SIZE = 10 * 1024 * 1024 // 10 MB
-const MAX_ATTACHMENTS = 15
+import { MAX_ATTACHMENTS, noteAttachmentDir, storeImageUpload } from '../../../utils/attachments'
 
 export default defineEventHandler(async (event) => {
   const noteId = getRouterParam(event, 'id')!
@@ -27,20 +15,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const form = await readMultipartFormData(event)
-  const filePart = form?.find(p => p.name === 'file')
-  if (!filePart?.data) throw createError({ statusCode: 400, message: 'No file provided' })
-
-  const type = filePart.type ?? 'application/octet-stream'
-  if (!ALLOWED_TYPES.has(type)) throw createError({ statusCode: 400, message: 'Unsupported file type' })
-  if (filePart.data.length > MAX_SIZE) throw createError({ statusCode: 400, message: 'File too large (max 10 MB)' })
-
-  // Extension comes from the validated MIME type, not the client-supplied filename
-  const ext = EXT_FROM_MIME[type]!
-  const filename = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}.${ext}`
-
-  const dir = join(process.cwd(), 'data', 'attachments', noteId)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, filename), filePart.data)
+  const filename = storeImageUpload(noteAttachmentDir(noteId), form?.find(p => p.name === 'file'))
 
   const updatedAttachments = [...(note.attachments ?? []), filename]
   await db.update(notes).set({ attachments: updatedAttachments }).where(eq(notes.id, noteId))

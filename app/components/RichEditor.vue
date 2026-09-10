@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { DOMSerializer } from '@tiptap/pm/model'
-import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { closeHistory } from '@tiptap/pm/history'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import CodeBlockView from '~/components/CodeBlockView.vue'
@@ -20,11 +20,13 @@ import { markdownToHtml, htmlToMarkdown, normalizeAiOutput } from '~/utils/markd
 import { runAi, runCustomAi, transformActions } from '~/composables/useAi'
 import { useUserSettings } from '~/composables/useUserSettings'
 import TableGridPicker from '~/components/TableGridPicker.vue'
+import TableControls from '~/components/TableControls.vue'
 
 // Shared rich text editor: the exact editing surface used by notes, reusable
 // for task descriptions. Parents own persistence via v-model; this component
-// only edits. `uploadImage` opts into image support (notes have an attachment
-// endpoint, tasks do not). The #toolbar-right slot hosts context actions.
+// only edits. `uploadImage` opts into image support: the parent supplies the
+// upload (notes and tasks each have an attachment endpoint). The #toolbar-right
+// slot hosts context actions.
 const props = defineProps<{
   modelValue: string
   placeholder?: string
@@ -55,7 +57,18 @@ const aiPromptIncludeContext = ref(true)
 // ─── Table creation picker ───────────────────────────────────
 
 const tablePickerOpen = ref(false)
-const tablePicker = reactive({ open: false, x: 0, y: 0 })
+
+// The slash-menu picker has no button to hang off, so it is anchored to a
+// virtual element at the caret. It is a real popover rather than a hand-rolled
+// teleport: inside a modal panel (the task drawer) only registered layers get
+// pointer events and keep focus, and a plain fixed div is neither.
+const slashTablePicker = reactive({ open: false, rect: { x: 0, y: 0, width: 0, height: 0 } })
+const slashTablePickerReference = {
+  getBoundingClientRect: () => {
+    const { x, y, width, height } = slashTablePicker.rect
+    return new DOMRect(x, y, width, height)
+  }
+}
 let tablePickerEditor: Editor | null = null
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,26 +85,35 @@ function onToolbarTablePick(ed: any, size: { rows: number, cols: number }) {
 function onSlashTablePick(size: { rows: number, cols: number }) {
   const ed = tablePickerEditor
   tablePickerEditor = null
-  tablePicker.open = false
+  slashTablePicker.open = false
   if (ed && !ed.isDestroyed) insertTableOfSize(ed, size)
 }
 
-function closeSlashTablePicker() {
+// Closed without a pick (Escape, click elsewhere): the caret goes back where
+// the slash command was typed so the user is not left with nothing focused.
+watch(() => slashTablePicker.open, (open) => {
+  if (open) return
+  const ed = tablePickerEditor
   tablePickerEditor = null
-  tablePicker.open = false
-}
-
-function onTablePickerKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') closeSlashTablePicker()
-}
-
-watch(() => tablePicker.open, (open) => {
-  if (open) window.addEventListener('keydown', onTablePickerKeydown, true)
-  else window.removeEventListener('keydown', onTablePickerKeydown, true)
+  if (ed && !ed.isDestroyed) ed.commands.focus()
 })
 
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onTablePickerKeydown, true)
+// The caret stays in the editor while the picker is up, and the editor swallows
+// Escape before it can reach the popover's own listener — so the key is taken
+// here first. Claiming it also keeps it from a surrounding modal panel, which
+// would otherwise read the same press as "close everything".
+const SlashTablePickerKeys = Extension.create({
+  name: 'slashTablePickerKeys',
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Escape: () => {
+        if (!slashTablePicker.open) return false
+        slashTablePicker.open = false
+        return true
+      }
+    }
+  }
 })
 
 type AiPending = {
@@ -425,97 +447,6 @@ const MarkdownPaste = Extension.create({
   }
 })
 
-// Hover-revealed "+" buttons to append a row/column at the end of the table.
-// Destructive row/column operations live in the table bubble toolbar instead,
-// where they act on the cell the cursor is in.
-const InlineTableControls = Extension.create({
-  name: 'inlineTableControls',
-  addProseMirrorPlugins() {
-    const ed = this.editor
-
-    function getTableContext() {
-      const { $from } = ed.state.selection
-      for (let depth = $from.depth; depth > 0; depth--) {
-        if ($from.node(depth).type.name === 'table') {
-          return { node: $from.node(depth), pos: $from.before(depth), start: $from.start(depth) }
-        }
-      }
-      return null
-    }
-
-    function appendToTable(axis: 'row' | 'column') {
-      const table = getTableContext()
-      const lastRow = table?.node.lastChild
-      const lastCell = lastRow?.lastChild
-      if (!table || !lastRow || !lastCell) return
-
-      const rowPos = table.start + table.node.content.size - lastRow.nodeSize
-      const cellPos = rowPos + 1 + lastRow.content.size - lastCell.nodeSize
-      const selection = Selection.near(ed.state.doc.resolve(cellPos + 1))
-      ed.view.dispatch(ed.state.tr.setSelection(selection))
-
-      if (axis === 'row') ed.chain().focus().addRowAfter().run()
-      else ed.chain().focus().addColumnAfter().run()
-    }
-
-    return [
-      new Plugin({
-        key: new PluginKey('inlineTableControls'),
-        view(view) {
-          const controls = document.createElement('div')
-          controls.className = 'table-edge-controls'
-          controls.contentEditable = 'false'
-
-          const makeButton = (axis: 'row' | 'column') => {
-            const button = document.createElement('button')
-            button.type = 'button'
-            button.className = 'table-edge-controls__button'
-            button.dataset.axis = axis
-            button.textContent = '+'
-            button.title = axis === 'row' ? 'Add row at the end' : 'Add column at the end'
-            button.setAttribute('aria-label', button.title)
-            button.addEventListener('pointerdown', (event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              appendToTable(axis)
-            })
-            return button
-          }
-
-          controls.append(makeButton('row'), makeButton('column'))
-
-          let wrapper: HTMLElement | null = null
-          const update = () => {
-            const table = getTableContext()
-            const tableDom = table ? view.nodeDOM(table.pos) as HTMLElement | null : null
-            const nextWrapper = tableDom?.matches('.tableWrapper')
-              ? tableDom
-              : tableDom?.closest<HTMLElement>('.tableWrapper')
-
-            if (nextWrapper === wrapper) return
-            wrapper?.classList.remove('table-controls-active')
-            controls.remove()
-            wrapper = nextWrapper ?? null
-            if (wrapper) {
-              wrapper.classList.add('table-controls-active')
-              wrapper.append(controls)
-            }
-          }
-
-          update()
-          return {
-            update,
-            destroy() {
-              wrapper?.classList.remove('table-controls-active')
-              controls.remove()
-            }
-          }
-        }
-      })
-    ]
-  }
-})
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const extensions: any[] = [
   CodeBlockLowlight.configure({ lowlight }).extend({
@@ -524,7 +455,7 @@ const extensions: any[] = [
   Highlight.configure({ multicolor: false }),
   TaskList,
   TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: true }),
+  Table.configure({ resizable: true, cellMinWidth: 64, handleWidth: 6, lastColumnResizable: true }),
   TableRow,
   TableHeader,
   TableCell,
@@ -534,7 +465,7 @@ const extensions: any[] = [
   AiPendingDecoration,
   HashtagHighlight,
   MarkdownPaste,
-  InlineTableControls
+  SlashTablePickerKeys
 ]
 
 // ─── Handlers ────────────────────────────────────────────────
@@ -572,71 +503,14 @@ const customHandlers: any = {
       const { state, view } = ed
       try {
         const coords = view.coordsAtPos(state.selection.from)
-        tablePicker.x = Math.min(coords.left, Math.max(window.innerWidth - 260, 8))
-        tablePicker.y = Math.min(coords.bottom + 8, window.innerHeight - 220)
+        slashTablePicker.rect = { x: coords.left, y: coords.top, width: 0, height: coords.bottom - coords.top }
       } catch {
-        tablePicker.x = window.innerWidth / 2 - 110
-        tablePicker.y = window.innerHeight / 2 - 100
+        slashTablePicker.rect = { x: window.innerWidth / 2, y: window.innerHeight / 2, width: 0, height: 0 }
       }
       tablePickerEditor = ed
-      tablePicker.open = true
+      slashTablePicker.open = true
       return ed.chain()
     },
-    isActive: () => false
-  },
-  addColumnBefore: {
-    canExecute: (ed: Editor) => ed.can().addColumnBefore(),
-    execute: (ed: Editor) => ed.chain().focus().addColumnBefore(),
-    isActive: () => false
-  },
-  addColumnAfter: {
-    canExecute: (ed: Editor) => ed.can().addColumnAfter(),
-    execute: (ed: Editor) => ed.chain().focus().addColumnAfter(),
-    isActive: () => false
-  },
-  deleteColumn: {
-    canExecute: (ed: Editor) => ed.can().deleteColumn(),
-    execute: (ed: Editor) => ed.chain().focus().deleteColumn(),
-    isActive: () => false
-  },
-  addRowBefore: {
-    canExecute: (ed: Editor) => ed.can().addRowBefore(),
-    execute: (ed: Editor) => ed.chain().focus().addRowBefore(),
-    isActive: () => false
-  },
-  addRowAfter: {
-    canExecute: (ed: Editor) => ed.can().addRowAfter(),
-    execute: (ed: Editor) => ed.chain().focus().addRowAfter(),
-    isActive: () => false
-  },
-  deleteRow: {
-    canExecute: (ed: Editor) => ed.can().deleteRow(),
-    execute: (ed: Editor) => ed.chain().focus().deleteRow(),
-    isActive: () => false
-  },
-  deleteTable: {
-    canExecute: (ed: Editor) => ed.can().deleteTable(),
-    execute: (ed: Editor) => ed.chain().focus().deleteTable(),
-    isActive: () => false
-  },
-  mergeCells: {
-    canExecute: (ed: Editor) => ed.can().mergeCells(),
-    execute: (ed: Editor) => ed.chain().focus().mergeCells(),
-    isActive: () => false
-  },
-  splitCell: {
-    canExecute: (ed: Editor) => ed.can().splitCell(),
-    execute: (ed: Editor) => ed.chain().focus().splitCell(),
-    isActive: () => false
-  },
-  toggleHeaderRow: {
-    canExecute: (ed: Editor) => ed.can().toggleHeaderRow(),
-    execute: (ed: Editor) => ed.chain().focus().toggleHeaderRow(),
-    isActive: () => false
-  },
-  toggleHeaderColumn: {
-    canExecute: (ed: Editor) => ed.can().toggleHeaderColumn(),
-    execute: (ed: Editor) => ed.chain().focus().toggleHeaderColumn(),
     isActive: () => false
   }
 }
@@ -686,63 +560,6 @@ const bubbleToolbarItems: any[][] = [[
   }
 ]]
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const tableToolbarItems: any[][] = [[
-  {
-    label: 'Row',
-    icon: 'i-lucide-rows-3',
-    items: [[
-      { kind: 'addRowBefore', label: 'Add row above', icon: 'i-lucide-arrow-up-to-line' },
-      { kind: 'addRowAfter', label: 'Add row below', icon: 'i-lucide-arrow-down-to-line' }
-    ], [
-      { kind: 'deleteRow', label: 'Delete row', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  },
-  {
-    label: 'Column',
-    icon: 'i-lucide-columns-3',
-    items: [[
-      { kind: 'addColumnBefore', label: 'Add column left', icon: 'i-lucide-arrow-left-to-line' },
-      { kind: 'addColumnAfter', label: 'Add column right', icon: 'i-lucide-arrow-right-to-line' }
-    ], [
-      { kind: 'deleteColumn', label: 'Delete column', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  },
-  {
-    label: 'Options',
-    icon: 'i-lucide-table-properties',
-    items: [[
-      { kind: 'mergeCells', label: 'Merge selected cells', icon: 'i-lucide-table-cells-merge' },
-      { kind: 'splitCell', label: 'Split cell', icon: 'i-lucide-table-cells-split' },
-      { kind: 'toggleHeaderRow', label: 'Toggle header row', icon: 'i-lucide-rows-3' },
-      { kind: 'toggleHeaderColumn', label: 'Toggle header column', icon: 'i-lucide-columns-3' }
-    ], [
-      { kind: 'deleteTable', label: 'Delete table', icon: 'i-lucide-trash-2', color: 'error' }
-    ]]
-  }
-]]
-
-function shouldShowTableToolbar(ed: Pick<Editor, 'isActive'>, view: EditorView, state: EditorState) {
-  // Also show while multiple cells are selected, otherwise merge/split are unreachable.
-  const cellSelection = state.selection instanceof CellSelection
-  if (!cellSelection && !state.selection.empty) return false
-
-  if (!cellSelection) {
-    const domSelection = view.dom.ownerDocument.getSelection()
-    const hasDomTextSelection = Boolean(
-      domSelection
-      && !domSelection.isCollapsed
-      && domSelection.anchorNode
-      && domSelection.focusNode
-      && view.dom.contains(domSelection.anchorNode)
-      && view.dom.contains(domSelection.focusNode)
-    )
-    if (hasDomTextSelection) return false
-  }
-
-  return view.hasFocus() && ed.isActive('table')
-}
-
 const suggestionItems = computed(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const groups: any[][] = [[
@@ -773,7 +590,7 @@ const suggestionItems = computed(() => {
 
 <template>
   <div
-    class="flex h-full min-h-0 flex-col"
+    class="relative flex h-full min-h-0 flex-col"
     @dragover.prevent
     @drop.prevent="onFileDrop"
   >
@@ -844,14 +661,8 @@ const suggestionItems = computed(() => {
         }"
       />
 
-      <!-- Table controls (appears when the cursor is in a table) -->
-      <UEditorToolbar
-        :editor="ed"
-        :items="tableToolbarItems"
-        layout="bubble"
-        plugin-key="table-toolbar"
-        :should-show="({ editor: e, view, state }) => shouldShowTableToolbar(e, view, state)"
-      />
+      <!-- Table handles: row, column, corner, "+" edges, cell selection -->
+      <TableControls :editor="ed" />
 
       <!-- Drag handle (hover any block) -->
       <UEditorDragHandle
@@ -923,23 +734,15 @@ const suggestionItems = computed(() => {
       </template>
     </UModal>
 
-    <!-- Table size picker (opened from the slash menu) -->
-    <Teleport to="body">
-      <div v-if="tablePicker.open">
-        <div
-          class="fixed inset-0 z-50"
-          data-editor-overlay
-          @click="closeSlashTablePicker"
-          @contextmenu.prevent="closeSlashTablePicker"
-        />
-        <div
-          class="fixed z-[60] rounded-lg border border-default bg-default shadow-lg"
-          data-editor-overlay
-          :style="{ left: `${tablePicker.x}px`, top: `${tablePicker.y}px` }"
-        >
-          <TableGridPicker @select="onSlashTablePick" />
-        </div>
-      </div>
-    </Teleport>
+    <!-- Table size picker (opened from the slash menu), anchored at the caret -->
+    <UPopover
+      v-model:open="slashTablePicker.open"
+      :reference="slashTablePickerReference"
+      :content="{ side: 'bottom', align: 'start', sideOffset: 8, collisionPadding: 8 }"
+    >
+      <template #content>
+        <TableGridPicker @select="onSlashTablePick" />
+      </template>
+    </UPopover>
   </div>
 </template>

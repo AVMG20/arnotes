@@ -1,9 +1,10 @@
 import { db } from '../../db'
-import { projects } from '../../db/schema'
+import { projects, projectTasks } from '../../db/schema'
 import { eq } from 'drizzle-orm'
 import { requireProject } from '../../utils/projects'
 import { isAccentColor } from '#shared/utils/colors'
 import { closeTopic, publicProjectTopic, publishFromEvent } from '../../utils/realtime'
+import { removeTaskAttachments } from '../../utils/attachments'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -59,8 +60,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 405, message: 'Method not allowed' })
   }
 
-  // DELETE — hard delete, columns/tasks/comments cascade.
+  // DELETE — hard delete, columns/tasks/comments cascade. The cascade cannot
+  // reach the images on disk, so their task ids are collected first.
+  const tasks = await db.select({ id: projectTasks.id }).from(projectTasks).where(eq(projectTasks.projectId, id))
   await db.delete(projects).where(eq(projects.id, id))
+  removeTaskAttachments(tasks.map(t => t.id))
 
   await publishFromEvent(event, { type: 'projects', projectId: id })
   closeTopic(publicProjectTopic(id))
