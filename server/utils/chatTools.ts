@@ -54,7 +54,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
         type: 'object',
         properties: {
           title: { type: 'string', description: 'Note title.' },
-          content: { type: 'string', description: 'Markdown body of the note.' },
+          content: { type: 'string', description: 'Markdown body of the note. A ```mermaid fence is drawn as a diagram and a ```chart fence as a bar, line or pie chart (lines like "type: bar", "labels: Jan, Feb", "Sales: 12, 19").' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Tags (no # prefix).' }
         },
         required: ['title']
@@ -71,7 +71,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
         properties: {
           id: { type: 'string', description: 'The note id.' },
           title: { type: 'string', description: 'New title.' },
-          content: { type: 'string', description: 'Full replacement markdown body.' },
+          content: { type: 'string', description: 'Full replacement markdown body. A ```mermaid fence is drawn as a diagram and a ```chart fence as a bar, line or pie chart (lines like "type: bar", "labels: Jan, Feb", "Sales: 12, 19").' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Full replacement tag list (no # prefix).' }
         },
         required: ['id']
@@ -158,7 +158,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
           board: { type: 'string', description: 'Board id or name.' },
           column: { type: 'string', description: 'Column name, e.g. Backlog, To do, Verify, Done.' },
           title: { type: 'string', description: 'Task title.' },
-          description: { type: 'string', description: 'Markdown description.' },
+          description: { type: 'string', description: 'Markdown description. A ```mermaid fence is drawn as a diagram and a ```chart fence as a bar, line or pie chart (lines like "type: bar", "labels: Jan, Feb", "Sales: 12, 19").' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Labels (no # prefix).' }
         },
         required: ['board', 'column', 'title']
@@ -175,7 +175,7 @@ export const CHAT_TOOLS: ChatToolCallDef[] = [
         properties: {
           id: { type: 'string', description: 'Task id.' },
           title: { type: 'string', description: 'New title.' },
-          description: { type: 'string', description: 'Full replacement markdown description.' },
+          description: { type: 'string', description: 'Full replacement markdown description. A ```mermaid fence is drawn as a diagram and a ```chart fence as a bar, line or pie chart (lines like "type: bar", "labels: Jan, Feb", "Sales: 12, 19").' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Full replacement label list.' }
         },
         required: ['id']
@@ -222,6 +222,7 @@ Guidelines:
 - For board work, use get_board before create_task or move_task so board, column and task names match exactly.
 - When editing, always pass complete replacement values for content, description and tags, not deltas.
 - Use "- [ ]" checklist items when the user wants a checklist in a note or task description.
+- Diagrams and charts are fenced code blocks, in replies as well as in note bodies and task descriptions: a \`\`\`mermaid block (flowchart, sequenceDiagram, gantt, …) is drawn as a diagram; a \`\`\`chart block is drawn as a simple chart. A chart block is a few lines: "type: bar" (or line, pie), optional "title: …", "labels: a, b, c" for the x axis or the pie slices, then one "Series name: 1, 2, 3" line per series. Prefer a chart block over a table when the user asks to visualise numbers, and a mermaid block when they ask for a diagram, flow or timeline.
 - delete_note and delete_task both only move things to the trash, where the user can restore them — confirm intent in your reply, not with an extra question, when the request was explicit.
 
 Dates are YYYY-MM-DD. Be concise, use markdown, and reply in the user's language.`

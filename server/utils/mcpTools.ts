@@ -224,7 +224,7 @@ const NOTE_TOOLS: McpToolDefinition[] = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Note title. Becomes the leading heading of the body.' },
-        content: { type: 'string', description: 'Markdown body. Supports headings, lists, "- [ ]" checklists, tables and fenced code.' },
+        content: { type: 'string', description: 'Markdown body. Supports headings, lists, "- [ ]" checklists, tables and fenced code. A ```mermaid block is drawn as a diagram; a ```chart block is drawn as a bar, line or pie chart from lines like "type: bar", "labels: Jan, Feb" and "Sales: 12, 19".' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags for the note, without the # prefix.' }
       },
       required: ['title']

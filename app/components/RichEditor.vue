@@ -13,10 +13,11 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { CellSelection } from '@tiptap/pm/tables'
-import { createLowlight, common } from 'lowlight'
+import { createEditorLowlight } from '~/utils/highlight'
 import { DateMention } from '~/composables/useDateMention'
 import { ResizableImage } from '~/utils/resizable-image'
 import { markdownToHtml, htmlToMarkdown, normalizeAiOutput } from '~/utils/markdown'
+import { CHART_TEMPLATE, MERMAID_TEMPLATE } from '~/utils/chart'
 import { runAi, runCustomAi, transformActions } from '~/composables/useAi'
 import { useUserSettings } from '~/composables/useUserSettings'
 import TableGridPicker from '~/components/TableGridPicker.vue'
@@ -343,7 +344,7 @@ defineExpose({ focusEditor })
 
 // ─── Custom extensions ───────────────────────────────────────
 
-const lowlight = createLowlight(common)
+const lowlight = createEditorLowlight()
 
 const ImagePaste = Extension.create({
   name: 'imagePaste',
@@ -470,8 +471,38 @@ const extensions: any[] = [
 
 // ─── Handlers ────────────────────────────────────────────────
 
+// A diagram is a code block in the `chart` or `mermaid` language, seeded with
+// a small example so the shape of the language is in front of the writer.
+function insertDiagram(ed: Editor, language: 'chart' | 'mermaid') {
+  const text = language === 'chart' ? CHART_TEMPLATE : MERMAID_TEMPLATE
+  ed.chain().focus().insertContent({
+    type: 'codeBlock',
+    attrs: { language },
+    content: [{ type: 'text', text }]
+  }).run()
+  // The caret lands after the new block; it belongs at the end of the
+  // example source instead, which is what opens the source for editing.
+  const { doc, selection } = ed.state
+  let end: number | null = null
+  doc.nodesBetween(0, selection.from, (node, pos) => {
+    if (node.type.name === 'codeBlock' && node.attrs.language === language) end = pos + 1 + node.content.size
+  })
+  if (end !== null) ed.commands.focus(end)
+  return ed.chain()
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const customHandlers: any = {
+  chart: {
+    canExecute: () => true,
+    execute: (ed: Editor) => insertDiagram(ed, 'chart'),
+    isActive: (ed: Editor) => ed.isActive('codeBlock', { language: 'chart' })
+  },
+  mermaid: {
+    canExecute: () => true,
+    execute: (ed: Editor) => insertDiagram(ed, 'mermaid'),
+    isActive: (ed: Editor) => ed.isActive('codeBlock', { language: 'mermaid' })
+  },
   aiPrompt: {
     canExecute: () => !aiLoading.value,
     execute: (ed: Editor) => {
@@ -534,6 +565,8 @@ const fixedToolbarItems: any[][] = [[
   { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
   { kind: 'table', slot: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
   { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
+  { kind: 'chart', icon: 'i-lucide-chart-column', tooltip: { text: 'Chart' } },
+  { kind: 'mermaid', icon: 'i-lucide-workflow', tooltip: { text: 'Mermaid diagram' } },
   { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } },
   { kind: 'horizontalRule', icon: 'i-lucide-separator-horizontal', tooltip: { text: 'Divider' } }
 ]]
@@ -577,6 +610,10 @@ const suggestionItems = computed(() => {
     { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
     { kind: 'table', label: 'Table', description: 'Pick a size and insert a table', icon: 'i-lucide-table' },
     { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
+  ], [
+    { type: 'label', label: 'Diagrams' },
+    { kind: 'chart', label: 'Chart', description: 'Bar, line or pie from a few lines of numbers', icon: 'i-lucide-chart-column' },
+    { kind: 'mermaid', label: 'Mermaid diagram', description: 'Flowcharts, sequences, Gantt and more', icon: 'i-lucide-workflow' }
   ]]
   if (props.uploadImage) {
     groups.push([
@@ -708,7 +745,7 @@ const suggestionItems = computed(() => {
               label="Include current content as context"
             />
             <p class="text-xs text-muted text-right">
-              Markdown, tables, task lists, and code blocks are supported.
+              Markdown, tables, task lists, code blocks, Mermaid and charts are supported.
             </p>
           </div>
         </form>

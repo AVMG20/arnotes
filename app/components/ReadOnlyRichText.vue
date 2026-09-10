@@ -7,7 +7,7 @@ import Highlight from '@tiptap/extension-highlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { createLowlight, common } from 'lowlight'
+import { createEditorLowlight } from '~/utils/highlight'
 import { DateMention } from '~/composables/useDateMention'
 import { ResizableImage } from '~/utils/resizable-image'
 
@@ -22,7 +22,7 @@ const props = defineProps<{
   flush?: boolean
 }>()
 
-const lowlight = createLowlight(common)
+const lowlight = createEditorLowlight()
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const extensions: any[] = [

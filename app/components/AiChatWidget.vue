@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { ChatMessage } from '~/composables/useAiChat'
-import { renderChatMarkdown } from '~/utils/markdown'
 
 // ─── Panel state ─────────────────────────────────────────────
 
@@ -344,11 +343,11 @@ function openTarget(m: ChatMessage) {
             </div>
           </details>
 
-          <div
+          <ChatMarkdown
             v-if="m.content"
-            class="markdown-content max-w-full text-sm leading-relaxed text-default"
+            class="max-w-full text-sm leading-relaxed text-default"
             :class="m.error ? 'text-error' : ''"
-            v-html="renderChatMarkdown(m.content)"
+            :text="m.content"
           />
 
           <div

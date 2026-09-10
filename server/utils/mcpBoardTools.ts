@@ -868,7 +868,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         board: { type: 'string', description: 'Board id or name.' },
         column: { type: 'string', description: 'Column id or name, e.g. "Backlog".' },
         title: { type: 'string', description: 'Task title. Keep it short — detail belongs in the description.' },
-        description: { type: 'string', description: 'Markdown description. Supports headings, lists, "- [ ]" checklists, tables and fenced code.' },
+        description: { type: 'string', description: 'Markdown description. Supports headings, lists, "- [ ]" checklists, tables and fenced code. A ```mermaid block is drawn as a diagram; a ```chart block is drawn as a bar, line or pie chart from lines like "type: bar", "labels: Jan, Feb" and "Sales: 12, 19".' },
         labels: { type: 'array', items: { type: 'string' }, description: 'Labels for the task, without the # prefix.' },
         position: { type: 'string', description: '"top" or "bottom" of the column. Defaults to "bottom".' },
         after: { type: 'string', description: 'Place the task directly after this task id instead.' }
