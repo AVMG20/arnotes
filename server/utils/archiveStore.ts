@@ -72,6 +72,25 @@ export function listMemories(scope: ArchiveScope, limit = ARCHIVE_INDEX_LIMIT * 
     .limit(limit)
 }
 
+/** Ceiling on what the sidebar is handed in one go. */
+const STORE_LIMIT = 1000
+
+/** Live and forgotten alike, for the sidebar's storage view. */
+export function listAllMemories(scope: ArchiveScope): Promise<ArchiveMemory[]> {
+  return db.select().from(archiveMemories)
+    .where(memoryScopeFilter(scope))
+    .orderBy(desc(archiveMemories.updatedAt))
+    .limit(STORE_LIMIT)
+}
+
+/** Open and done, but not dropped: a dropped todo has nothing to restore into. */
+export function listAllTodos(scope: ArchiveScope): Promise<ArchiveTodo[]> {
+  return db.select().from(archiveTodos)
+    .where(liveTodo(scope))
+    .orderBy(desc(archiveTodos.createdAt))
+    .limit(STORE_LIMIT)
+}
+
 export function getMemories(scope: ArchiveScope, ids: string[]): Promise<ArchiveMemory[]> {
   if (!ids.length) return Promise.resolve([])
   return db.select().from(archiveMemories)
@@ -229,6 +248,22 @@ export async function forgetMemories(scope: ArchiveScope, ids: string[]): Promis
     .set({ deletedAt: now, updatedAt: now })
     .where(and(memoryScopeFilter(scope), inArray(archiveMemories.id, ids), isNull(archiveMemories.deletedAt)))
     .returning()
+}
+
+export async function restoreMemory(scope: ArchiveScope, id: string): Promise<ArchiveMemory | null> {
+  const [row] = await db.update(archiveMemories)
+    .set({ deletedAt: null, updatedAt: Date.now() })
+    .where(and(memoryScopeFilter(scope), eq(archiveMemories.id, id)))
+    .returning()
+  return row ?? null
+}
+
+/** Hard delete. Todos that hung off the memory keep standing, with the link cleared. */
+export async function purgeMemory(scope: ArchiveScope, id: string): Promise<ArchiveMemory | null> {
+  const [row] = await db.delete(archiveMemories)
+    .where(and(memoryScopeFilter(scope), eq(archiveMemories.id, id)))
+    .returning()
+  return row ?? null
 }
 
 export interface TodoInput {

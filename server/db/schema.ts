@@ -340,8 +340,8 @@ export const archiveMemories = pgTable(
     tags: json('tags').$type<string[]>().notNull().default([]),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
-    // Soft, like everything else the user can lose. `forget` sets this; nothing
-    // in the product hard-deletes a memory.
+    // Soft, like everything else the user can lose. `forget` sets this; only
+    // the sidebar's Forgotten list, after a confirmation, deletes for good.
     deletedAt: bigint('deleted_at', { mode: 'number' })
   },
   table => [

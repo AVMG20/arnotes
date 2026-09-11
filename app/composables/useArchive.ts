@@ -35,6 +35,8 @@ export interface ArchiveTodo {
 export interface ArchiveAction {
   name: string
   label: string
+  /** Still running — the label is a verb, not a result. */
+  pending?: boolean
 }
 
 export interface ArchiveChatMessage {
@@ -50,6 +52,7 @@ export interface ArchiveChatMessage {
 
 type StreamEvent
   = | { type: 'delta', text?: string }
+    | { type: 'tool_start', name?: string }
     | { type: 'tool', name?: string, label?: string }
     | { type: 'rows', memories?: ArchiveMemory[], todos?: ArchiveTodo[] }
     | { type: 'saved', message?: ArchiveChatMessage, userMessage?: ArchiveChatMessage }
@@ -63,11 +66,38 @@ const _memories = ref<Record<string, ArchiveMemory>>({})
 const _todos = ref<Record<string, ArchiveTodo>>({})
 const _busy = ref(false)
 const _ready = ref(false)
+const _storeReady = ref(false)
 const _loadingMore = ref(false)
 const _cursor = ref<string | null>(null)
+/** The memory open in the sidebar's viewer, if any. */
+const _openMemoryId = ref<string | null>(null)
 
 let _abort: AbortController | null = null
 let _loaded = false
+let _storeLoaded = false
+
+/** What the assistant is doing while a tool runs, before it can say what it did. */
+export const TOOL_VERBS: Record<string, string> = {
+  search_memory: 'Searching memory',
+  recall: 'Recalling',
+  remember: 'Storing a memory',
+  revise: 'Revising a memory',
+  forget: 'Forgetting',
+  add_todos: 'Adding todos',
+  update_todos: 'Updating todos',
+  drop_todos: 'Dropping todos'
+}
+
+export const TOOL_ICONS: Record<string, string> = {
+  search_memory: 'i-lucide-search',
+  recall: 'i-lucide-book-open',
+  remember: 'i-lucide-brain',
+  revise: 'i-lucide-pencil-line',
+  forget: 'i-lucide-trash-2',
+  add_todos: 'i-lucide-list-plus',
+  update_todos: 'i-lucide-check',
+  drop_todos: 'i-lucide-x'
+}
 
 function tempId() {
   return `tmp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
@@ -104,6 +134,35 @@ async function ensureRowsFor(texts: string[]) {
 }
 
 export function useArchive() {
+  /**
+   * Everything stored, for the sidebar. Loaded once per tab; the stream keeps it
+   * current after that, since every row a tool touches is pushed to the client.
+   */
+  async function loadStore(force = false) {
+    if (_storeLoaded && !force) return
+    _storeLoaded = true
+    try {
+      const data = await $fetch<{ memories: ArchiveMemory[], todos: ArchiveTodo[] }>('/api/archive/store')
+      mergeRows(data.memories, data.todos)
+    } catch {
+      // Not signed in yet, or unreachable; the panel shows empty.
+    } finally {
+      _storeReady.value = true
+    }
+  }
+
+  /** Another workspace, another store: drop everything and start over. */
+  async function reset() {
+    _messages.value = []
+    _memories.value = {}
+    _todos.value = {}
+    _cursor.value = null
+    _openMemoryId.value = null
+    _loaded = false
+    _storeLoaded = false
+    await Promise.all([load(true), loadStore(true)])
+  }
+
   async function load(force = false) {
     if (_loaded && !force) return
     _loaded = true
@@ -194,8 +253,18 @@ export function useArchive() {
 
           if (event.type === 'delta' && event.text) {
             reply.content += event.text
+          } else if (event.type === 'tool_start') {
+            const name = event.name ?? ''
+            reply.actions.push({ name, label: `${TOOL_VERBS[name] ?? name}…`, pending: true })
           } else if (event.type === 'tool') {
-            reply.actions.push({ name: event.name ?? '', label: event.label ?? '' })
+            // Finish the step that announced itself, or add one if it never did.
+            const running = reply.actions.find(action => action.pending && action.name === event.name)
+            if (running) {
+              running.label = event.label ?? running.label
+              running.pending = false
+            } else {
+              reply.actions.push({ name: event.name ?? '', label: event.label ?? '' })
+            }
           } else if (event.type === 'rows') {
             mergeRows(event.memories, event.todos)
           } else if (event.type === 'saved') {
@@ -221,6 +290,7 @@ export function useArchive() {
         reply.error = error instanceof Error ? error.message : 'Something went wrong.'
       }
     } finally {
+      for (const action of reply.actions) action.pending = false
       reply.pending = false
       _busy.value = false
       _abort = null
@@ -254,6 +324,22 @@ export function useArchive() {
     _memories.value[id] = row
   }
 
+  async function restoreMemory(id: string) {
+    const row = await $fetch<ArchiveMemory>(`/api/archive/memories/${id}/restore`, { method: 'POST' })
+    _memories.value[id] = row
+  }
+
+  /** Gone for good. Cards that pointed at it say "no longer stored". */
+  async function purgeMemory(id: string) {
+    await $fetch(`/api/archive/memories/${id}`, { method: 'DELETE', query: { permanent: '1' } })
+    const { [id]: _removed, ...rest } = _memories.value
+    _memories.value = rest
+    if (_openMemoryId.value === id) _openMemoryId.value = null
+    for (const todo of Object.values(_todos.value)) {
+      if (todo.memoryId === id) todo.memoryId = null
+    }
+  }
+
   async function saveTodo(id: string, patch: { title?: string, done?: boolean, dueAt?: number | null }) {
     const current = _todos.value[id]
     const row = await $fetch<ArchiveTodo>(`/api/archive/todos/${id}`, {
@@ -275,21 +361,51 @@ export function useArchive() {
     else _todos.value[row.id] = row as ArchiveTodo
   }
 
+  // Sorted views of the caches for the sidebar. Newest change first, so what
+  // the assistant just did is at the top.
+  const liveMemories = computed(() =>
+    Object.values(_memories.value).filter(row => !row.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt)
+  )
+  const forgottenMemories = computed(() =>
+    Object.values(_memories.value).filter(row => row.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt)
+  )
+  const liveTodos = computed(() =>
+    Object.values(_todos.value).filter(row => !row.deletedAt).sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1
+      if (!a.done && a.dueAt !== b.dueAt) return (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity)
+      return b.updatedAt - a.updatedAt
+    })
+  )
+
+  function openMemory(id: string | null) {
+    _openMemoryId.value = id
+  }
+
   return {
     messages: _messages,
     memories: _memories,
     todos: _todos,
+    liveMemories,
+    forgottenMemories,
+    liveTodos,
+    openMemoryId: _openMemoryId,
     busy: _busy,
     ready: _ready,
+    storeReady: _storeReady,
     loadingMore: _loadingMore,
     hasMore: computed(() => _cursor.value !== null),
     load,
+    loadStore,
+    reset,
     loadMore,
     send,
     stop,
     clear,
+    openMemory,
     saveMemory,
     forgetMemory,
+    restoreMemory,
+    purgeMemory,
     saveTodo,
     dropTodo,
     adoptConflict

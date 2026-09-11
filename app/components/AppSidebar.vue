@@ -3,6 +3,7 @@ import type { AppMode } from '~/composables/useSidebar'
 
 const emit = defineEmits<{ close: [] }>()
 const { activeNoteId, createNote } = useNotes()
+const { openMemoryId } = useArchive()
 const searchOpen = useSearchModal()
 const { session, signOut } = useAuth()
 const { appMode } = useSidebar()
@@ -40,6 +41,11 @@ const accountItems = computed(() => [[
 ]])
 
 watch(activeNoteId, () => emit('close'))
+// Opening a memory from the list on a phone: the viewer slides in over the
+// page, so the sidebar it was picked from gets out of the way.
+watch(openMemoryId, (id) => {
+  if (id) emit('close')
+})
 
 async function newNote() {
   const note = await createNote()
@@ -153,17 +159,12 @@ function switchMode(mode: AppMode) {
     >
       <ProjectsListPanel />
     </div>
-    <!-- Archive is a chat window and nothing else: there is no list to show
-         here, because there is nothing for the user to file. -->
-    <div
+    <!-- Archive files nothing by hand, but what it keeps is listed here so the
+         user can see it, open it, and throw out what it got wrong. -->
+    <ArchiveStorePanel
       v-else
-      class="min-h-0 flex-1 overflow-y-auto px-4 py-3"
-    >
-      <p class="text-xs leading-relaxed text-dimmed">
-        Archive stores and manages what you tell it. Ask it what it knows, or
-        just tell it something worth keeping.
-      </p>
-    </div>
+      class="min-h-0 flex-1"
+    />
 
     <div class="shrink-0 space-y-1.5 border-t border-default p-2">
       <TeamSwitcher />

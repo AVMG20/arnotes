@@ -9,8 +9,8 @@ definePageMeta({ layout: 'app' })
 useHead({ title: 'Archive' })
 
 const {
-  messages, busy, ready, loadingMore, hasMore,
-  load, loadMore, send, stop, clear
+  messages, busy, ready, loadingMore, hasMore, liveMemories, liveTodos, storeReady,
+  load, loadStore, loadMore, send, stop, clear
 } = useArchive()
 const { openrouterApiKey, openrouterApiKeyMasked } = useUserSettings()
 const { sidebarOpen } = useSidebar()
@@ -23,14 +23,33 @@ const clearing = ref(false)
 
 const hasApiKey = computed(() => !!openrouterApiKey.value || !!openrouterApiKeyMasked.value)
 const isEmpty = computed(() => ready.value && messages.value.length === 0)
+// A cleared conversation over a full store is not "nothing stored".
+const hasStore = computed(() => liveMemories.value.length > 0 || liveTodos.value.length > 0)
+
+// What is in storage, in one line under the title.
+const storeLabel = computed(() => {
+  if (!storeReady.value) return 'Everything you tell it is stored and managed for you'
+  const memories = liveMemories.value.length
+  const open = liveTodos.value.filter(t => !t.done).length
+  if (!memories && !open) return 'Everything you tell it is stored and managed for you'
+  const parts = [`${memories} ${memories === 1 ? 'memory' : 'memories'}`]
+  if (open) parts.push(`${open} open ${open === 1 ? 'todo' : 'todos'}`)
+  return parts.join(' · ')
+})
 
 const SUGGESTIONS = [
   'Remember that I want to build Archive: a chat window that manages its own memory.',
   'What do you know about me so far?',
   'What is still open on my plate?'
 ]
+const RETURNING_SUGGESTIONS = [
+  'What do you know about me so far?',
+  'What is still open on my plate?',
+  'Anything stored that looks out of date?'
+]
 
 onMounted(async () => {
+  loadStore()
   await load()
   await nextTick()
   scrollToBottom('auto')
@@ -122,19 +141,23 @@ async function clearConversation() {
           Archive
         </h1>
         <p class="truncate text-xs text-dimmed">
-          Everything you tell it is stored and managed for you
+          {{ storeLabel }}
         </p>
       </div>
-      <UButton
+      <UTooltip
         v-if="messages.length"
-        icon="i-lucide-eraser"
-        size="sm"
-        color="neutral"
-        variant="ghost"
-        :loading="clearing"
-        aria-label="Clear conversation"
-        @click="clearConversation"
-      />
+        text="Clear the conversation. Memories stay."
+      >
+        <UButton
+          icon="i-lucide-eraser"
+          size="sm"
+          color="neutral"
+          variant="ghost"
+          :loading="clearing"
+          aria-label="Clear conversation"
+          @click="clearConversation"
+        />
+      </UTooltip>
     </header>
 
     <div
@@ -168,16 +191,22 @@ async function clearConversation() {
           />
           <div>
             <p class="text-sm font-medium text-default">
-              Nothing stored yet
+              {{ hasStore ? 'Pick up where you left off' : 'Nothing stored yet' }}
             </p>
             <p class="mx-auto mt-1 max-w-md text-sm text-muted">
-              Tell Archive anything worth keeping. It decides where it goes, keeps it
-              current, and turns plans into todos on its own.
+              <template v-if="hasStore">
+                Archive still holds everything from before. What it knows is listed in
+                the sidebar; ask it anything, or tell it something new.
+              </template>
+              <template v-else>
+                Tell Archive anything worth keeping. It decides where it goes, keeps it
+                current, and turns plans into todos on its own.
+              </template>
             </p>
           </div>
           <div class="flex flex-col items-stretch gap-2">
             <UButton
-              v-for="suggestion in SUGGESTIONS"
+              v-for="suggestion in (hasStore ? RETURNING_SUGGESTIONS : SUGGESTIONS)"
               :key="suggestion"
               color="neutral"
               variant="soft"
@@ -210,7 +239,7 @@ async function clearConversation() {
           description="Add one in Settings → AI to start."
         />
 
-        <div class="flex items-end gap-2 rounded-xl border border-default bg-elevated/40 px-3 py-2.5">
+        <div class="flex items-end gap-2 rounded-xl border border-default bg-elevated/40 px-3 py-2.5 transition-colors focus-within:border-primary/50">
           <ArchiveComposer
             ref="composer"
             v-model="draft"
@@ -241,5 +270,7 @@ async function clearConversation() {
         </p>
       </div>
     </footer>
+
+    <ArchiveMemoryDrawer />
   </div>
 </template>

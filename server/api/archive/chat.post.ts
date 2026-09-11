@@ -18,6 +18,7 @@ import { DEFAULT_OPENROUTER_MODEL } from '../../utils/ai'
 
 // Archive's turn. NDJSON to the client:
 //   { type: 'delta', text }              — assistant text
+//   { type: 'tool_start', name }         — a tool is about to run
 //   { type: 'tool', name, label }        — a tool ran, and what it did
 //   { type: 'rows', memories, todos }    — rows touched, so cards draw at once
 //   { type: 'ping' }                     — keepalive
@@ -147,11 +148,16 @@ export default defineEventHandler(async (event) => {
       const messages = [...baseMessages]
       const actions: ArchiveAction[] = []
       const chunks: string[] = []
+      // Text of the round in flight, so a turn cut short still keeps what the
+      // user has already read.
+      const live = { text: '' }
       let usedTools = false
 
       try {
         for (let round = 0; round < MAX_ROUNDS; round++) {
-          const turn = await runRound({ apiKey, model, messages, signal: upstream.signal, decoder, send, usage })
+          live.text = ''
+          const turn = await runRound({ apiKey, model, messages, signal: upstream.signal, decoder, send, usage, live })
+          live.text = ''
 
           if (turn.text.trim()) chunks.push(turn.text.trim())
           if (!turn.toolCalls.length) break
@@ -159,22 +165,23 @@ export default defineEventHandler(async (event) => {
           usedTools = true
           messages.push({ role: 'assistant', content: turn.text || null, tool_calls: turn.toolCalls })
 
-          const touched = { memories: [] as ArchiveMemory[], todos: [] as ArchiveTodo[] }
           for (const call of turn.toolCalls) {
+            send({ type: 'tool_start', name: call.function.name })
             const outcome = await runTool(scope, call)
             actions.push({ name: call.function.name, label: outcome.label })
             send({ type: 'tool', name: call.function.name, label: outcome.label })
-            if (outcome.memories?.length) touched.memories.push(...outcome.memories)
-            if (outcome.todos?.length) touched.todos.push(...outcome.todos)
+            // Rows go out with the call that touched them, so the sidebar's
+            // storage view moves while the assistant is still working.
+            const touched: { memories?: ArchiveMemory[], todos?: ArchiveTodo[] } = {}
+            if (outcome.memories?.length) touched.memories = outcome.memories
+            if (outcome.todos?.length) touched.todos = outcome.todos
+            if (touched.memories || touched.todos) send({ type: 'rows', ...touched })
             messages.push({
               role: 'tool',
               tool_call_id: call.id,
               content: JSON.stringify(outcome.result)
             })
           }
-          // One push per round rather than per call: a card only needs the row
-          // by the time the reply naming it arrives.
-          if (touched.memories.length || touched.todos.length) send({ type: 'rows', ...touched })
 
           if (round === MAX_ROUNDS - 1) {
             chunks.push('_Stopped after too many steps in one turn. Ask me to continue._')
@@ -186,19 +193,20 @@ export default defineEventHandler(async (event) => {
         send({ type: 'saved', message: saved, userMessage: userRow })
         send({ type: 'done' })
       } catch (error) {
-        if (!clientGone) {
-          const message = error instanceof UpstreamError
-            ? error.message
-            : error instanceof Error ? error.message : 'The model stream failed'
-          console.error('[Archive] Turn failed', { model, error })
-          // Whatever was written before the failure is still worth keeping.
-          const partial = chunks.join('\n\n')
-          if (partial.trim() || actions.length) {
-            const saved = await persistMessage(scope, 'assistant', partial, actions).catch(() => null)
-            if (saved) send({ type: 'saved', message: saved, userMessage: userRow })
-          }
-          send({ type: 'error', message })
+        const message = error instanceof UpstreamError
+          ? error.message
+          : error instanceof Error ? error.message : 'The model stream failed'
+        if (!clientGone) console.error('[Archive] Turn failed', { model, error })
+
+        // Whatever was written before the failure is still worth keeping — also
+        // when the user pressed Stop, so the transcript matches what they saw.
+        if (live.text.trim()) chunks.push(live.text.trim())
+        const partial = chunks.join('\n\n')
+        if (partial.trim() || actions.length) {
+          const saved = await persistMessage(scope, 'assistant', partial, actions).catch(() => null)
+          if (saved) send({ type: 'saved', message: saved, userMessage: userRow })
         }
+        send({ type: 'error', message })
       } finally {
         clearInterval(heartbeat)
         upstream.abort()
@@ -287,8 +295,10 @@ async function runRound(opts: {
   decoder: TextDecoder
   send: (obj: unknown) => void
   usage: { inputTokens: number, outputTokens: number, totalTokens: number, cost: number }
+  /** Mirrors the text streamed so far, for the caller's error path. */
+  live: { text: string }
 }): Promise<{ text: string, toolCalls: WireToolCall[] }> {
-  const { apiKey, model, messages, signal, decoder, send, usage } = opts
+  const { apiKey, model, messages, signal, decoder, send, usage, live } = opts
 
   let res: Response
   try {
@@ -380,6 +390,7 @@ async function runRound(opts: {
         if (!delta) continue
         if (delta.content) {
           text += delta.content
+          live.text = text
           send({ type: 'delta', text: delta.content })
         }
         // Tool arguments arrive fragmented across deltas; reassemble by index.

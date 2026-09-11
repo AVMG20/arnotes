@@ -4,6 +4,7 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 const { teams, activeTeam, setActiveTeam } = useTeams()
 const { refreshNotes } = useNotes()
 const { refresh: refreshProjects } = useProjects()
+const { reset: resetArchive } = useArchive()
 
 const showManageModal = ref(false)
 const showCreateModal = ref(false)
@@ -15,6 +16,7 @@ async function handleSelectTeam(id: string | null) {
   await setActiveTeam(id)
   await refreshNotes()
   await refreshProjects()
+  await resetArchive()
   // The board that was open belongs to the workspace we just left; its route
   // would keep pointing at an id the new workspace does not have.
   if (route.path.startsWith('/projects/')) navigateTo('/projects', { replace: true })
