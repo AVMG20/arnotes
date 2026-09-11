@@ -10,7 +10,7 @@ const router = useRouter()
 const { session, signOut } = useAuth()
 const colorMode = useColorMode()
 const { notes, activeNotes, allTags, activeNoteId } = useNotes()
-const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor, openrouterApiKeyMasked, openrouterModel, POPULAR_OPENROUTER_MODELS, setOpenRouterApiKey, setOpenRouterModel } = useUserSettings()
+const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor, openrouterApiKeyMasked, openrouterModel, POPULAR_OPENROUTER_MODELS, setOpenRouterApiKey, setOpenRouterModel, archiveContextMessages, ARCHIVE_CONTEXT, setArchiveContextMessages } = useUserSettings()
 const { sidebarOpen } = useSidebar()
 
 const toast = useToast()
@@ -109,6 +109,23 @@ async function clearApiKey() {
     toast.add({ title: 'API key removed', icon: 'i-lucide-trash', duration: 2000 })
   } finally {
     apiKeySaving.value = false
+  }
+}
+
+// Archive replays this many chat turns. It lives here rather than on the chat
+// page on purpose: Archive is meant to be one window with nothing to fiddle with.
+const archiveContextDraft = ref(archiveContextMessages.value)
+watch(archiveContextMessages, (value) => {
+  archiveContextDraft.value = value
+})
+
+async function changeArchiveContext(count: number) {
+  try {
+    await setArchiveContextMessages(count)
+    toast.add({ title: 'Archive context updated', icon: 'i-lucide-check', duration: 1500 })
+  } catch {
+    archiveContextDraft.value = archiveContextMessages.value
+    toast.add({ title: 'Could not save that', color: 'error' })
   }
 }
 
@@ -583,6 +600,40 @@ function swatchStyle(color: string, selected: boolean) {
                         Prices come from OpenRouter and are shown per million input and output tokens. Search the complete catalog, or type any model slug and press Enter.
                       </template>
                     </span>
+                  </p>
+                </div>
+              </div>
+
+              <!-- Archive context window -->
+              <div class="px-5 py-4 space-y-3 border-t border-default">
+                <div class="flex items-center gap-4">
+                  <div class="size-8 rounded-lg bg-elevated flex items-center justify-center shrink-0">
+                    <UIcon
+                      name="i-lucide-archive"
+                      class="size-4 text-default"
+                    />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium">
+                      Archive context
+                    </p>
+                    <p class="text-xs text-muted mt-0.5">
+                      How many chat messages Archive re-reads each turn, its own replies included
+                    </p>
+                  </div>
+                </div>
+                <div class="pl-12 flex items-center gap-3">
+                  <UInputNumber
+                    v-model="archiveContextDraft"
+                    :min="ARCHIVE_CONTEXT.min"
+                    :max="ARCHIVE_CONTEXT.max"
+                    class="w-32"
+                    aria-label="Archive context messages"
+                    @update:model-value="changeArchiveContext($event as number)"
+                  />
+                  <p class="text-xs text-muted">
+                    Archive reads its stored memory fresh every turn, so a short window
+                    costs less without forgetting anything. Default {{ ARCHIVE_CONTEXT.default }}.
                   </p>
                 </div>
               </div>

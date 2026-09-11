@@ -1,5 +1,5 @@
 import { db } from '../db'
-import { userSettings, AI_SETTINGS_DEFAULTS } from '../db/schema'
+import { userSettings, AI_SETTINGS_DEFAULTS, ARCHIVE_CONTEXT } from '../db/schema'
 import { eq } from 'drizzle-orm'
 
 const VALID_PRIMARY = new Set(['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose'])
@@ -12,6 +12,7 @@ export default defineEventHandler(async (event) => {
     neutralColor: string
     openrouterApiKey?: string | null
     openrouterModel?: string
+    archiveContextMessages?: number
   }>(event)
 
   if (!body.primaryColor || !body.neutralColor || !VALID_PRIMARY.has(body.primaryColor) || !VALID_NEUTRAL.has(body.neutralColor)) {
@@ -34,13 +35,24 @@ export default defineEventHandler(async (event) => {
     openrouterApiKey = trimmed ? trimmed : null
   }
 
+  // Archive's context window. Omitted means "leave it alone", and a value out of
+  // range is clamped rather than rejected — it is a slider, and a settings page
+  // saving colours should never fail over it.
+  let archiveContextMessages = existing?.archiveContextMessages ?? ARCHIVE_CONTEXT.default
+  if (body.archiveContextMessages !== undefined) {
+    const requested = Math.round(Number(body.archiveContextMessages))
+    if (Number.isFinite(requested)) {
+      archiveContextMessages = Math.min(ARCHIVE_CONTEXT.max, Math.max(ARCHIVE_CONTEXT.min, requested))
+    }
+  }
+
   await db
     .insert(userSettings)
-    .values({ userId, primaryColor, neutralColor, openrouterApiKey, openrouterModel, updatedAt: new Date() })
+    .values({ userId, primaryColor, neutralColor, openrouterApiKey, openrouterModel, archiveContextMessages, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: userSettings.userId,
-      set: { primaryColor, neutralColor, openrouterApiKey, openrouterModel, updatedAt: new Date() }
+      set: { primaryColor, neutralColor, openrouterApiKey, openrouterModel, archiveContextMessages, updatedAt: new Date() }
     })
 
-  return { primaryColor, neutralColor, openrouterModel, openrouterApiKey }
+  return { primaryColor, neutralColor, openrouterModel, openrouterApiKey, archiveContextMessages }
 })

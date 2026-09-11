@@ -29,15 +29,21 @@ interface AppSettings {
   openrouterApiKey: string | null
   openrouterApiKeyMasked: string | null
   openrouterModel: string
+  archiveContextMessages: number
 }
 
 const DEFAULT_MODEL = 'openai/gpt-4o-mini'
+
+// Chat turns Archive replays to the model. Mirrors ARCHIVE_CONTEXT on the server,
+// which clamps whatever arrives.
+export const ARCHIVE_CONTEXT = { default: 6, min: 2, max: 40 } as const
 
 const _primaryColor = ref<PrimaryColor>('emerald')
 const _neutralColor = ref<NeutralColor>('zinc')
 const _openrouterApiKey = ref<string | null>(null)
 const _openrouterApiKeyMasked = ref<string | null>(null)
 const _openrouterModel = ref<string>(DEFAULT_MODEL)
+const _archiveContextMessages = ref<number>(ARCHIVE_CONTEXT.default)
 
 export async function loadUserSettings() {
   try {
@@ -47,6 +53,7 @@ export async function loadUserSettings() {
     _openrouterApiKey.value = data.openrouterApiKey
     _openrouterApiKeyMasked.value = data.openrouterApiKeyMasked
     _openrouterModel.value = data.openrouterModel || DEFAULT_MODEL
+    _archiveContextMessages.value = data.archiveContextMessages || ARCHIVE_CONTEXT.default
     applyColors(data.primaryColor, data.neutralColor)
   } catch {
     // Not authenticated yet — silently skip
@@ -103,18 +110,34 @@ export function useUserSettings() {
     })
   }
 
+  async function setArchiveContextMessages(count: number) {
+    const clamped = Math.min(ARCHIVE_CONTEXT.max, Math.max(ARCHIVE_CONTEXT.min, Math.round(count)))
+    _archiveContextMessages.value = clamped
+    await $fetch('/api/settings', {
+      method: 'PUT',
+      body: {
+        primaryColor: _primaryColor.value,
+        neutralColor: _neutralColor.value,
+        archiveContextMessages: clamped
+      }
+    })
+  }
+
   return {
     primaryColor: _primaryColor,
     neutralColor: _neutralColor,
     openrouterApiKey: _openrouterApiKey,
     openrouterApiKeyMasked: _openrouterApiKeyMasked,
     openrouterModel: _openrouterModel,
+    archiveContextMessages: _archiveContextMessages,
+    ARCHIVE_CONTEXT,
     PRIMARY_COLORS,
     NEUTRAL_COLORS,
     POPULAR_OPENROUTER_MODELS,
     setPrimaryColor,
     setNeutralColor,
     setOpenRouterApiKey,
-    setOpenRouterModel
+    setOpenRouterModel,
+    setArchiveContextMessages
   }
 }

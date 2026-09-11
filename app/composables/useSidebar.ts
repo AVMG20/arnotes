@@ -1,5 +1,7 @@
 const _sidebarOpen = ref(false)
-const _appMode = useCookie<'notes' | 'projects'>('app-mode', { default: () => 'notes' })
+export type AppMode = 'notes' | 'projects' | 'archive'
+
+const _appMode = useCookie<AppMode>('app-mode', { default: () => 'notes' })
 
 export function useSidebar() {
   return {

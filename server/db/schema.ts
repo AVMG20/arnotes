@@ -236,6 +236,9 @@ export const userSettings = pgTable('user_settings', {
   neutralColor: text('neutral_color').notNull().default('zinc'),
   openrouterApiKey: text('openrouter_api_key'),
   openrouterModel: text('openrouter_model').notNull().default('openai/gpt-4o-mini'),
+  // How many chat turns Archive replays to the model. Small by design: Archive
+  // reads its own memory each turn rather than remembering through transcript.
+  archiveContextMessages: integer('archive_context_messages').notNull().default(6),
   updatedAt: timestamp('updated_at').notNull()
 })
 
@@ -307,3 +310,117 @@ export const apiKeys = pgTable(
 )
 
 export type ApiKey = typeof apiKeys.$inferSelect
+
+// ─── Archive (agent-managed memory) ───────────────────────────────────────────
+
+// Archive is a chat window with no manual filing: the assistant owns what is
+// stored and where. That makes two things load-bearing here.
+//
+// Todos live in their own table rather than as "- [ ]" lines inside a memory
+// body. Ticking a box has to be one UPDATE on one row — as markdown it would be
+// string surgery on the body, and "what is still open" would be a parsing
+// problem instead of a WHERE clause.
+//
+// Every row carries createdAt and updatedAt because the assistant reasons about
+// staleness: shown two memories that cover the same ground, the newer one wins
+// and the older is consolidated into it.
+
+export const archiveMemories = pgTable(
+  'archive_memories',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    // NULL = personal workspace, the same scoping rule as notes and boards.
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    // Short label. It is what the always-in-context index is built from, so it
+    // carries the whole memory's identity in a handful of tokens.
+    title: text('title').notNull().default('Untitled'),
+    // Markdown, as written by the assistant or corrected by the user in place.
+    body: text('body').notNull().default(''),
+    tags: json('tags').$type<string[]>().notNull().default([]),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    // Soft, like everything else the user can lose. `forget` sets this; only
+    // the sidebar's Forgotten list, after a confirmation, deletes for good.
+    deletedAt: bigint('deleted_at', { mode: 'number' })
+  },
+  table => [
+    index('archive_memories_user_idx').on(table.userId),
+    index('archive_memories_team_idx').on(table.teamId)
+  ]
+)
+
+export type ArchiveMemory = typeof archiveMemories.$inferSelect
+
+export const archiveTodos = pgTable(
+  'archive_todos',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    // The memory this came out of, when it came out of one: "I want to build
+    // Archive" is a memory, and the checklist the assistant derived from it
+    // hangs here. Cleared rather than cascaded, so forgetting the memory leaves
+    // the work standing.
+    memoryId: text('memory_id').references(() => archiveMemories.id, { onDelete: 'set null' }),
+    title: text('title').notNull().default('Untitled'),
+    done: boolean('done').notNull().default(false),
+    doneAt: bigint('done_at', { mode: 'number' }),
+    dueAt: bigint('due_at', { mode: 'number' }),
+    tags: json('tags').$type<string[]>().notNull().default([]),
+    position: integer('position').notNull().default(0),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    deletedAt: bigint('deleted_at', { mode: 'number' })
+  },
+  table => [
+    index('archive_todos_user_idx').on(table.userId),
+    index('archive_todos_team_idx').on(table.teamId),
+    // The open-todo digest is rebuilt on every single chat turn.
+    index('archive_todos_done_idx').on(table.done)
+  ]
+)
+
+export type ArchiveTodo = typeof archiveTodos.$inferSelect
+
+/** What the assistant did during a turn, kept for the transcript's own sake. */
+export interface ArchiveAction {
+  name: string
+  label: string
+}
+
+// One rolling conversation per workspace — Archive has no chat list. The
+// transcript is stored server-side rather than in the tab so it survives a
+// reload and follows the user between devices; only the last few turns are ever
+// replayed to the model.
+export const archiveMessages = pgTable(
+  'archive_messages',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    teamId: text('team_id').references(() => organization.id, { onDelete: 'cascade' }),
+    role: text('role').$type<'user' | 'assistant'>().notNull(),
+    // Assistant content keeps its card fences verbatim. They are references, not
+    // copies: the body is looked up live when the message is drawn, and stripped
+    // back to a bare reference when the message is replayed to the model.
+    content: text('content').notNull().default(''),
+    actions: json('actions').$type<ArchiveAction[]>().notNull().default([]),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('archive_messages_user_created_idx').on(table.userId, table.createdAt)]
+)
+
+export type ArchiveMessage = typeof archiveMessages.$inferSelect
+
+/** Chat turns replayed to the model. The user picks this in Settings → AI. */
+export const ARCHIVE_CONTEXT = { default: 6, min: 2, max: 40 } as const
+
+/**
+ * Ceiling on the always-sent memory index, in rows. Past it the oldest entries
+ * degrade to title-only and then drop out entirely, so a large Archive costs a
+ * bounded number of tokens per turn instead of a growing one.
+ */
+export const ARCHIVE_INDEX_LIMIT = 200
+
+/** Open todos summarised into each turn. Done work leaves the prompt by itself. */
+export const ARCHIVE_TODO_DIGEST_LIMIT = 60
