@@ -800,6 +800,21 @@ summary {
   height: auto;
 }
 
+/* Mermaid sizes each box from a label measured off-screen, then draws the
+   label as HTML with one `p` per line. The editor's own text rules reach into
+   that HTML (Nuxt UI gives every `p` in the editor a taller line height), so
+   the drawn label ends up taller than the box it was measured for and the
+   last lines are clipped. The label keeps the metrics it was measured at. */
+.diagram-preview-canvas svg :is(p, span, a, code) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  background: none;
+}
+
 .diagram-preview-canvas .chart-svg {
   width: 100%;
   max-height: 22rem;
