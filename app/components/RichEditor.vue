@@ -417,6 +417,19 @@ const HashtagHighlight = Extension.create({
   }
 })
 
+// Some sources (browsers copying a rendered page) put only HTML on the
+// clipboard; the text inside it is what a code block wants.
+function plainTextFromHtml(html: string): string {
+  if (!html) return ''
+  // A parsed-but-unrendered document has no layout, so `innerText` would not
+  // turn line breaks into newlines; they are marked in the markup first.
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|tr|h[1-6]|pre|blockquote)>/gi, '\n')
+  const doc = new DOMParser().parseFromString(withBreaks, 'text/html')
+  return (doc.body.textContent ?? '').replace(/\n$/, '')
+}
+
 const MarkdownPaste = Extension.create({
   name: 'markdownPaste',
   addProseMirrorPlugins() {
@@ -425,8 +438,24 @@ const MarkdownPaste = Extension.create({
       new Plugin({
         key: new PluginKey('markdownPaste'),
         props: {
-          handlePaste(_view, event) {
+          handlePaste(view, event) {
             const text = event.clipboardData?.getData('text/plain') ?? ''
+
+            // Inside a code block the clipboard is source, not prose: it goes
+            // in verbatim as text. Parsing it as Markdown or styled HTML would
+            // split the block at blank lines, swallow `-->` arrows and `[]`
+            // labels, or end the block early.
+            const { $from, $to } = view.state.selection
+            if ($from.parent.type.spec.code && $from.sameParent($to)) {
+              const raw = text || plainTextFromHtml(event.clipboardData?.getData('text/html') ?? '')
+              if (!raw) return false
+              event.preventDefault()
+              const tr = view.state.tr.insertText(raw.replace(/\r\n?/g, '\n'))
+              tr.setMeta('paste', true)
+              view.dispatch(tr)
+              return true
+            }
+
             if (!text.trim()) return false
 
             const html = markdownToHtml(text)
