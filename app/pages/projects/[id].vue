@@ -254,21 +254,13 @@ useSeoMeta({
         />
 
         <UDropdownMenu :items="projectMenu">
-          <UChip
-            :show="trashedCount > 0 && !showTrashed"
-            color="warning"
-            size="sm"
-          >
-            <UButton
-              icon="i-lucide-ellipsis"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              :aria-label="trashedCount && !showTrashed
-                ? `Project options — ${trashedCount} deleted ${trashedCount === 1 ? 'item' : 'items'} in the trash`
-                : 'Project options'"
-            />
-          </UChip>
+          <UButton
+            icon="i-lucide-ellipsis"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            aria-label="Project options"
+          />
         </UDropdownMenu>
       </div>
     </header>

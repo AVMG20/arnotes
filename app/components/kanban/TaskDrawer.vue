@@ -111,6 +111,10 @@ function resetWidth() {
 
 // Declared up here because the task-switch watcher below resets them.
 const commentDraft = ref('')
+// The thread opens as its own sheet over the task rather than living under the
+// description: pinned there it took a third of the panel from the description
+// and still had to be scrolled inside itself to be read.
+const updatesOpen = ref(false)
 // Clicking anywhere along the composer row puts the caret in the editor.
 const composer = ref<{ focus: () => void } | null>(null)
 const tagDraft = ref('')
@@ -174,6 +178,7 @@ watch(editorContent, () => {
 watch(() => props.task?.id, (id, previousId) => {
   flushTitle(previousId)
   flushDescription(previousId)
+  updatesOpen.value = false
   if (!id) return
 
   titleDraft.value = props.task?.title ?? ''
@@ -309,7 +314,6 @@ function onTagBlur() {
 
 // ─── Updates (comments) ────────────────────────────────────
 
-const updatesOpen = useCookie<boolean>('kanban-updates-open', { default: () => true })
 const updatesEl = ref<HTMLElement | null>(null)
 
 function initials(name: string | null | undefined) {
@@ -338,6 +342,8 @@ function updateSourceLabel(comment: TaskComment) {
 
 async function scrollUpdatesToEnd() {
   await nextTick()
+  // The sheet mounts its content a tick after it opens.
+  await nextTick()
   const el = updatesEl.value
   if (el) el.scrollTop = el.scrollHeight
 }
@@ -351,7 +357,9 @@ async function sendComment() {
 }
 
 watch(updatesOpen, (isOpen) => {
-  if (isOpen) scrollUpdatesToEnd()
+  if (!isOpen) return
+  scrollUpdatesToEnd()
+  nextTick(() => composer.value?.focus())
 })
 
 // ─── Move / delete ─────────────────────────────────────────
@@ -481,6 +489,18 @@ const menuItems = computed(() => [[
             <template v-if="activeProject">{{ activeProject.name }} · </template>edited {{ relativeTime(shownTask.updatedAt) }}
           </span>
 
+          <UButton
+            icon="i-lucide-message-square"
+            size="xs"
+            color="neutral"
+            :variant="updatesOpen ? 'soft' : 'ghost'"
+            :label="comments.length ? String(comments.length) : undefined"
+            :aria-label="comments.length ? `Updates (${comments.length})` : 'Updates'"
+            title="Updates"
+            :ui="{ label: 'tabular-nums' }"
+            @click="updatesOpen = true"
+          />
+
           <UDropdownMenu
             :items="menuItems"
             :content="{ align: 'end', collisionPadding: 12 }"
@@ -571,113 +591,127 @@ const menuItems = computed(() => [[
             />
           </div>
         </div>
-
-        <!-- Updates: a short running log of what happened -->
-        <section
-          class="flex shrink-0 flex-col border-t border-default"
-          :class="updatesOpen ? 'max-h-72' : ''"
-        >
-          <button
-            class="flex shrink-0 items-center gap-2 px-5 py-2.5 text-left transition-colors hover:bg-elevated/50"
-            @click="updatesOpen = !updatesOpen"
-          >
-            <UIcon
-              name="i-lucide-message-square"
-              class="size-3.5 text-muted"
-            />
-            <span class="text-xs font-semibold text-muted">Updates</span>
-            <span
-              v-if="comments.length"
-              class="text-xs text-dimmed"
-            >{{ comments.length }}</span>
-            <UIcon
-              :name="updatesOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'"
-              class="ml-auto size-3.5 text-dimmed"
-            />
-          </button>
-
-          <template v-if="updatesOpen">
-            <div
-              ref="updatesEl"
-              class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 pb-3"
-            >
-              <p
-                v-if="comments.length === 0"
-                class="py-6 text-center text-xs text-dimmed"
-              >
-                No updates yet. Note progress, blockers or decisions below.
-              </p>
-
-              <div
-                v-for="comment in comments"
-                :key="comment.id"
-                class="flex w-full gap-2.5"
-              >
-                <UAvatar
-                  v-if="isAgentUpdate(comment)"
-                  icon="i-lucide-bot"
-                  size="2xs"
-                  class="mt-0.5 shrink-0"
-                />
-                <UAvatar
-                  v-else
-                  :alt="initials(comment.userName)"
-                  size="2xs"
-                  class="mt-0.5 shrink-0"
-                />
-                <div class="w-full min-w-0 flex-1">
-                  <div class="flex items-baseline gap-2">
-                    <span class="truncate text-xs font-medium text-default">
-                      {{ updateAuthor(comment) }}
-                    </span>
-                    <span
-                      v-if="isAgentUpdate(comment)"
-                      class="shrink-0 rounded px-1 py-px text-[0.625rem] font-semibold uppercase tracking-wide text-muted ring-1 ring-inset ring-accented"
-                    >
-                      {{ updateSourceLabel(comment) }}
-                    </span>
-                    <span class="shrink-0 text-xs text-dimmed">
-                      {{ relativeTime(comment.createdAt) }}
-                    </span>
-                  </div>
-                  <InlineMarkdown
-                    :text="comment.body"
-                    class="text-sm leading-relaxed text-default"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div
-              class="flex shrink-0 cursor-text items-start gap-2 border-t border-default px-4 py-2.5"
-              @click="composer?.focus()"
-            >
-              <UAvatar
-                :alt="userInitials"
-                size="2xs"
-                class="mt-0.5 shrink-0"
-              />
-              <UpdateComposer
-                ref="composer"
-                v-model="commentDraft"
-                placeholder="Add an update…"
-                @submit="sendComment"
-              />
-              <UButton
-                icon="i-lucide-arrow-up"
-                size="xs"
-                color="primary"
-                class="shrink-0"
-                :disabled="!commentDraft.trim()"
-                aria-label="Add update"
-                @click="sendComment"
-              />
-            </div>
-          </template>
-        </section>
       </div>
     </template>
   </UDrawer>
+
+  <!-- Updates: a short running log of what happened, in a sheet of its own
+       that slides in over the task. -->
+  <USlideover
+    v-model:open="updatesOpen"
+    side="right"
+    :ui="{ content: 'max-w-md' }"
+  >
+    <template #content>
+      <div class="flex h-full flex-col bg-default">
+        <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
+          <UIcon
+            name="i-lucide-message-square"
+            class="size-4 text-muted"
+          />
+          <span class="text-sm font-semibold text-default">Updates</span>
+          <span
+            v-if="comments.length"
+            class="text-xs tabular-nums text-dimmed"
+          >{{ comments.length }}</span>
+          <span
+            v-if="shownTask"
+            class="min-w-0 flex-1 truncate text-xs text-dimmed"
+            :title="shownTask.title"
+          >· {{ shownTask.title }}</span>
+          <UButton
+            icon="i-lucide-x"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            aria-label="Close updates"
+            class="ml-auto"
+            @click="updatesOpen = false"
+          />
+        </header>
+
+        <div
+          ref="updatesEl"
+          class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
+        >
+          <p
+            v-if="comments.length === 0"
+            class="py-10 text-center text-xs text-dimmed"
+          >
+            No updates yet. Note where this stands — on staging, waiting on feedback, needs more work.
+          </p>
+
+          <div
+            v-for="comment in comments"
+            :key="comment.id"
+            class="flex w-full gap-2.5"
+          >
+            <UAvatar
+              v-if="isAgentUpdate(comment)"
+              icon="i-lucide-bot"
+              size="2xs"
+              class="mt-0.5 shrink-0"
+            />
+            <UAvatar
+              v-else
+              :alt="initials(comment.userName)"
+              size="2xs"
+              class="mt-0.5 shrink-0"
+            />
+            <div class="w-full min-w-0 flex-1">
+              <div class="flex items-baseline gap-2">
+                <span class="truncate text-xs font-medium text-default">
+                  {{ updateAuthor(comment) }}
+                </span>
+                <span
+                  v-if="isAgentUpdate(comment)"
+                  class="shrink-0 rounded px-1 py-px text-[0.625rem] font-semibold uppercase tracking-wide text-muted ring-1 ring-inset ring-accented"
+                >
+                  {{ updateSourceLabel(comment) }}
+                </span>
+                <span
+                  class="shrink-0 text-xs text-dimmed"
+                  :title="fullDate(comment.createdAt)"
+                >
+                  {{ relativeTime(comment.createdAt) }}
+                </span>
+              </div>
+              <InlineMarkdown
+                :text="comment.body"
+                class="text-sm leading-relaxed text-default"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="flex shrink-0 cursor-text items-start gap-2 border-t border-default px-4 py-3"
+          @click="composer?.focus()"
+        >
+          <UAvatar
+            :alt="userInitials"
+            size="2xs"
+            class="mt-0.5 shrink-0"
+          />
+          <UpdateComposer
+            ref="composer"
+            v-model="commentDraft"
+            placeholder="Add an update…"
+            @submit="sendComment"
+          />
+          <UButton
+            icon="i-lucide-arrow-up"
+            size="xs"
+            color="primary"
+            class="shrink-0"
+            :disabled="!commentDraft.trim()"
+            aria-label="Add update"
+            @click="sendComment"
+          />
+        </div>
+      </div>
+    </template>
+  </USlideover>
 
   <UModal
     v-model:open="deleteOpen"
