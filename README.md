@@ -176,7 +176,7 @@ Keys are created per workspace: a key made inside a team reaches that team's not
 | Read notes | `list_notes`, `search_notes`, `get_note`, `list_tags` |
 | Write notes | `create_note`, `update_note`, `delete_note`, `restore_note` |
 | Read boards | `list_boards`, `get_board`, `get_task`, `search_tasks`, `list_task_labels` |
-| Write boards | `create_board`, `update_board`, `create_column`, `update_column`, `delete_column`, `restore_column`, `create_task`, `update_task`, `move_task`, `delete_task`, `restore_task`, `add_task_update` |
+| Write boards | `create_board`, `update_board`, `create_column`, `update_column`, `delete_column`, `restore_column`, `create_task`, `update_task`, `move_task`, `delete_task`, `restore_task` |
 
 A key is displayed once, at creation. Only its SHA-256 hash is stored, so it can never be shown again — copy it then, or create a new one. Keys can be given an expiry date and can be revoked at any time, which disconnects anything using them immediately.
 

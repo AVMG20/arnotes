@@ -1063,39 +1063,5 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         column: restored?.name ?? columnId
       }
     }
-  },
-  {
-    name: 'add_task_update',
-    title: 'Post a task update',
-    description: 'Post an update on a task — the short running log the team reads for progress, blockers and decisions. Posted under this API key\'s name, shown in the app as an agent rather than as the key owner. Inline Markdown only: **bold**, *italic*, `code`, ~~strike~~, ==highlight== and [links](https://example.com). Headings, lists and images are not rendered — those belong in the task description.',
-    scope: 'boards:write',
-    readOnly: false,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The task id.' },
-        body: { type: 'string', description: 'The update, as inline Markdown. One or two sentences beats a wall of text.' }
-      },
-      required: ['id', 'body']
-    },
-    async handler(args, context) {
-      const { task, board } = await findTask(requireString(args, 'id'), context)
-      const body = requireString(args, 'body').trim()
-
-      await db.insert(taskComments).values({
-        id: newId(),
-        taskId: task.id,
-        userId: context.userId,
-        body,
-        // Posted by the key, in the owner's workspace: the update carries the
-        // key's name in the app rather than the owner's.
-        createdVia: 'mcp',
-        apiKeyId: context.keyId,
-        createdAt: Date.now()
-      })
-
-      await touchBoard(board.id)
-      return { posted: true, board: { id: board.id, name: board.name }, task: task.title, update: body }
-    }
   }
 ]
