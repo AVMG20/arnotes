@@ -57,6 +57,7 @@ export interface TaskComment {
   userId: string
   body: string
   createdAt: number
+  editedAt?: number | null
   userName: string | null
   // How the update was posted, and — when that was an agent over MCP — the name
   // of the key it used, which is what the thread signs it with.
@@ -648,6 +649,24 @@ export function useProjects() {
     return comment
   }
 
+  async function editComment(taskId: string, commentId: string, body: string) {
+    const updated = await $fetch<Pick<TaskComment, 'id' | 'body' | 'editedAt'>>(`/api/tasks/${taskId}/comments/${commentId}`, {
+      method: 'PUT', headers: realtimeHeaders(),
+      body: { body }
+    })
+    _comments.value = _comments.value.map(c => c.id === commentId ? { ...c, ...updated } : c)
+    return updated
+  }
+
+  async function deleteComment(taskId: string, commentId: string) {
+    await $fetch(`/api/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE', headers: realtimeHeaders() })
+    const before = _comments.value.length
+    _comments.value = _comments.value.filter(c => c.id !== commentId)
+    if (_comments.value.length < before) {
+      _commentCounts.value = { ..._commentCounts.value, [taskId]: Math.max(0, (_commentCounts.value[taskId] ?? 1) - 1) }
+    }
+  }
+
   function clearComments() {
     _comments.value = []
     _commentsTaskId.value = null
@@ -748,6 +767,8 @@ export function useProjects() {
     restoreTask,
     loadComments,
     addComment,
+    editComment,
+    deleteComment,
     clearComments,
     searchBoards
   }

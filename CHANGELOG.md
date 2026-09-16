@@ -30,6 +30,7 @@ All notable changes to Arnotes are documented in this file.
 - Task updates are for people again: `add_task_update` is gone from the MCP server, so the log holds what the team writes — on staging, customer feedback, needs more work — and not an agent's summary of its own session. Agents can still read the thread through `get_task`
 - A task's updates open in a sheet of their own from a button in the task panel's header, instead of taking the bottom of the panel away from the description
 - The board menu no longer carries a dot when something is in the trash
+- Your own task updates can be edited in place or deleted from the update's menu; an edited update says so
 - Opening a board changes the page on the click: the board being left is no longer drawn again under the new one, a board seen before comes back from memory while it refreshes, the first cards of each column paint before the rest, and label chips build their right-click menu only when it is used
 - Fixed: dragging a card while a label filter was on could give two cards the same position, leaving them to swap places on their own
 - Fixed: deleting a board's last column destroyed its tasks while the confirmation promised they would move

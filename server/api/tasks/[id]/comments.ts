@@ -16,6 +16,7 @@ export default defineEventHandler(async (event) => {
         userId: taskComments.userId,
         body: taskComments.body,
         createdAt: taskComments.createdAt,
+        editedAt: taskComments.editedAt,
         createdVia: taskComments.createdVia,
         userName: user.name,
         // An agent's update is signed with the key it was posted with, so the

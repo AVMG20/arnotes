@@ -30,6 +30,8 @@ const {
   comments,
   loadComments,
   addComment,
+  editComment,
+  deleteComment,
   clearComments
 } = useProjects()
 
@@ -111,6 +113,9 @@ function resetWidth() {
 
 // Declared up here because the task-switch watcher below resets them.
 const commentDraft = ref('')
+// The update being rewritten in place, if any.
+const editingId = ref<string | null>(null)
+const editDraft = ref('')
 // The thread opens as its own sheet over the task rather than living under the
 // description: pinned there it took a third of the panel from the description
 // and still had to be scrolled inside itself to be read.
@@ -189,6 +194,7 @@ watch(() => props.task?.id, (id, previousId) => {
   })
 
   commentDraft.value = ''
+  cancelEdit()
   tagDraft.value = ''
   tagHighlight.value = -1
   clearComments()
@@ -361,6 +367,83 @@ watch(updatesOpen, (isOpen) => {
   scrollUpdatesToEnd()
   nextTick(() => composer.value?.focus())
 })
+
+// ─── Editing / removing an update ──────────────────────────
+
+// Your own updates only, and that includes what an agent posted with your key —
+// the server holds the same line.
+function canChange(comment: TaskComment) {
+  return !!session.value?.user && comment.userId === session.value.user.id
+}
+
+// A `ref` inside v-for collects into an array; only one edit box is ever open,
+// so it is kept by hand.
+let editComposer: { focus: () => void } | null = null
+
+function setEditComposer(el: unknown) {
+  editComposer = el as { focus: () => void } | null
+}
+
+async function startEdit(comment: TaskComment) {
+  editingId.value = comment.id
+  editDraft.value = comment.body
+  await nextTick()
+  editComposer?.focus()
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editDraft.value = ''
+}
+
+async function saveEdit() {
+  const id = editingId.value
+  const body = editDraft.value.trim()
+  const taskId = props.task?.id
+  if (!id || !taskId) return
+  // Emptying an update is not how it gets removed; that asks first.
+  if (!body) return
+  cancelEdit()
+  try {
+    await editComment(taskId, id, body)
+  } catch {
+    toast.add({ title: 'Could not save the update', icon: 'i-lucide-alert-triangle', color: 'error' })
+  }
+}
+
+// Escape inside the edit box ends the edit, not the whole sheet.
+function onSheetEscape(event: KeyboardEvent) {
+  if (!editingId.value) return
+  event.preventDefault()
+  cancelEdit()
+}
+
+const deletingComment = ref<TaskComment | null>(null)
+
+async function confirmDeleteComment() {
+  const comment = deletingComment.value
+  deletingComment.value = null
+  if (!comment) return
+  if (editingId.value === comment.id) cancelEdit()
+  try {
+    await deleteComment(comment.taskId, comment.id)
+  } catch {
+    toast.add({ title: 'Could not remove the update', icon: 'i-lucide-alert-triangle', color: 'error' })
+  }
+}
+
+function commentMenu(comment: TaskComment) {
+  return [[
+    { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => startEdit(comment) }
+  ], [
+    {
+      label: 'Delete',
+      icon: 'i-lucide-trash-2',
+      color: 'error' as const,
+      onSelect: () => { deletingComment.value = comment }
+    }
+  ]]
+}
 
 // ─── Move / delete ─────────────────────────────────────────
 
@@ -600,6 +683,7 @@ const menuItems = computed(() => [[
   <USlideover
     v-model:open="updatesOpen"
     side="right"
+    :content="{ onEscapeKeyDown: onSheetEscape }"
     :ui="{ content: 'max-w-md' }"
   >
     <template #content>
@@ -644,7 +728,7 @@ const menuItems = computed(() => [[
           <div
             v-for="comment in comments"
             :key="comment.id"
-            class="flex w-full gap-2.5"
+            class="group/update flex w-full gap-2.5"
           >
             <UAvatar
               v-if="isAgentUpdate(comment)"
@@ -675,8 +759,59 @@ const menuItems = computed(() => [[
                 >
                   {{ relativeTime(comment.createdAt) }}
                 </span>
+                <span
+                  v-if="comment.editedAt"
+                  class="shrink-0 text-xs text-dimmed"
+                  :title="`Edited ${fullDate(comment.editedAt)}`"
+                >
+                  (edited)
+                </span>
+
+                <UDropdownMenu
+                  v-if="canChange(comment) && editingId !== comment.id"
+                  :items="commentMenu(comment)"
+                  :content="{ align: 'end', collisionPadding: 12 }"
+                >
+                  <UButton
+                    icon="i-lucide-ellipsis"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Update options"
+                    class="-my-1 ml-auto opacity-0 transition-opacity focus-visible:opacity-100 group-hover/update:opacity-100 data-[state=open]:opacity-100"
+                  />
+                </UDropdownMenu>
+              </div>
+
+              <div
+                v-if="editingId === comment.id"
+                class="mt-1 rounded-md border border-default bg-elevated/40 px-2.5 py-2"
+              >
+                <UpdateComposer
+                  :ref="setEditComposer"
+                  v-model="editDraft"
+                  placeholder="Edit the update…"
+                  @submit="saveEdit"
+                />
+                <div class="mt-2 flex items-center justify-end gap-1">
+                  <span class="mr-auto text-[0.6875rem] text-dimmed">Enter to save · Esc to cancel</span>
+                  <UButton
+                    label="Cancel"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    @click="cancelEdit"
+                  />
+                  <UButton
+                    label="Save"
+                    size="xs"
+                    :disabled="!editDraft.trim()"
+                    @click="saveEdit"
+                  />
+                </div>
               </div>
               <InlineMarkdown
+                v-else
                 :text="comment.body"
                 class="text-sm leading-relaxed text-default"
               />
@@ -712,6 +847,28 @@ const menuItems = computed(() => [[
       </div>
     </template>
   </USlideover>
+
+  <UModal
+    :open="deletingComment !== null"
+    title="Delete this update?"
+    description="It is removed from the task for good. This cannot be undone."
+    :ui="{ footer: 'justify-end' }"
+    @update:open="(v: boolean) => { if (!v) deletingComment = null }"
+  >
+    <template #footer>
+      <UButton
+        label="Cancel"
+        color="neutral"
+        variant="ghost"
+        @click="deletingComment = null"
+      />
+      <UButton
+        label="Delete update"
+        color="error"
+        @click="confirmDeleteComment"
+      />
+    </template>
+  </UModal>
 
   <UModal
     v-model:open="deleteOpen"

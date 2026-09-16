@@ -221,7 +221,9 @@ export const taskComments = pgTable(
     // owner's, so a log the user reads back says who was really working.
     createdVia: text('created_via').$type<DeletionSource>().notNull().default('ui'),
     apiKeyId: text('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
-    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    // Set when the author rewrote it, so the thread can say so.
+    editedAt: bigint('edited_at', { mode: 'number' })
   },
   table => [index('task_comments_task_id_idx').on(table.taskId)]
 )
