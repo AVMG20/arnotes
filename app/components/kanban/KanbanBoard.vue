@@ -497,13 +497,46 @@ function isCollapsed(columnId: string): boolean {
   return tasksOf(columnId).length > COLLAPSE_AFTER && !expandedColumns.value.has(columnId)
 }
 
+// ─── First paint ────────────────────────────────────────────
+
+// Opening a board should change the page on the click, not once every card on
+// it has been built. The first render draws the columns and the top of each —
+// about what fits on screen — and the rest follow a frame later, once the
+// browser has painted. The fold line waits with them, so it does not flash a
+// count that is about to change.
+const FIRST_PAINT_CARDS = 8
+
+const warming = ref(true)
+let warmFrame = 0
+
+function warmUp() {
+  cancelAnimationFrame(warmFrame)
+  warming.value = true
+  // Two frames: the first runs before the paint that shows the board, the
+  // second after it.
+  warmFrame = requestAnimationFrame(() => {
+    warmFrame = requestAnimationFrame(() => {
+      warming.value = false
+    })
+  })
+}
+
+watch([() => props.projectId, () => board.value === null], ([, empty]) => {
+  if (!empty) warmUp()
+}, { immediate: true })
+
+onBeforeUnmount(() => cancelAnimationFrame(warmFrame))
+
 function visibleTasksOf(columnId: string): ProjectTask[] {
   const tasks = tasksOf(columnId)
-  return isCollapsed(columnId) ? tasks.slice(0, COLLAPSE_AFTER) : tasks
+  const limit = warming.value
+    ? FIRST_PAINT_CARDS
+    : isCollapsed(columnId) ? COLLAPSE_AFTER : tasks.length
+  return tasks.length > limit ? tasks.slice(0, limit) : tasks
 }
 
 function foldedCount(columnId: string): number {
-  return isCollapsed(columnId) ? tasksOf(columnId).length - COLLAPSE_AFTER : 0
+  return !warming.value && isCollapsed(columnId) ? tasksOf(columnId).length - COLLAPSE_AFTER : 0
 }
 
 function expandColumn(columnId: string) {

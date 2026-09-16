@@ -108,9 +108,59 @@ const _activeTags = ref<string[]>([])
 const _showTrashed = ref(false)
 const _trashedCount = ref(0)
 
+// Every column's cards, sorted, in one pass over the board. Asking each column
+// to filter the whole task list for itself costs columns × tasks on every
+// change, and the board asks several times per column per render.
+const _tasksByColumn = computed(() => {
+  const groups = new Map<string, ProjectTask[]>()
+  for (const task of _board.value?.tasks ?? []) {
+    const group = groups.get(task.columnId)
+    if (group) group.push(task)
+    else groups.set(task.columnId, [task])
+  }
+  for (const group of groups.values()) group.sort((a, b) => a.position - b.position)
+  return groups
+})
+
 // Search over projects and tasks; owned by the init plugin like the notes index.
 type ProjectSearchDoc = { id: string, type: 'project' | 'task', name: string, title: string, descriptionText: string }
 let _search: MiniSearch<ProjectSearchDoc> | null = null
+// What the index was last built from. A realtime burst re-reads the whole task
+// list, usually to find it unchanged, and rebuilding the index over every task
+// description each time is the expensive part of that.
+let _searchSignature = ''
+
+// The last state of boards opened this session, so going back to one draws it
+// at once and the fetch only has to correct it. Kept small: a board is cheap to
+// fetch, it is the wait before anything is on screen that is being saved.
+const BOARD_CACHE_SIZE = 8
+const _boardCache = new Map<string, { columns: ProjectColumn[], tasks: ProjectTask[], commentCounts: Record<string, number> }>()
+
+function cacheBoard(projectId: string) {
+  // A board read with its trash showing is not the board as it normally opens.
+  if (!_board.value || _showTrashed.value) return
+  _boardCache.delete(projectId)
+  _boardCache.set(projectId, { ..._board.value, commentCounts: _commentCounts.value })
+  while (_boardCache.size > BOARD_CACHE_SIZE) _boardCache.delete(_boardCache.keys().next().value!)
+}
+
+// A re-read hands back every task as a new object, and a new object is a new
+// prop on every card, so each one would render again to show what it already
+// shows. Rows that have not changed keep the object the board already had.
+function reconcileTasks(previous: ProjectTask[] | undefined, next: ProjectTask[]): ProjectTask[] {
+  if (!previous?.length) return next
+  const known = new Map(previous.map(task => [task.id, task]))
+  return next.map((task) => {
+    const old = known.get(task.id)
+    return old
+      && old.updatedAt === task.updatedAt
+      && old.columnId === task.columnId
+      && old.position === task.position
+      && old.deletedAt === task.deletedAt
+      ? old
+      : task
+  })
+}
 
 function toSearchDoc(row: TaskSearchRow): ProjectSearchDoc {
   return {
@@ -124,6 +174,10 @@ function toSearchDoc(row: TaskSearchRow): ProjectSearchDoc {
 
 function reindexSearch() {
   if (!_search) return
+  const signature = _projects.value.map(p => `${p.id}:${p.name}`).join(',')
+    + '|' + _allTasks.value.map(t => `${t.id}:${t.updatedAt}:${t.projectName}`).join(',')
+  if (signature === _searchSignature) return
+  _searchSignature = signature
   _search.removeAll()
   _search.addAll(_projects.value.map(p => ({
     id: `project:${p.id}`,
@@ -195,6 +249,16 @@ function touchProject(projectId: string) {
   }
 }
 
+// Read by every label chip on the board. Asked for through useProjects, each
+// chip would build the composable's computeds again just to look one colour up.
+const _labelColors = computed(() =>
+  _projects.value.find(p => p.id === _activeProjectId.value)?.labelColors ?? {}
+)
+
+export function boardLabelColor(tag: string): string | null {
+  return _labelColors.value[tag] ?? null
+}
+
 // ─── init (called from plugin) ──────────────────────────────
 
 export function initProjectsStore(
@@ -242,6 +306,7 @@ export function useProjects() {
   async function refresh() {
     // Team switch: drop per-project board state, filters do not carry over.
     _board.value = null
+    _boardCache.clear()
     _commentCounts.value = {}
     _activeTags.value = []
     _showTrashed.value = false
@@ -284,6 +349,7 @@ export function useProjects() {
     _projects.value = _projects.value.filter(p => p.id !== id)
     _allTasks.value = _allTasks.value.filter(t => t.projectId !== id)
     reindexSearch()
+    _boardCache.delete(id)
     if (_activeProjectId.value === id) {
       _activeProjectId.value = null
       _board.value = null
@@ -301,11 +367,8 @@ export function useProjects() {
 
   // ─── Label colours ────────────────────────────────────────
 
-  const labelColors = computed(() => activeProject.value?.labelColors ?? {})
-
-  function labelColor(tag: string): string | null {
-    return labelColors.value[tag] ?? null
-  }
+  const labelColors = _labelColors
+  const labelColor = boardLabelColor
 
   // One label at a time: the server merges rather than taking the whole map, so
   // two boards open side by side cannot undo each other's colours.
@@ -324,15 +387,24 @@ export function useProjects() {
     _boardLoading.value = true
     try {
       if (_activeProjectId.value !== id) {
+        if (_activeProjectId.value) cacheBoard(_activeProjectId.value)
         _activeTags.value = []
         // A board is opened with its trash closed, however the last one was left.
         _showTrashed.value = false
+        // The board being left must not stay on screen while the next one loads:
+        // drawing it again under the new page is work thrown away the moment the
+        // fetch lands, and it is what held the click up. A board seen before
+        // comes back as it was left; one never opened waits on the fetch.
+        const cached = _boardCache.get(id)
+        _board.value = cached ? { columns: cached.columns, tasks: cached.tasks } : null
+        _commentCounts.value = cached?.commentCounts ?? {}
+        _trashedCount.value = 0
       }
       _activeProjectId.value = id
       const board = await $fetch<BoardPayload>(boardUrl(id))
       // A board opened for a project that was deleted mid-flight should not stick.
       if (_activeProjectId.value === id) {
-        _board.value = { columns: board.columns, tasks: board.tasks }
+        _board.value = { columns: board.columns, tasks: reconcileTasks(_board.value?.tasks, board.tasks) }
         _commentCounts.value = board.commentCounts ?? {}
         _trashedCount.value = board.trashedCount ?? 0
       }
@@ -354,9 +426,7 @@ export function useProjects() {
   )
 
   function columnTasks(columnId: string) {
-    return (_board.value?.tasks ?? [])
-      .filter(t => t.columnId === columnId)
-      .sort((a, b) => a.position - b.position)
+    return _tasksByColumn.value.get(columnId) ?? []
   }
 
   function commentCount(taskId: string) {
@@ -484,7 +554,7 @@ export function useProjects() {
     try {
       const board = await $fetch<BoardPayload>(boardUrl(projectId))
       if (_activeProjectId.value === projectId) {
-        _board.value = { columns: board.columns, tasks: board.tasks }
+        _board.value = { columns: board.columns, tasks: reconcileTasks(_board.value?.tasks, board.tasks) }
         _commentCounts.value = board.commentCounts ?? {}
         _trashedCount.value = board.trashedCount ?? 0
       }

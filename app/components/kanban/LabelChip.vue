@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ContextMenuItem } from '@nuxt/ui'
+import type { FunctionalComponent } from 'vue'
 import { tagChipAttrs } from '~/utils/tagColors'
+import { boardLabelColor } from '~/composables/useProjects'
 import { ACCENT_COLORS, colorHex } from '#shared/utils/colors'
 
 // One label, wherever it appears: a card, the task panel, the board's filter.
@@ -35,44 +37,76 @@ function onClick(event: MouseEvent) {
   emit('remove', props.tag)
 }
 
-const { labelColor, setLabelColor } = useProjects()
+// A board draws a chip for every label on every card, and a context menu apiece
+// is most of what each one costs to build. The chip starts as the bare label;
+// the first right-click mounts the menu and hands it that same click, and from
+// then on the chip keeps it.
+const ContextMenu = resolveComponent('UContextMenu')
+const Bare: FunctionalComponent = (_, { slots }) => slots.default?.()
+Bare.inheritAttrs = false
 
-const pinned = computed(() => labelColor(props.tag))
+const menuMounted = ref(false)
+const chipEl = ref<HTMLElement | null>(null)
+
+async function onContextMenu(event: MouseEvent) {
+  if (!props.editable || menuMounted.value) return
+  event.preventDefault()
+  menuMounted.value = true
+  await nextTick()
+  chipEl.value?.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true,
+    cancelable: true,
+    clientX: event.clientX,
+    clientY: event.clientY
+  }))
+}
+
+function setLabelColor(tag: string, color: string | null) {
+  return useProjects().setLabelColor(tag, color)
+}
+
+const pinned = computed(() => boardLabelColor(props.tag))
 const attrs = computed(() => tagChipAttrs(props.tag, pinned.value))
 
-const items = computed<ContextMenuItem[][]>(() => [
-  [{ label: props.tag, type: 'label' as const }],
-  [{
-    label: 'Automatic',
-    icon: 'i-lucide-wand-2',
-    type: 'checkbox' as const,
-    checked: !pinned.value,
-    onSelect: () => { if (pinned.value) setLabelColor(props.tag, null) }
-  }],
-  ACCENT_COLORS.map(color => ({
-    label: color[0]!.toUpperCase() + color.slice(1),
-    type: 'checkbox' as const,
-    checked: pinned.value === color,
-    // The swatch is an inline style, so it goes through a named slot rather
-    // than the item's `icon` — Tailwind has no class for a runtime colour.
-    slot: 'color' as const,
-    hex: colorHex(color),
-    onSelect: () => setLabelColor(props.tag, color)
-  }))
-])
+const items = computed<ContextMenuItem[][]>(() => {
+  if (!menuMounted.value) return []
+  return [
+    [{ label: props.tag, type: 'label' as const }],
+    [{
+      label: 'Automatic',
+      icon: 'i-lucide-wand-2',
+      type: 'checkbox' as const,
+      checked: !pinned.value,
+      onSelect: () => { if (pinned.value) setLabelColor(props.tag, null) }
+    }],
+    ACCENT_COLORS.map(color => ({
+      label: color[0]!.toUpperCase() + color.slice(1),
+      type: 'checkbox' as const,
+      checked: pinned.value === color,
+      // The swatch is an inline style, so it goes through a named slot rather
+      // than the item's `icon` — Tailwind has no class for a runtime colour.
+      slot: 'color' as const,
+      hex: colorHex(color),
+      onSelect: () => setLabelColor(props.tag, color)
+    }))
+  ]
+})
 </script>
 
 <template>
-  <UContextMenu
+  <component
+    :is="menuMounted ? ContextMenu : Bare"
     :items="items"
     :disabled="!editable"
   >
     <span
+      ref="chipEl"
       class="group flex min-w-0 items-center gap-1 truncate rounded px-1.5 py-0.5 font-medium ring-1 ring-inset"
       :class="[attrs.class, chipClass, removable ? 'cursor-pointer' : '']"
       :style="attrs.style"
       :title="editable ? `${tag} — right-click to change colour` : tag"
       @click="onClick"
+      @contextmenu="onContextMenu"
     >
       <span class="truncate">{{ tag }}</span>
       <UIcon
@@ -88,5 +122,5 @@ const items = computed<ContextMenuItem[][]>(() => [
         :style="{ backgroundColor: (item as { hex: string }).hex }"
       />
     </template>
-  </UContextMenu>
+  </component>
 </template>

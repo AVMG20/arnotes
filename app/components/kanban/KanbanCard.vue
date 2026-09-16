@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { formatDateMention } from '~/composables/useDateMention'
 import { relativeTime } from '~/composables/useRelativeTime'
-import { checklistProgress, taskDueDate, deletionSourceLabel } from '#shared/utils/board'
+import { deletionSourceLabel } from '#shared/utils/board'
+import { descriptionDetails } from '~/utils/cardDetails'
 
 const props = defineProps<{
   task: {
@@ -29,27 +30,17 @@ const trashedLabel = computed(() => {
 
 // Cards stay quiet: one line of plain text from the description, never rendered
 // HTML. The formatted version lives in the task panel.
-const snippet = computed(() => {
-  if (!props.task.description) return ''
-  return props.task.description
-    .replace(/<(br|\/p|\/h[1-6]|\/li|\/blockquote)>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160)
-})
+const details = computed(() => descriptionDetails(props.task.description ?? ''))
+
+const snippet = computed(() => details.value.snippet)
 
 // Both of these are read out of the description rather than stored: a checklist
 // is the editor's task list, a due date is an `@date` mention. Nothing to fill
 // in, and nothing that can fall out of step with what the task actually says.
-const checklist = computed(() => checklistProgress(props.task.description))
+const checklist = computed(() => details.value.checklist)
 const checklistDone = computed(() => !!checklist.value && checklist.value.done === checklist.value.total)
 
-const due = computed(() => taskDueDate(props.task.description))
+const due = computed(() => details.value.due)
 const dueLabel = computed(() => due.value === null ? '' : formatDateMention(new Date(due.value).toISOString()))
 const overdue = computed(() => due.value !== null && due.value < Date.now())
 

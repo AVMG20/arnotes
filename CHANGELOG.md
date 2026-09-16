@@ -23,10 +23,14 @@ All notable changes to Arnotes are documented in this file.
 - Removed `delete_board` from the MCP server. Deleting a board takes its columns, tasks and updates with it, so it stays in the app behind a confirmation where an agent cannot reach it
 - Restoring a column brings its tasks back: the ones handed to a neighbour when it was deleted return, unless they have since been filed somewhere on purpose
 - Columns and task labels can be given a colour of their own, from the same palette as the accent in Settings: a column through **Change color** in its menu, a label by right-clicking it anywhere it appears. Both fall back to the colour derived from their name until one is set, and agents can colour a column through `update_column`
-- Task updates take Markdown, deliberately a narrow one: bold, italic, inline code, strike, highlight and links, and nothing that opens a block. The update box is the editor itself with none of an editor's furniture — no toolbar, no border — so `**shipped**` turns bold as it is typed, and `add_task_update` over MCP speaks the same Markdown
+- Task updates take Markdown, deliberately a narrow one: bold, italic, inline code, strike, highlight and links, and nothing that opens a block. The update box is the editor itself with none of an editor's furniture — no toolbar, no border — so `**shipped**` turns bold as it is typed
 - Updates posted over MCP are signed with the API key that posted them and marked as an agent's, instead of appearing under the key owner's name
 - Global search takes a half-typed tag: `#sani` filters by every tag it could still complete to, and a tag now narrows tasks and boards as well as notes, matching a task's labels or its board's name
 - Global search can be pointed at one half of the workspace with an All / Notes / Tasks switch, and the row of tag chips is gone — `#tag` in the box does the same job
+- Task updates are for people again: `add_task_update` is gone from the MCP server, so the log holds what the team writes — on staging, customer feedback, needs more work — and not an agent's summary of its own session. Agents can still read the thread through `get_task`
+- A task's updates open in a sheet of their own from a button in the task panel's header, instead of taking the bottom of the panel away from the description
+- The board menu no longer carries a dot when something is in the trash
+- Opening a board changes the page on the click: the board being left is no longer drawn again under the new one, a board seen before comes back from memory while it refreshes, the first cards of each column paint before the rest, and label chips build their right-click menu only when it is used
 - Fixed: dragging a card while a label filter was on could give two cards the same position, leaving them to swap places on their own
 - Fixed: deleting a board's last column destroyed its tasks while the confirmation promised they would move
 - Fixed: a card picked up on a touch screen no longer swallows the scroll — a card drags after a short hold
