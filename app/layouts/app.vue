@@ -1,10 +1,5 @@
 <script setup lang="ts">
 const { sidebarOpen } = useSidebar()
-
-// Archive is an assistant in its own right. Floating the notes assistant on top
-// of it would put two chat windows on one screen, each with its own memory.
-const route = useRoute()
-const isArchive = computed(() => route.path.startsWith('/archive'))
 </script>
 
 <template>
@@ -38,6 +33,6 @@ const isArchive = computed(() => route.path.startsWith('/archive'))
     </div>
 
     <NotesSearchModal />
-    <AiChatWidget v-if="!isArchive" />
+    <AiChatWidget />
   </UDashboardGroup>
 </template>

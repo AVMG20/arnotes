@@ -1,5 +1,5 @@
 import { db } from '../db'
-import { userSettings, AI_SETTINGS_DEFAULTS, ARCHIVE_CONTEXT } from '../db/schema'
+import { userSettings, AI_SETTINGS_DEFAULTS } from '../db/schema'
 import { eq } from 'drizzle-orm'
 
 function maskKey(key: string | null): string | null {
@@ -19,8 +19,7 @@ export default defineEventHandler(async (event) => {
       neutralColor: 'zinc',
       openrouterApiKey: null,
       openrouterApiKeyMasked: null,
-      openrouterModel: AI_SETTINGS_DEFAULTS.openrouterModel,
-      archiveContextMessages: ARCHIVE_CONTEXT.default
+      openrouterModel: AI_SETTINGS_DEFAULTS.openrouterModel
     }
   }
 
@@ -29,7 +28,6 @@ export default defineEventHandler(async (event) => {
     neutralColor: settings.neutralColor,
     openrouterApiKey: settings.openrouterApiKey,
     openrouterApiKeyMasked: maskKey(settings.openrouterApiKey),
-    openrouterModel: settings.openrouterModel,
-    archiveContextMessages: settings.archiveContextMessages
+    openrouterModel: settings.openrouterModel
   }
 })

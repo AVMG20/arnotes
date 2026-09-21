@@ -4,6 +4,12 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- The editor takes whatever is pasted into it: formatted text keeps its formatting, Markdown source becomes what it describes, a URL over a selection links it, code copied from VS Code lands in a code block of the right language, and checkbox lists from GitHub or Notion become task lists. Copying out puts Markdown on the plain-text side of the clipboard
+- The selection toolbar gains **Turn into**, underline, six highlight colours and inline link editing (`⌘⇧K`); resting the caret in a link shows where it goes, with open, edit, copy and remove
+- Every block has a handle: `+` adds a block below, the grip drags it — list items included, at any depth — and a click opens duplicate, copy as Markdown, move and delete. `⌥↑` / `⌥↓` move the current block or list item, `⌘⇧D` duplicates it
+- `@` reads dates the way they are typed, in English or Dutch: `@fri`, `@in 3 days`, `@25 dec`, `@morgen om 14u`, `@2026-10-01`
+- Global search is one keyboard-driven list: recent notes and tasks can be opened with the arrows before anything is typed, and `Tab` switches between All, Notes and Tasks
+- Removed Archive, the memory assistant, along with its tables and its setting
 - Projects: kanban boards beside the notes, with columns, drag-and-drop tasks, labels, rich-text descriptions written in the notes editor, and a running log of updates per task
 - MCP server at `/api/mcp` letting Claude Code and other AI agents search, read, create, and edit notes
 - Full board control over MCP: read boards and tasks, create and rename boards and columns, create, edit, move and delete tasks, and post task updates
