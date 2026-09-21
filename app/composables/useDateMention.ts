@@ -1,92 +1,79 @@
 import { Node, mergeAttributes } from '@tiptap/core'
-import Suggestion from '@tiptap/suggestion'
+import Suggestion, { type SuggestionMatch, type Trigger } from '@tiptap/suggestion'
 import { PluginKey } from '@tiptap/pm/state'
 import { VueRenderer } from '@tiptap/vue-3'
+import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import {
-  startOfDay,
-  addDays,
-  nextMonday,
-  nextTuesday,
-  nextWednesday,
-  nextThursday,
-  nextFriday,
-  nextSaturday,
-  nextSunday,
   format,
   isToday,
   isTomorrow,
   isYesterday,
   differenceInCalendarDays,
-  differenceInMinutes,
-  differenceInHours
+  differenceInMinutes
 } from 'date-fns'
 import DateSuggestionList from '~/components/DateSuggestionList.vue'
+import { suggestDates, type DateItem } from '~/utils/editor/date-parser'
 
 // ─── Date display ─────────────────────────────────────────────
 
-export function formatDateMention(iso: string): string {
-  const date = new Date(iso)
-  const now = new Date()
-  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0
+function hasTime(date: Date): boolean {
+  return date.getHours() !== 0 || date.getMinutes() !== 0
+}
 
-  if (hasTime) {
-    const mins = differenceInMinutes(date, now)
-    if (Math.abs(mins) < 1) return 'just now'
-    if (mins > 0 && mins < 60) return `in ${mins}m`
-    if (mins < 0 && mins > -60) return `${Math.abs(mins)}m ago`
-    const hrs = differenceInHours(date, now)
-    return hrs > 0 ? `in ${Math.abs(hrs)}h` : `${Math.abs(hrs)}h ago`
-  }
-
+function formatDay(date: Date, now: Date): string {
   if (isToday(date)) return 'today'
   if (isTomorrow(date)) return 'tomorrow'
   if (isYesterday(date)) return 'yesterday'
 
   const diff = differenceInCalendarDays(date, now)
-  if (diff > 1 && diff < 7) return `in ${diff} days`
+  if (diff > 1 && diff < 7) return format(date, 'EEEE')
   if (diff < -1 && diff > -7) return `${Math.abs(diff)} days ago`
 
   return format(date, date.getFullYear() === now.getFullYear() ? 'MMM d' : 'MMM d, yyyy')
 }
 
-// ─── Suggestion items ─────────────────────────────────────────
-
-export interface DateItem {
-  id: string
-  label: string
-  hint: string
-  date: string
-}
-
-function fmtHint(d: Date) {
-  return format(d, 'EEE, MMM d')
-}
-
-function buildItems(): DateItem[] {
+// The chip reads the way the date would be said today: "tomorrow", "Friday",
+// "Oct 3", and with a time "tomorrow 15:00" — or "in 20m" when it is close.
+export function formatDateMention(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return 'date'
   const now = new Date()
-  const tod = startOfDay(now)
-  return [
-    { id: 'now', label: 'Now', hint: format(now, 'h:mm a'), date: now.toISOString() },
-    { id: 'today', label: 'Today', hint: fmtHint(tod), date: tod.toISOString() },
-    { id: 'tomorrow', label: 'Tomorrow', hint: fmtHint(addDays(tod, 1)), date: addDays(tod, 1).toISOString() },
-    { id: 'yesterday', label: 'Yesterday', hint: fmtHint(addDays(tod, -1)), date: addDays(tod, -1).toISOString() },
-    { id: 'next-week', label: 'Next week', hint: fmtHint(addDays(tod, 7)), date: addDays(tod, 7).toISOString() },
-    { id: 'last-week', label: 'Last week', hint: fmtHint(addDays(tod, -7)), date: addDays(tod, -7).toISOString() },
-    { id: 'monday', label: 'Next Monday', hint: fmtHint(nextMonday(tod)), date: nextMonday(tod).toISOString() },
-    { id: 'tuesday', label: 'Next Tuesday', hint: fmtHint(nextTuesday(tod)), date: nextTuesday(tod).toISOString() },
-    { id: 'wednesday', label: 'Next Wednesday', hint: fmtHint(nextWednesday(tod)), date: nextWednesday(tod).toISOString() },
-    { id: 'thursday', label: 'Next Thursday', hint: fmtHint(nextThursday(tod)), date: nextThursday(tod).toISOString() },
-    { id: 'friday', label: 'Next Friday', hint: fmtHint(nextFriday(tod)), date: nextFriday(tod).toISOString() },
-    { id: 'saturday', label: 'Next Saturday', hint: fmtHint(nextSaturday(tod)), date: nextSaturday(tod).toISOString() },
-    { id: 'sunday', label: 'Next Sunday', hint: fmtHint(nextSunday(tod)), date: nextSunday(tod).toISOString() }
-  ]
+  if (!hasTime(date)) return formatDay(date, now)
+
+  const minutes = differenceInMinutes(date, now)
+  if (Math.abs(minutes) < 1) return 'now'
+  if (minutes > 0 && minutes < 60) return `in ${minutes}m`
+  if (minutes < 0 && minutes > -60) return `${Math.abs(minutes)}m ago`
+  return `${formatDay(date, now)} ${format(date, 'HH:mm')}`
 }
 
-export function filterDateItems(query: string): DateItem[] {
-  const all = buildItems()
-  if (!query) return all.slice(0, 6)
-  const q = query.toLowerCase()
-  return all.filter(i => i.label.toLowerCase().includes(q) || i.id.includes(q)).slice(0, 6)
+function fullDate(date: Date): string {
+  return format(date, hasTime(date) ? 'EEEE, MMMM d, yyyy · HH:mm' : 'EEEE, MMMM d, yyyy')
+}
+
+// Whether the date is behind us, so a missed one can look missed.
+function isPast(date: Date): boolean {
+  return hasTime(date) ? date.getTime() < Date.now() : differenceInCalendarDays(date, new Date()) < 0
+}
+
+// ─── Matching what is typed after `@` ─────────────────────────
+
+// Dates take spaces ("next friday", "in 3 days"), which a suggestion normally
+// ends at. So the text after `@` is matched by hand: up to four words, and once
+// there is a space only for as long as it still reads as a date — typing on
+// past "@tomorrow we ship" lets go of the menu instead of trailing it along.
+function findDateMatch({ $position }: Trigger): SuggestionMatch {
+  const before = $position.nodeBefore
+  if (!before?.isText || !before.text) return null
+
+  const match = /(?:^|\s)@([\w:./-]*(?: [\w:./-]*){0,3})$/.exec(before.text)
+  if (!match) return null
+  const query = match[1]!
+  if (query.includes(' ') && !suggestDates(query).length) return null
+
+  const to = $position.pos
+  const from = to - query.length - 1
+  return { range: { from, to }, query, text: `@${query}` }
 }
 
 // ─── DateMention Tiptap node ──────────────────────────────────
@@ -122,18 +109,13 @@ export const DateMention = Node.create({
       dom.className = 'date-mention'
 
       const update = () => {
+        const date = new Date(node.attrs.date)
         dom.textContent = formatDateMention(node.attrs.date)
-        // Full date shown in tooltip via CSS attr()
-        const d = new Date(node.attrs.date)
-        const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0
-        dom.setAttribute(
-          'data-full-date',
-          hasTime
-            ? format(d, 'EEEE, MMMM d, yyyy \'at\' h:mm a')
-            : format(d, 'EEEE, MMMM d, yyyy')
-        )
+        dom.title = fullDate(date)
+        dom.classList.toggle('date-mention-past', isPast(date))
       }
       update()
+      // Relative labels ("in 20m", "today") go stale while the note is open.
       const timer = setInterval(update, 30000)
       return {
         dom,
@@ -146,60 +128,71 @@ export const DateMention = Node.create({
 
   addProseMirrorPlugins() {
     return [
-      Suggestion({
+      Suggestion<DateItem>({
         pluginKey: dateMentionKey,
         editor: this.editor,
         char: '@',
-        allowSpaces: false,
-        items: ({ query }) => filterDateItems(query),
+        findSuggestionMatch: findDateMatch,
+        items: ({ query }) => suggestDates(query),
 
         render: () => {
           let renderer: VueRenderer | null = null
+          let host: HTMLElement | null = null
 
-          const reposition = (clientRect: (() => DOMRect | null) | null) => {
-            if (!clientRect || !renderer?.element) return
-            const rect = clientRect()
-            if (!rect) return
-            const el = renderer.element as HTMLElement
-            el.style.top = `${rect.bottom + 6}px`
-            el.style.left = `${rect.left}px`
+          const reposition = (clientRect?: (() => DOMRect | null) | null) => {
+            if (!clientRect || !host) return
+            const reference = { getBoundingClientRect: () => clientRect() ?? new DOMRect() }
+            computePosition(reference, host, {
+              placement: 'bottom-start',
+              strategy: 'absolute',
+              middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })]
+            }).then(({ x, y }) => {
+              if (host) Object.assign(host.style, { left: `${x}px`, top: `${y}px` })
+            })
+          }
+
+          const close = () => {
+            renderer?.destroy()
+            host?.remove()
+            renderer = null
+            host = null
           }
 
           return {
             onStart(props) {
               renderer = new VueRenderer(DateSuggestionList, { props, editor: props.editor })
-              const el = renderer.element as HTMLElement
-              el.style.position = 'fixed'
-              el.style.zIndex = '9999'
-              document.body.appendChild(el)
-              reposition(props.clientRect ?? null)
+              // The list is mounted inside the editor rather than on the body:
+              // around a modal panel (the task drawer) only what is inside the
+              // panel takes pointer events.
+              host = document.createElement('div')
+              host.style.position = 'absolute'
+              host.style.zIndex = '50'
+              // Keeps the caret in the editor while an item is clicked.
+              host.addEventListener('mousedown', event => event.preventDefault())
+              if (renderer.element) host.appendChild(renderer.element)
+              props.editor.view.dom.parentElement?.appendChild(host)
+              reposition(props.clientRect)
             },
             onUpdate(props) {
               renderer?.updateProps(props)
-              reposition(props.clientRect ?? null)
+              reposition(props.clientRect)
             },
             onKeyDown({ event }) {
               if (event.key === 'Escape') {
-                renderer?.destroy()
-                renderer = null
+                close()
                 return true
               }
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               return (renderer?.ref as any)?.onKeyDown(event) ?? false
             },
-            onExit() {
-              renderer?.destroy()
-              renderer = null
-            }
+            onExit: close
           }
         },
 
-        command: ({ editor, range, props }) => {
-          const item = props as DateItem
+        command: ({ editor, range, props: item }) => {
           editor.chain().focus()
             .deleteRange(range)
-            .insertContent({ type: 'dateMention', attrs: { date: item.date } })
-            .insertContent(' ')
+            .insertContent([{ type: 'dateMention', attrs: { date: item.date } }, { type: 'text', text: ' ' }])
             .run()
         }
       })

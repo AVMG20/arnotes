@@ -5,6 +5,7 @@
     "": {
       "name": "arnotes",
       "dependencies": {
+        "@floating-ui/dom": "^1.7.6",
         "@iconify-json/lucide": "^1.2.111",
         "@iconify-json/simple-icons": "^1.2.84",
         "@mixmark-io/domino": "^2.2.0",

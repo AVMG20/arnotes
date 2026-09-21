@@ -702,29 +702,16 @@ summary {
   color: var(--color-primary-300);
 }
 
-/* Tooltip on hover */
-.date-mention::after {
-  content: attr(data-full-date);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: var(--ui-bg-accented);
-  color: var(--ui-text);
-  border: 1px solid var(--ui-border-accented);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  padding: 0.3em 0.7em;
-  border-radius: 0.4rem;
-  font-size: 0.72rem;
-  font-weight: 500;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
-  z-index: 100;
+/* A date that has gone by steps back, so the ones still ahead stand out. */
+.date-mention-past,
+.dark .date-mention-past {
+  background-color: var(--ui-bg-elevated);
+  color: var(--ui-text-muted);
 }
-.date-mention:hover::after {
-  opacity: 1;
+
+.date-mention.ProseMirror-selectednode {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 1px;
 }
 
 /* ─── Inline markdown (task updates) ────────────────────────── */

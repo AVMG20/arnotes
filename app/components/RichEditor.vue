@@ -310,6 +310,7 @@ const suggestionItems = computed<any[][]>(() => [
       :placeholder="placeholder ?? 'Start writing… (/ for commands, @ for dates, # for tags)'"
       :starter-kit="{ codeBlock: false, horizontalRule: {}, link: { openOnClick: false, autolink: true, defaultProtocol: 'https' } }"
       :image="false"
+      :mention="false"
       :extensions="extensions"
       :handlers="customHandlers"
       class="rich-editor flex min-h-0 flex-1 flex-col overflow-y-auto"
