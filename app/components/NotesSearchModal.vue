@@ -180,7 +180,8 @@ function handleListKey(e: KeyboardEvent) {
 // combo first.
 
 function onGlobalKeydown(e: KeyboardEvent) {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+  // ⌘⇧K is the editor's link shortcut.
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
   if (e.key.toLowerCase() !== 'k') return
   e.preventDefault()
   e.stopPropagation()

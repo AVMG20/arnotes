@@ -386,17 +386,98 @@ summary {
 
 /* ─── Text highlight (mark) ─────────────────────────────────── */
 
+/* A highlight is stored by name (`<mark data-color="blue">`); what the name
+   looks like is decided here, once per theme. */
+:root {
+  --hl-yellow: #fef08a;
+  --hl-green: #bbf7d0;
+  --hl-blue: #bfdbfe;
+  --hl-purple: #e9d5ff;
+  --hl-pink: #fbcfe8;
+  --hl-orange: #fed7aa;
+}
+.dark {
+  --hl-yellow: #854d0e;
+  --hl-green: #166534;
+  --hl-blue: #1e40af;
+  --hl-purple: #6b21a8;
+  --hl-pink: #9d174d;
+  --hl-orange: #9a3412;
+}
+
 .tiptap mark,
 .ProseMirror mark {
-  background-color: #fef08a;
+  background-color: var(--hl-yellow);
   color: inherit;
   border-radius: 0.2em;
   padding: 0.05em 0.15em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
+.tiptap mark[data-color="green"], .ProseMirror mark[data-color="green"] { background-color: var(--hl-green); }
+.tiptap mark[data-color="blue"], .ProseMirror mark[data-color="blue"] { background-color: var(--hl-blue); }
+.tiptap mark[data-color="purple"], .ProseMirror mark[data-color="purple"] { background-color: var(--hl-purple); }
+.tiptap mark[data-color="pink"], .ProseMirror mark[data-color="pink"] { background-color: var(--hl-pink); }
+.tiptap mark[data-color="orange"], .ProseMirror mark[data-color="orange"] { background-color: var(--hl-orange); }
 .dark .tiptap mark,
 .dark .ProseMirror mark {
-  background-color: #713f12;
-  color: #fef9c3;
+  color: #fff;
+}
+
+/* ─── Editor chrome ─────────────────────────────────────────── */
+
+/* Room on the left for the block handle ("+" and grip), which only shows from
+   the `sm` breakpoint up. */
+@media (min-width: 640px) {
+  .rich-editor .tiptap,
+  .rich-editor .ProseMirror {
+    padding-left: 3.75rem;
+  }
+}
+
+.editor-bubble {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: calc(var(--ui-radius) * 2.5);
+  background: var(--ui-bg);
+  padding: 0.25rem;
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.18), 0 2px 6px -2px rgb(0 0 0 / 0.08);
+}
+
+.editor-block-handle {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.editor-block-handle button {
+  color: var(--ui-text-dimmed);
+}
+.editor-block-handle button:hover,
+.editor-block-handle button[aria-expanded="true"] {
+  color: var(--ui-text);
+}
+
+.editor-swatch {
+  width: 1.375rem;
+  height: 1.375rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.dark .editor-swatch {
+  border-color: rgb(255 255 255 / 0.12);
+}
+.editor-swatch:hover {
+  transform: scale(1.12);
+}
+.editor-swatch-active {
+  box-shadow: 0 0 0 2px var(--ui-bg), 0 0 0 4px var(--ui-primary);
+}
+
+/* The selection, kept visible while focus is in the link field. */
+.editor-blurred-selection {
+  background-color: color-mix(in oklab, var(--ui-primary) 20%, transparent);
 }
 
 /* ─── Code block node view ──────────────────────────────────── */

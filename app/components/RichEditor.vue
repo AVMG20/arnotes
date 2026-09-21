@@ -1,33 +1,45 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
-import { VueNodeViewRenderer, type Editor } from '@tiptap/vue-3'
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { DOMSerializer } from '@tiptap/pm/model'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { closeHistory } from '@tiptap/pm/history'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import CodeBlockView from '~/components/CodeBlockView.vue'
-import Highlight from '@tiptap/extension-highlight'
-import TaskList from '@tiptap/extension-task-list'
-import TaskItem from '@tiptap/extension-task-item'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { CellSelection } from '@tiptap/pm/tables'
-import { createEditorLowlight } from '~/utils/highlight'
-import { DateMention } from '~/composables/useDateMention'
-import { ResizableImage } from '~/utils/resizable-image'
-import { markdownToHtml, htmlToMarkdown, normalizeAiOutput } from '~/utils/markdown'
+import type { Editor } from '@tiptap/core'
 import { CHART_TEMPLATE, MERMAID_TEMPLATE } from '~/utils/chart'
-import { runAi, runCustomAi, transformActions } from '~/composables/useAi'
-import { useUserSettings } from '~/composables/useUserSettings'
+import { transformActions } from '~/composables/useAi'
+import { useEditorAi } from '~/composables/useEditorAi'
+import { createContentExtensions } from '~/utils/editor/extensions'
+import { SmartClipboard, imageFiles, insertImages } from '~/utils/editor/clipboard'
+import { BlockShortcuts } from '~/utils/editor/blocks'
+import { AiPendingDecoration, BlurredSelection, HashtagHighlight } from '~/utils/editor/decorations'
+import {
+  CODE_BLOCK_ITEM,
+  DIAGRAM_ITEMS,
+  DIVIDER_ITEM,
+  HISTORY_ITEMS,
+  LIST_ITEMS,
+  MARK_ITEMS,
+  MOD,
+  QUOTE_ITEM,
+  SHIFT,
+  TEXT_STYLE_ITEMS,
+  asButton,
+  type EditorItem
+} from '~/utils/editor/items'
 import TableGridPicker from '~/components/TableGridPicker.vue'
 import TableControls from '~/components/TableControls.vue'
+import EditorBubbleMenu from '~/components/editor/EditorBubbleMenu.vue'
+import EditorBlockHandle from '~/components/editor/EditorBlockHandle.vue'
+import EditorHighlightPicker from '~/components/editor/EditorHighlightPicker.vue'
+import EditorAiPrompt from '~/components/editor/EditorAiPrompt.vue'
 
 // Shared rich text editor: the exact editing surface used by notes, reusable
 // for task descriptions. Parents own persistence via v-model; this component
 // only edits. `uploadImage` opts into image support: the parent supplies the
 // upload (notes and tasks each have an attachment endpoint). The #toolbar-right
 // slot hosts context actions.
+//
+// This file wires the parts together. The parts themselves live next door:
+// the schema, clipboard, block and decoration extensions in `utils/editor`,
+// the command lists in `utils/editor/items`, the floating UI in
+// `components/editor`, and the AI calls in `useEditorAi`.
 const props = defineProps<{
   modelValue: string
   placeholder?: string
@@ -35,9 +47,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [html: string] }>()
-
-const toast = useToast()
-const { openrouterApiKey } = useUserSettings()
 
 const editorRef = ref()
 const editor = computed(() => editorRef.value?.editor as Editor | undefined)
@@ -47,13 +56,19 @@ const content = computed({
   set: (html: string) => emit('update:modelValue', html)
 })
 
-// ─── AI helpers ───────────────────────────────────────────────
+const ai = useEditorAi(editor)
 
-const aiLoading = ref(false)
-const aiPromptOpen = ref(false)
-const aiPrompt = ref('')
-const aiPromptPosition = ref<number | null>(null)
-const aiPromptIncludeContext = ref(true)
+const bubble = ref<InstanceType<typeof EditorBubbleMenu>>()
+
+function editLink(): boolean {
+  return bubble.value?.editLink() ?? false
+}
+
+function focusEditor() {
+  editor.value?.commands.focus('start')
+}
+
+defineExpose({ focusEditor })
 
 // ─── Table creation picker ───────────────────────────────────
 
@@ -72,13 +87,11 @@ const slashTablePickerReference = {
 }
 let tablePickerEditor: Editor | null = null
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function insertTableOfSize(ed: any, size: { rows: number, cols: number }) {
+function insertTableOfSize(ed: Editor, size: { rows: number, cols: number }) {
   ed.chain().focus().insertTable({ rows: size.rows, cols: size.cols, withHeaderRow: true }).run()
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function onToolbarTablePick(ed: any, size: { rows: number, cols: number }) {
+function onToolbarTablePick(ed: Editor, size: { rows: number, cols: number }) {
   tablePickerOpen.value = false
   insertTableOfSize(ed, size)
 }
@@ -117,386 +130,39 @@ const SlashTablePickerKeys = Extension.create({
   }
 })
 
-type AiPending = {
-  kind: 'generate' | 'transform'
-  from: number
-  to: number
-}
+// ─── Extensions ──────────────────────────────────────────────
 
-const aiPendingKey = new PluginKey<AiPending | null>('aiPending')
-
-const AiPendingDecoration = Extension.create({
-  name: 'aiPendingDecoration',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin<AiPending | null>({
-        key: aiPendingKey,
-        state: {
-          init: () => null,
-          apply(transaction, pending) {
-            const meta = transaction.getMeta(aiPendingKey) as { pending?: AiPending, clear?: boolean } | undefined
-            if (meta?.clear) return null
-            if (meta?.pending) return meta.pending
-            if (!pending || !transaction.docChanged) return pending
-
-            return {
-              ...pending,
-              from: transaction.mapping.map(pending.from, 1),
-              to: transaction.mapping.map(pending.to, pending.kind === 'transform' ? -1 : 1)
-            }
-          }
-        },
-        props: {
-          decorations(state) {
-            const pending = aiPendingKey.getState(state)
-            if (!pending) return null
-
-            if (pending.kind === 'transform' && pending.from < pending.to) {
-              return DecorationSet.create(state.doc, [
-                Decoration.inline(pending.from, pending.to, { class: 'ai-processing-selection' })
-              ])
-            }
-
-            const widget = Decoration.widget(pending.from, () => {
-              const indicator = document.createElement('span')
-              indicator.className = 'ai-writing-indicator'
-              indicator.contentEditable = 'false'
-              indicator.setAttribute('aria-label', 'AI is writing')
-
-              const label = document.createElement('span')
-              label.textContent = 'AI is writing'
-              indicator.append(label)
-              for (let index = 0; index < 3; index++) {
-                const dot = document.createElement('i')
-                dot.style.setProperty('--ai-dot-index', String(index))
-                indicator.append(dot)
-              }
-              return indicator
-            }, { key: 'ai-writing-indicator', side: 1 })
-            return DecorationSet.create(state.doc, [widget])
-          }
-        }
-      })
-    ]
-  }
-})
-
-function setAiPending(ed: Editor, pending: AiPending | null) {
-  ed.view.dispatch(ed.state.tr.setMeta(aiPendingKey, pending ? { pending } : { clear: true }))
-}
-
-function getSelectionHtml(ed: Editor): string {
-  const { from, to } = ed.state.selection
-  if (from === to) return ''
-  const slice = ed.state.doc.slice(from, to)
-  const serializer = DOMSerializer.fromSchema(ed.state.schema)
-  const fragment = serializer.serializeFragment(slice.content)
-  const div = document.createElement('div')
-  div.appendChild(fragment)
-  return div.innerHTML
-}
-
-async function streamAiIntoEditor(
-  ed: Editor,
-  pending: AiPending,
-  request: (onChunk: (result: string) => void) => Promise<string>,
-  rollbackHtml = ''
-) {
-  const range = { from: pending.from, to: pending.to }
-  let rendered = ''
-
-  ed.view.dispatch(closeHistory(ed.state.tr))
-
-  const replaceRange = (output: string, addToHistory: boolean) => {
-    if (!output || output === rendered) return
-
-    const previousSize = ed.state.doc.content.size
-    ed.chain()
-      .setMeta('addToHistory', addToHistory)
-      .insertContentAt(range, markdownToHtml(output))
-      .run()
-    range.to += ed.state.doc.content.size - previousSize
-    rendered = output
-    setAiPending(ed, pending.kind === 'generate'
-      ? { kind: 'generate', from: range.to, to: range.to }
-      : { kind: 'transform', ...range })
-  }
-
-  const renderChunk = (markdown: string) => {
-    try {
-      replaceRange(markdown, false)
-    } catch {
-      // Partial markdown such as "- " can briefly produce an invalid empty node.
-    }
-  }
-
-  const restoreOriginal = () => {
-    const previousSize = ed.state.doc.content.size
-    const chain = ed.chain().setMeta('addToHistory', false)
-    if (rollbackHtml) chain.insertContentAt(range, rollbackHtml)
-    else if (range.from < range.to) chain.deleteRange(range)
-    chain.run()
-    range.to += ed.state.doc.content.size - previousSize
-    rendered = ''
-  }
-
-  try {
-    const result = await request(renderChunk)
-    restoreOriginal()
-    ed.view.dispatch(closeHistory(ed.state.tr))
-    replaceRange(normalizeAiOutput(result), true)
-    ed.commands.focus(range.to)
-  } catch (error) {
-    restoreOriginal()
-    throw error
-  }
-}
-
-async function runTransform(action: string) {
-  const ed = editor.value
-  if (!ed || aiLoading.value) return
-  if (!openrouterApiKey.value) {
-    toast.add({
-      title: 'No OpenRouter API key',
-      description: 'Add your key in Settings → AI to use AI features.',
-      icon: 'i-lucide-key-round',
-      color: 'error',
-      duration: 4000
-    })
-    return
-  }
-  const { from, to } = ed.state.selection
-  if (from === to) return
-  const selectionHtml = getSelectionHtml(ed)
-  if (!selectionHtml.trim()) return
-  const text = htmlToMarkdown(selectionHtml)
-
-  aiLoading.value = true
-  const pending: AiPending = { kind: 'transform', from, to }
-  setAiPending(ed, pending)
-  try {
-    await streamAiIntoEditor(ed, pending, onChunk => runAi(action, text, '', onChunk), selectionHtml)
-  } catch (e) {
-    const err = e as { data?: { message?: string }, message?: string }
-    toast.add({
-      title: 'AI request failed',
-      description: err?.data?.message ?? err?.message ?? 'Unknown error',
-      icon: 'i-lucide-alert-triangle',
-      color: 'error',
-      duration: 5000
-    })
-  } finally {
-    setAiPending(ed, null)
-    aiLoading.value = false
-  }
-}
-
-function openAiPrompt(ed: Editor) {
-  aiPromptPosition.value = ed.state.selection.from
-  aiPromptOpen.value = true
-}
-
-async function runCustomPrompt() {
-  const ed = editor.value
-  const instruction = aiPrompt.value.trim()
-  if (!ed || !instruction || aiLoading.value) return
-  if (!openrouterApiKey.value) {
-    toast.add({
-      title: 'No OpenRouter API key',
-      description: 'Add your key in Settings → AI to use AI features.',
-      icon: 'i-lucide-key-round',
-      color: 'error',
-      duration: 4000
-    })
-    return
-  }
-
-  const position = aiPromptPosition.value ?? ed.state.selection.from
-  const context = aiPromptIncludeContext.value ? htmlToMarkdown(ed.getHTML()).trim() : ''
-  aiPromptOpen.value = false
-  aiLoading.value = true
-  const pending: AiPending = { kind: 'generate', from: position, to: position }
-  setAiPending(ed, pending)
-  try {
-    await streamAiIntoEditor(ed, pending, onChunk => runCustomAi(instruction, context, onChunk))
-    aiPrompt.value = ''
-    aiPromptPosition.value = null
-  } catch (e) {
-    const err = e as { data?: { message?: string }, message?: string }
-    toast.add({
-      title: 'AI request failed',
-      description: err?.data?.message ?? err?.message ?? 'Unknown error',
-      icon: 'i-lucide-alert-triangle',
-      color: 'error',
-      duration: 5000
-    })
-  } finally {
-    setAiPending(ed, null)
-    aiLoading.value = false
-  }
-}
-
-function focusEditor() {
-  editor.value?.commands.focus('start')
-}
-
-defineExpose({ focusEditor })
-
-// ─── Custom extensions ───────────────────────────────────────
-
-const lowlight = createEditorLowlight()
-
-const ImagePaste = Extension.create({
-  name: 'imagePaste',
-  addProseMirrorPlugins() {
-    const ed = this.editor
-    return [
-      new Plugin({
-        key: new PluginKey('imagePaste'),
-        props: {
-          handlePaste(_view, event) {
-            if (!props.uploadImage) return false
-            const items = Array.from(event.clipboardData?.items ?? [])
-            const imageItem = items.find(i => i.kind === 'file' && i.type.startsWith('image/'))
-            if (!imageItem) return false
-            const file = imageItem.getAsFile()
-            if (!file) return false
-            event.preventDefault()
-            props.uploadImage(file).then((url) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              if (url) (ed.chain().focus() as any).setImage({ src: url }).run()
-            })
-            return true
-          }
-        }
-      })
-    ]
-  }
-})
-
-// File drops are handled on the wrapper div to avoid the drag handle intercepting them.
-async function onFileDrop(event: DragEvent) {
-  if (!props.uploadImage) return
-  const files = Array.from(event.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'))
-  if (!files.length) return
-  editor.value?.commands.focus()
-  const urls = await Promise.all(files.map(f => props.uploadImage!(f)))
-  urls.forEach((url) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (url) (editor.value?.chain().focus() as any)?.setImage({ src: url }).run()
-  })
-}
-
-const HashtagHighlight = Extension.create({
-  name: 'hashtagHighlight',
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        key: new PluginKey('hashtagHighlight'),
-        props: {
-          decorations(state) {
-            const decorations: Decoration[] = []
-            const re = /#[a-zA-Z][a-zA-Z0-9_]*/g
-            state.doc.descendants((node, pos) => {
-              if (!node.isText || !node.text) return
-              re.lastIndex = 0
-              let m
-              while ((m = re.exec(node.text)) !== null) {
-                decorations.push(
-                  Decoration.inline(pos + m.index, pos + m.index + m[0].length, {
-                    class: 'hashtag-highlight'
-                  })
-                )
-              }
-            })
-            return DecorationSet.create(state.doc, decorations)
-          }
-        }
-      })
-    ]
-  }
-})
-
-// Some sources (browsers copying a rendered page) put only HTML on the
-// clipboard; the text inside it is what a code block wants.
-function plainTextFromHtml(html: string): string {
-  if (!html) return ''
-  // A parsed-but-unrendered document has no layout, so `innerText` would not
-  // turn line breaks into newlines; they are marked in the markup first.
-  const withBreaks = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(?:p|div|li|tr|h[1-6]|pre|blockquote)>/gi, '\n')
-  const doc = new DOMParser().parseFromString(withBreaks, 'text/html')
-  return (doc.body.textContent ?? '').replace(/\n$/, '')
-}
-
-const MarkdownPaste = Extension.create({
-  name: 'markdownPaste',
-  addProseMirrorPlugins() {
-    const ed = this.editor
-    return [
-      new Plugin({
-        key: new PluginKey('markdownPaste'),
-        props: {
-          handlePaste(view, event) {
-            const text = event.clipboardData?.getData('text/plain') ?? ''
-
-            // Inside a code block the clipboard is source, not prose: it goes
-            // in verbatim as text. Parsing it as Markdown or styled HTML would
-            // split the block at blank lines, swallow `-->` arrows and `[]`
-            // labels, or end the block early.
-            const { $from, $to } = view.state.selection
-            if ($from.parent.type.spec.code && $from.sameParent($to)) {
-              const raw = text || plainTextFromHtml(event.clipboardData?.getData('text/html') ?? '')
-              if (!raw) return false
-              event.preventDefault()
-              const tr = view.state.tr.insertText(raw.replace(/\r\n?/g, '\n'))
-              tr.setMeta('paste', true)
-              view.dispatch(tr)
-              return true
-            }
-
-            if (!text.trim()) return false
-
-            const html = markdownToHtml(text)
-            // Clipboard sources often provide Markdown tables as an HTML code block.
-            // Prefer the plain-text table when Marked recognizes one.
-            if (/<table(?:\s|>)/.test(html)) {
-              event.preventDefault()
-              ed.commands.insertContent(html)
-              return true
-            }
-
-            if (event.clipboardData?.getData('text/html')) return false
-            ed.commands.insertContent(html)
-            return true
-          }
-        }
-      })
-    ]
-  }
-})
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const extensions: any[] = [
-  CodeBlockLowlight.configure({ lowlight }).extend({
-    addNodeView: () => VueNodeViewRenderer(CodeBlockView)
-  }),
-  Highlight.configure({ multicolor: false }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: true, cellMinWidth: 64, handleWidth: 6, lastColumnResizable: true }),
-  TableRow,
-  TableHeader,
-  TableCell,
-  DateMention,
-  ResizableImage,
-  ImagePaste,
-  AiPendingDecoration,
+const extensions = [
+  ...createContentExtensions({ editable: true }),
+  SmartClipboard.configure({ getUploader: () => props.uploadImage }),
+  BlockShortcuts.configure({ onLink: editLink }),
   HashtagHighlight,
-  MarkdownPaste,
+  BlurredSelection,
+  AiPendingDecoration,
   SlashTablePickerKeys
 ]
+
+// Dropped image files go where they were dropped. This sits on the wrapper
+// rather than in a plugin so the drag handle cannot intercept the drop.
+function onFileDrop(event: DragEvent) {
+  const ed = editor.value
+  const files = imageFiles(event.dataTransfer)
+  if (!ed || !props.uploadImage || !files.length) return
+  const position = ed.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+  void insertImages(ed, files, props.uploadImage, position)
+}
+
+function pickImage(ed: Editor) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.multiple = true
+  input.onchange = () => {
+    const files = Array.from(input.files ?? [])
+    if (files.length && props.uploadImage) void insertImages(ed, files, props.uploadImage)
+  }
+  input.click()
+}
 
 // ─── Handlers ────────────────────────────────────────────────
 
@@ -520,6 +186,8 @@ function insertDiagram(ed: Editor, language: 'chart' | 'mermaid') {
   return ed.chain()
 }
 
+// Handlers for the `kind`s Nuxt UI does not know. Each opens something rather
+// than changing the document, so they hand back an empty chain to run.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const customHandlers: any = {
   chart: {
@@ -533,27 +201,18 @@ const customHandlers: any = {
     isActive: (ed: Editor) => ed.isActive('codeBlock', { language: 'mermaid' })
   },
   aiPrompt: {
-    canExecute: () => !aiLoading.value,
+    canExecute: () => !ai.loading.value,
     execute: (ed: Editor) => {
-      openAiPrompt(ed)
+      ai.openPrompt(ed)
       return ed.chain()
     },
     isActive: () => false
   },
   image: {
     canExecute: () => !!props.uploadImage,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    execute: async (ed: any) => {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = 'image/*'
-      input.onchange = async () => {
-        const file = input.files?.[0]
-        if (!file || !props.uploadImage) return
-        const url = await props.uploadImage(file)
-        if (url) ed.chain().focus().setImage({ src: url }).run()
-      }
-      input.click()
+    execute: (ed: Editor) => {
+      pickImage(ed)
+      return ed.chain()
     },
     isActive: () => false
   },
@@ -577,81 +236,64 @@ const customHandlers: any = {
 
 // ─── Toolbar & menu items ─────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fixedToolbarItems: any[][] = [[
-  { kind: 'heading', level: 1, icon: 'i-lucide-heading-1', tooltip: { text: 'Heading 1' } },
-  { kind: 'heading', level: 2, icon: 'i-lucide-heading-2', tooltip: { text: 'Heading 2' } },
-  { kind: 'heading', level: 3, icon: 'i-lucide-heading-3', tooltip: { text: 'Heading 3' } }
-], [
-  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
-  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
-  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
-  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
-  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } }
-], [
-  { kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
-  { kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Ordered list' } },
-  { kind: 'taskList', icon: 'i-lucide-list-checks', tooltip: { text: 'Task list' } },
-  { kind: 'table', slot: 'table', icon: 'i-lucide-table', tooltip: { text: 'Insert table' } },
-  { kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
-  { kind: 'chart', icon: 'i-lucide-chart-column', tooltip: { text: 'Chart' } },
-  { kind: 'mermaid', icon: 'i-lucide-workflow', tooltip: { text: 'Mermaid diagram' } },
-  { kind: 'blockquote', icon: 'i-lucide-quote', tooltip: { text: 'Blockquote' } },
-  { kind: 'horizontalRule', icon: 'i-lucide-separator-horizontal', tooltip: { text: 'Divider' } }
-]]
+const IMAGE_ITEM: EditorItem = { kind: 'image', label: 'Image', icon: 'i-lucide-image' }
+const AI_ITEM: EditorItem = { kind: 'aiPrompt', label: 'Ask AI', description: 'Generate anything from a custom prompt', icon: 'i-lucide-sparkles' }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const aiBubbleItems: any[] = transformActions.map(action => ({
+const fixedToolbarItems = computed<EditorItem[][]>(() => [
+  HISTORY_ITEMS.map(asButton),
+  [{
+    'icon': 'i-lucide-type',
+    'label': 'Text',
+    'trailingIcon': 'i-lucide-chevron-down',
+    'aria-label': 'Text style',
+    'tooltip': { text: 'Text style' },
+    'ui': { label: 'hidden md:inline', trailingIcon: 'size-3.5 text-dimmed' },
+    'content': { align: 'start' },
+    'items': [TEXT_STYLE_ITEMS, [QUOTE_ITEM, CODE_BLOCK_ITEM]]
+  }],
+  [...MARK_ITEMS.map(asButton), { slot: 'highlight' }, { slot: 'link' }],
+  LIST_ITEMS.map(asButton),
+  [
+    { slot: 'table' },
+    ...(props.uploadImage ? [asButton(IMAGE_ITEM)] : []),
+    {
+      'icon': 'i-lucide-plus',
+      'aria-label': 'Insert',
+      'tooltip': { text: 'Insert' },
+      'content': { align: 'start' },
+      'items': [[CODE_BLOCK_ITEM, QUOTE_ITEM, DIVIDER_ITEM], DIAGRAM_ITEMS, [AI_ITEM]]
+    }
+  ]
+])
+
+const aiItems: EditorItem[] = transformActions.map(action => ({
   label: action.label,
   icon: action.icon,
-  onSelect: () => runTransform(action.id)
+  onSelect: () => ai.transformSelection(action.id)
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const bubbleToolbarItems: any[][] = [[
-  { kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
-  { kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
-  { kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
-  { kind: 'mark', mark: 'highlight', icon: 'i-lucide-highlighter', tooltip: { text: 'Highlight' } },
-  { kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } },
-  {
-    icon: 'i-lucide-sparkles',
-    tooltip: { text: 'AI' },
-    color: 'primary',
-    items: aiBubbleItems
-  }
-]]
-
-const suggestionItems = computed(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const groups: any[][] = [[
-    { kind: 'aiPrompt', label: 'Ask AI', description: 'Generate anything from a custom prompt', icon: 'i-lucide-sparkles' }
-  ], [
+const suggestionItems = computed<any[][]>(() => [
+  [AI_ITEM],
+  [
     { type: 'label', label: 'Style' },
-    { kind: 'paragraph', label: 'Paragraph', icon: 'i-lucide-type' },
-    { kind: 'heading', level: 1, label: 'Heading 1', icon: 'i-lucide-heading-1' },
-    { kind: 'heading', level: 2, label: 'Heading 2', icon: 'i-lucide-heading-2' },
-    { kind: 'heading', level: 3, label: 'Heading 3', icon: 'i-lucide-heading-3' },
-    { kind: 'bulletList', label: 'Bullet list', icon: 'i-lucide-list' },
-    { kind: 'orderedList', label: 'Numbered list', icon: 'i-lucide-list-ordered' },
-    { kind: 'taskList', label: 'Task list', icon: 'i-lucide-list-checks' },
-    { kind: 'blockquote', label: 'Blockquote', icon: 'i-lucide-text-quote' },
-    { kind: 'codeBlock', label: 'Code block', icon: 'i-lucide-square-code' },
+    ...TEXT_STYLE_ITEMS,
+    ...LIST_ITEMS,
+    QUOTE_ITEM,
+    CODE_BLOCK_ITEM
+  ].map(item => ({ ...item, kbds: undefined })),
+  [
+    { type: 'label', label: 'Insert' },
     { kind: 'table', label: 'Table', description: 'Pick a size and insert a table', icon: 'i-lucide-table' },
-    { kind: 'horizontalRule', label: 'Divider', icon: 'i-lucide-separator-horizontal' }
-  ], [
+    ...(props.uploadImage ? [IMAGE_ITEM] : []),
+    { kind: 'mention', label: 'Date', description: 'Today, next Friday, in two weeks…', icon: 'i-lucide-calendar' },
+    DIVIDER_ITEM
+  ],
+  [
     { type: 'label', label: 'Diagrams' },
-    { kind: 'chart', label: 'Chart', description: 'Bar, line or pie from a few lines of numbers', icon: 'i-lucide-chart-column' },
-    { kind: 'mermaid', label: 'Mermaid diagram', description: 'Flowcharts, sequences, Gantt and more', icon: 'i-lucide-workflow' }
-  ]]
-  if (props.uploadImage) {
-    groups.push([
-      { type: 'label', label: 'Insert' },
-      { kind: 'image', label: 'Image', icon: 'i-lucide-image' }
-    ])
-  }
-  return groups
-})
+    ...DIAGRAM_ITEMS
+  ]
+])
 </script>
 
 <template>
@@ -662,48 +304,79 @@ const suggestionItems = computed(() => {
   >
     <UEditor
       ref="editorRef"
-      v-slot="{ editor: ed }"
+      v-slot="{ editor: ed, handlers }"
       :model-value="content"
       content-type="html"
-      :placeholder="placeholder ?? 'Start writing… (@ for dates, # for tags)'"
-      :starter-kit="{ codeBlock: false, horizontalRule: {} }"
+      :placeholder="placeholder ?? 'Start writing… (/ for commands, @ for dates, # for tags)'"
+      :starter-kit="{ codeBlock: false, horizontalRule: {}, link: { openOnClick: false, autolink: true, defaultProtocol: 'https' } }"
       :image="false"
       :extensions="extensions"
       :handlers="customHandlers"
-      class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      class="rich-editor flex min-h-0 flex-1 flex-col overflow-y-auto"
       @update:model-value="content = $event"
     >
-      <!-- Fixed toolbar -->
-      <div class="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-default bg-default px-3 py-2.5">
-        <UEditorToolbar
-          :editor="ed"
-          :items="fixedToolbarItems"
-        >
-          <template #table>
-            <UPopover
-              v-model:open="tablePickerOpen"
-              :content="{ align: 'start', sideOffset: 8 }"
-            >
-              <UTooltip text="Insert table">
+      <!-- Fixed toolbar. The commands scroll sideways when the editor is
+           narrow (the task drawer, a phone); the context actions stay put. -->
+      <div class="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-default bg-default px-3 py-2">
+        <div class="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
+          <UEditorToolbar
+            :editor="ed"
+            :items="fixedToolbarItems"
+            class="w-max"
+          >
+            <template #highlight>
+              <EditorHighlightPicker :editor="ed" />
+            </template>
+
+            <template #link>
+              <UTooltip
+                text="Link"
+                :kbds="[MOD, SHIFT, 'K']"
+              >
                 <UButton
-                  icon="i-lucide-table"
+                  icon="i-lucide-link"
                   size="sm"
                   color="neutral"
                   variant="ghost"
-                  aria-label="Insert table"
+                  active-color="primary"
+                  active-variant="soft"
+                  :active="ed.isActive('link')"
+                  :disabled="ed.state.selection.empty && !ed.isActive('link')"
+                  aria-label="Link"
+                  @click="editLink()"
                 />
               </UTooltip>
+            </template>
 
-              <template #content>
-                <TableGridPicker @select="size => onToolbarTablePick(ed, size)" />
-              </template>
-            </UPopover>
-          </template>
-        </UEditorToolbar>
+            <template #table>
+              <UPopover
+                v-model:open="tablePickerOpen"
+                :content="{ align: 'start', sideOffset: 8 }"
+              >
+                <UTooltip
+                  text="Table"
+                  :disabled="tablePickerOpen"
+                >
+                  <UButton
+                    icon="i-lucide-table"
+                    size="sm"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Insert table"
+                  />
+                </UTooltip>
+
+                <template #content>
+                  <TableGridPicker @select="size => onToolbarTablePick(ed, size)" />
+                </template>
+              </UPopover>
+            </template>
+          </UEditorToolbar>
+        </div>
 
         <div
           v-if="$slots['toolbar-right']"
-          class="ml-auto flex shrink-0 items-center gap-1"
+          class="flex shrink-0 items-center gap-1"
         >
           <slot name="toolbar-right" />
         </div>
@@ -715,90 +388,28 @@ const suggestionItems = computed(() => {
         :items="suggestionItems"
       />
 
-      <!-- Bubble toolbar (appears on text selection) -->
-      <UEditorToolbar
+      <!-- Selection bubble: formatting, links, AI -->
+      <EditorBubbleMenu
+        ref="bubble"
         :editor="ed"
-        :items="bubbleToolbarItems"
-        layout="bubble"
-        :ui="{ root: 'z-50' }"
-        :should-show="({ editor: e, view, state }) => {
-          const { selection } = state
-          return view.hasFocus() && !selection.empty && !(selection instanceof CellSelection) && !e.isActive('image')
-        }"
+        :ai-items="aiItems"
+        :ai-loading="ai.loading.value"
       />
 
       <!-- Table handles: row, column, corner, "+" edges, cell selection -->
       <TableControls :editor="ed" />
 
-      <!-- Drag handle (hover any block) -->
-      <UEditorDragHandle
-        v-slot="{ ui }"
+      <!-- Block handle (hover any block): add below, drag, block menu -->
+      <EditorBlockHandle
         :editor="ed"
-      >
-        <UButton
-          color="neutral"
-          variant="ghost"
-          size="sm"
-          icon="i-lucide-grip-vertical"
-          :class="ui.handle()"
-        />
-      </UEditorDragHandle>
+        :handlers="handlers"
+      />
     </UEditor>
 
-    <UModal
-      v-model:open="aiPromptOpen"
-      title="Ask AI"
-      description="Describe what you want to add at the current cursor position. You can optionally include the current content as context."
-      :ui="{ footer: 'justify-between' }"
-    >
-      <template #body>
-        <form
-          id="ai-prompt-form"
-          class="space-y-3"
-          @submit.prevent="runCustomPrompt"
-        >
-          <UTextarea
-            v-model="aiPrompt"
-            autofocus
-            autoresize
-            :rows="4"
-            :maxrows="10"
-            placeholder="For example: Create a Drizzle schema for roles and permissions with a short usage example"
-            class="w-full"
-            @keydown.meta.enter.prevent="runCustomPrompt"
-            @keydown.ctrl.enter.prevent="runCustomPrompt"
-          />
-          <div class="flex items-center justify-between gap-4">
-            <UCheckbox
-              v-model="aiPromptIncludeContext"
-              label="Include current content as context"
-            />
-            <p class="text-xs text-muted text-right">
-              Markdown, tables, task lists, code blocks, Mermaid and charts are supported.
-            </p>
-          </div>
-        </form>
-      </template>
-
-      <template #footer="{ close }">
-        <span class="text-xs text-muted">Cmd/Ctrl + Enter to generate</span>
-        <div class="flex items-center gap-2">
-          <UButton
-            label="Cancel"
-            color="neutral"
-            variant="ghost"
-            @click="close"
-          />
-          <UButton
-            type="submit"
-            form="ai-prompt-form"
-            label="Generate"
-            icon="i-lucide-sparkles"
-            :disabled="!aiPrompt.trim()"
-          />
-        </div>
-      </template>
-    </UModal>
+    <EditorAiPrompt
+      v-model:open="ai.promptOpen.value"
+      :generate="ai.generate"
+    />
 
     <!-- Table size picker (opened from the slash menu), anchored at the caret -->
     <UPopover

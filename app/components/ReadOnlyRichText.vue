@@ -1,15 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { VueNodeViewRenderer } from '@tiptap/vue-3'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import CodeBlockView from '~/components/CodeBlockView.vue'
-import Highlight from '@tiptap/extension-highlight'
-import TaskList from '@tiptap/extension-task-list'
-import TaskItem from '@tiptap/extension-task-item'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { createEditorLowlight } from '~/utils/highlight'
-import { DateMention } from '~/composables/useDateMention'
-import { ResizableImage } from '~/utils/resizable-image'
+import { createContentExtensions } from '~/utils/editor/extensions'
 
 // Editor HTML rendered the way it was written, minus the editing. The public
 // pages use this: the content is parsed into the same schema the editor uses,
@@ -22,23 +13,7 @@ const props = defineProps<{
   flush?: boolean
 }>()
 
-const lowlight = createEditorLowlight()
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const extensions: any[] = [
-  CodeBlockLowlight.configure({ lowlight }).extend({
-    addNodeView: () => VueNodeViewRenderer(CodeBlockView)
-  }),
-  Highlight.configure({ multicolor: false }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: false }),
-  TableRow,
-  TableHeader,
-  TableCell,
-  DateMention,
-  ResizableImage
-]
+const extensions = createContentExtensions({ editable: false })
 
 // The editor owns its document; the prop is copied in rather than bound, so a
 // live update replaces the content without the editor writing back.

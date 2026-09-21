@@ -58,10 +58,10 @@ function normalizeMarkdown(text: string): string {
   let result = text
   // Replace LaTeX artifacts with unicode
   result = replaceLatex(result)
-  // Collapse 3+ blank lines into a single blank line
-  result = result.replace(/\n{3,}/g, '\n\n')
   // Trim trailing whitespace per line
   result = result.split('\n').map(line => line.replace(/[ \t]+$/, '')).join('\n')
+  // Collapse 3+ blank lines into a single blank line
+  result = result.replace(/\n{3,}/g, '\n\n')
   // Remove leading/trailing blank lines
   result = result.replace(/^\n+/, '').replace(/\n+$/, '')
   return result
@@ -93,6 +93,24 @@ export function createTurndownService(): TurndownService {
       return `\n\n${[header, separator, ...body].join('\n')}\n\n`
     }
   })
+  // Tight lists with a single space after the marker (`- item`, `1. item`):
+  // Turndown's own rule pads the marker to four columns, and the editor wraps
+  // every item in a paragraph, which would otherwise read as a loose list.
+  td.addRule('listItem', {
+    filter: 'li',
+    replacement(content, node) {
+      const parent = node.parentNode as HTMLElement | null
+      let marker = '- '
+      if (parent?.nodeName === 'OL') {
+        const start = Number(parent.getAttribute('start') ?? 1)
+        const index = Array.from(parent.children).indexOf(node as Element)
+        marker = `${start + index}. `
+      }
+      const indent = ' '.repeat(marker.length)
+      const body = content.replace(/^\n+/, '').replace(/\n+$/, '').replace(/\n{2,}/g, '\n').replace(/\n/g, `\n${indent}`)
+      return `${marker}${body}${node.nextSibling ? '\n' : ''}`
+    }
+  })
   td.addRule('taskItem', {
     filter(node) {
       return node.nodeName === 'LI' && (node as HTMLElement).getAttribute('data-type') === 'taskItem'
@@ -120,28 +138,80 @@ export function createTurndownService(): TurndownService {
       return `\n\`\`\`${lang}\n${code?.textContent ?? ''}\n\`\`\`\n\n`
     }
   })
+  // `==text==` is the de facto Markdown for a highlight (Obsidian, Typora) and
+  // what `markdownToHtml` reads back, so a highlight survives a round trip.
   td.addRule('highlight', {
     filter: ['mark'],
+    replacement: content => content.trim() ? `==${content}==` : content
+  })
+  td.addRule('underline', {
+    filter: ['u'],
     replacement: content => content
   })
   return td
 }
 
+// A checkbox list as other tools write it (Marked, GitHub, Notion: an `input`
+// leading each `li`) rewritten into the task-list markup Tiptap parses. A list
+// only converts when every item has a checkbox; a stray one is dropped instead.
+export function convertTaskLists(root: ParentNode) {
+  const checkboxOf = (li: Element) => {
+    const input = li.querySelector('input[type="checkbox"]')
+    if (!input || input.closest('li') !== li) return null
+    return input as HTMLInputElement
+  }
+
+  root.querySelectorAll('ul').forEach((list) => {
+    if (list.getAttribute('data-type') === 'taskList') return
+    const items = Array.from(list.children).filter(child => child.tagName === 'LI')
+    const boxes = items.map(checkboxOf)
+    if (!items.length || !boxes.some(Boolean)) return
+    if (!boxes.every(Boolean)) {
+      boxes.forEach(box => box?.remove())
+      return
+    }
+
+    list.setAttribute('data-type', 'taskList')
+    items.forEach((li, index) => {
+      const input = boxes[index]!
+      const checked = input.checked || input.hasAttribute('checked')
+      input.remove()
+      // Nested lists stay children of the item, after its own text.
+      const nested = Array.from(li.children).filter(child => child.tagName === 'UL' || child.tagName === 'OL')
+      nested.forEach(child => child.remove())
+      const text = li.innerHTML.trim()
+      const body = /^<p[\s>]/i.test(text) ? text : `<p>${text}</p>`
+      li.setAttribute('data-type', 'taskItem')
+      li.setAttribute('data-checked', String(checked))
+      li.innerHTML = `<label><input type="checkbox"${checked ? ' checked' : ''}></label><div>${body}</div>`
+      const content = li.lastElementChild!
+      nested.forEach(child => content.appendChild(child))
+    })
+  })
+}
+
+// `==text==` → `<mark>`, which Marked has no syntax for.
+marked.use({
+  extensions: [{
+    name: 'highlight',
+    level: 'inline',
+    start: (src: string) => src.indexOf('=='),
+    tokenizer(src: string) {
+      const match = /^==(?=\S)([^\n]*?\S)==/.exec(src)
+      if (!match) return undefined
+      return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]!) }
+    },
+    renderer(token) {
+      return `<mark>${this.parser.parseInline(token.tokens ?? [])}</mark>`
+    }
+  }]
+})
+
 export function markdownToHtml(text: string): string {
   const raw = marked.parse(text, { async: false, gfm: true }) as string
   if (!import.meta.client) return raw
   const doc = new DOMParser().parseFromString(raw, 'text/html')
-  doc.querySelectorAll('ul > li').forEach((li) => {
-    const input = li.querySelector('input[type="checkbox"]')
-    if (!input) return
-    const checked = (input as HTMLInputElement).checked
-    li.closest('ul')!.setAttribute('data-type', 'taskList')
-    li.setAttribute('data-type', 'taskItem')
-    li.setAttribute('data-checked', String(checked))
-    input.remove()
-    const content = li.innerHTML.trim()
-    li.innerHTML = `<label><input type="checkbox"${checked ? ' checked' : ''}></label><div><p>${content}</p></div>`
-  })
+  convertTaskLists(doc.body)
   return doc.body.innerHTML
 }
 
